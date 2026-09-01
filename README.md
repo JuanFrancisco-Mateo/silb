@@ -56,9 +56,10 @@ El atajo global `Ctrl/Cmd + Shift + D` muestra la ventana y alterna el dictado a
 ## Qué incluye
 
 - Editor de texto con transcripción por turnos mediante `MediaRecorder`.
-- Whisper.cpp WASM local con modelo `tiny`, descargado una vez y cacheado en IndexedDB.
+- Whisper.cpp WASM local con modelo configurable (`tiny`/`base`/`small`), descargado una vez y cacheado en IndexedDB. El modelo `small` descarga ~460 MB la primera vez (frente a ~75 MB de `tiny`); `base` se queda en un punto intermedio.
 - Progreso visible de descarga, remuestreo e inferencia; el audio no se envía a un backend.
 - Detección local de rectificaciones como `Uy, así no era, era el informe del jueves`, `perdón, quería decir...`, `mejor dicho...`, `donde dije X, quería decir Y`, `me refería a...` y `no, el jueves`.
+- Diccionario personal de términos → reemplazo (jerga, nombres propios, siglas) aplicado sobre cada transcripción y persistido en `localStorage`.
 - Panel de actividad con el texto original y la versión aplicada.
 - Guardado explícito del borrador en `localStorage`.
 - Interfaz responsive sin cuenta, backend ni telemetría.
@@ -69,6 +70,8 @@ El atajo global `Ctrl/Cmd + Shift + D` muestra la ventana y alterna el dictado a
 - `src/App.tsx`: flujo de interfaz, grabación y estados del motor.
 - `src/services/local-whisper.ts`: disponibilidad, descarga/cache del modelo, remuestreo e inferencia WASM.
 - `src/domain/correction.ts`: contrato, reglas puras y `CorrectionSession` para rectificaciones divididas por turnos.
+- `src/domain/dictionary.ts`: diccionario personal término → reemplazo (jerga, nombres propios), con persistencia en `localStorage`.
+- `src/services/model-config.ts`: selector de modelo Whisper (`tiny`/`base`/`small`) con persistencia en `localStorage`.
 - `src/domain/correction.test.ts`: suite unitaria del motor de corrección.
 - `src/services/recording-controller.ts`: ciclo de grabación y transcripción con dependencias inyectables.
 - `src/services/recording-controller.test.ts`: integración simulada de micrófono, `MediaRecorder` y transcriptor.

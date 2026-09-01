@@ -6,8 +6,11 @@ import {
   type WhisperWebLanguage,
   type WhisperWebModel,
 } from '@remotion/whisper-web'
+import { getModel } from './model-config'
 
-export const LOCAL_WHISPER_MODEL: WhisperWebModel = 'tiny'
+export function getLocalWhisperModel(): WhisperWebModel {
+  return getModel()
+}
 
 type ProgressHandler = (progress: number) => void
 
@@ -23,13 +26,13 @@ export async function ensureLocalWhisper(onProgress: ProgressHandler) {
   if (modelReady) return
   if (!modelPromise) {
     modelPromise = (async () => {
-      const support = await canUseWhisperWeb(LOCAL_WHISPER_MODEL)
+      const support = await canUseWhisperWeb(getLocalWhisperModel())
       if (!support.supported) {
         throw new Error(support.detailedReason ?? 'Este navegador no puede ejecutar Whisper localmente.')
       }
 
       await downloadWhisperModel({
-        model: LOCAL_WHISPER_MODEL,
+        model: getLocalWhisperModel(),
         onProgress: ({ progress }) => onProgress(progress),
       })
       modelReady = true
@@ -55,7 +58,7 @@ export async function transcribeLocalAudio(
 
   const result = await transcribe({
     channelWaveform,
-    model: LOCAL_WHISPER_MODEL,
+    model: getLocalWhisperModel(),
     language,
     threads: Math.min(4, navigator.hardwareConcurrency || 4),
     onProgress: (progress) => onProgress(0.2 + progress * 0.8),
