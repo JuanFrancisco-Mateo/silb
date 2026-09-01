@@ -96,6 +96,8 @@ al terminar un dictado con el atajo global, el texto se escribe en la app
 que tenga el foco (Slack, Notion, editor, terminal), no solo en la ventana propia.
 
 Implementación (Windows/Tauri; la versión web queda sin esta feature):
+- **NOTA: `arboard` y `enigo` YA están añadidos a `Cargo.toml`** (pre-warmup).
+  No volver a añadirlos; úsalos. Verificar con `cargo tree` si hace falta.
 - Comando Tauri en `src-tauri/src/lib.rs` (o módulo nuevo): `type_text(text: String)`.
 - Estrategia recomendada (lazy y robusta): poner `text` en el portapapeles
   (crate `arboard`) y simular la pulsación Ctrl+V con `enigo`.
@@ -113,10 +115,15 @@ Implementación (Windows/Tauri; la versión web queda sin esta feature):
 - NO tocar `App.tsx`.
 
 ACEPTACIÓN:
-- `cmd.exe /c "cd /d E:\AI\FREEBUFF && cargo check"` pasa (compila Windows).
+- `cmd.exe /c "C:\Users\usuario\.cargo\bin\cargo.exe check"` (en `src-tauri/`; compila Windows).
 - `src/services/text-injection.ts` con test que mockea `window.__TAURI_INTERNALS__`
   (invoke capturado) y verifica argumentos + fallback web.
 - README: nueva sección "Escritura en otras apps (Windows)".
+
+> ⚠️ OVERRIDE cargo (CRÍTICO): `cmd.exe` NO tiene cargo en PATH. En TODAS las
+> verificaciones de Rust usar la ruta completa:
+> `cmd.exe /c "C:\Users\usuario\.cargo\bin\cargo.exe check"` (o `build`).
+> La versión "cargo check" suelta falla en cmd.exe.
 
 ---
 
@@ -139,7 +146,7 @@ SOLO el integrador toca `src/App.tsx` y `src/styles.css`. Cablear, en orden:
 Verificación final obligatoria (en orden):
 - `cmd.exe /c npm test` → TODOS verdes (baseline + nuevos).
 - `cmd.exe /c npm run build` → sin errores.
-- `cmd.exe /c "cd /d E:\AI\FREEBUFF && cargo check"` → OK (si Fase 3 tocó Rust).
+- `cmd.exe /c "cd /d E:\AI\FREEBUFF\src-tauri && C:\Users\usuario\.cargo\bin\cargo.exe check"` → OK (si Fase 3 tocó Rust).
 - Commit por cada fase integrada (mensajes en español, p.ej.
   `feat: limpieza de muletillas conectada a la UI`).
 
