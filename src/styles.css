@@ -110,6 +110,57 @@ h2 { margin-bottom: 0; font-size: 15px; letter-spacing: -.3px; }
 .strip-item strong { margin-bottom: 4px; font-size: 10px; }
 .strip-item div > span { color: #98a4a5; font-size: 9px; }
 
+/* Fase 4 — toggle Limpiar muletillas */
+.dictate-controls { display: flex; align-items: center; gap: 14px; }
+.cleanup-toggle { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; color: #7d8b8d; font-size: 11px; font-weight: 600; }
+.cleanup-toggle:hover .toggle-label { color: var(--ink); }
+.cleanup-toggle input { position: absolute; opacity: 0; width: 0; height: 0; pointer-events: none; }
+.toggle-track { width: 31px; height: 18px; display: inline-block; position: relative; flex: 0 0 auto; border-radius: 99px; background: #d9e2e3; transition: background .25s ease; }
+.toggle-thumb { width: 14px; height: 14px; position: absolute; top: 2px; left: 2px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(31, 41, 43, .25); transition: transform .25s ease; }
+.cleanup-toggle input:checked + .toggle-track { background: var(--aqua-deep); }
+.cleanup-toggle input:checked + .toggle-track .toggle-thumb { transform: translateX(13px); }
+.cleanup-toggle input:focus-visible + .toggle-track { outline: 2px solid #9fd8d0; outline-offset: 2px; }
+
+/* Fase 4 — selector de modelo */
+.footer-tools { display: flex; align-items: center; gap: 12px; }
+.model-select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); color: #5f6e70; font-family: 'DM Mono', monospace; font-size: 9px; cursor: pointer; outline: none; transition: border-color .2s ease; }
+.model-select:hover, .model-select:focus { border-color: #bcd8d4; color: var(--ink); }
+
+/* Fase 4 — panel Diccionario */
+.dictionary-panel { margin-top: 16px; padding-top: 16px; border-top: 1px solid #dfe5e6; }
+.dictionary-toggle { width: 100%; display: flex; align-items: center; gap: 9px; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 11px; font-weight: 700; text-align: left; }
+.dictionary-toggle .count-badge { margin-left: auto; }
+.dictionary-toggle .chevron { width: 13px; height: 13px; display: inline-flex; color: #a4b0b1; transition: transform .2s ease; }
+.dictionary-toggle .chevron svg { width: 100%; height: 100%; }
+.dictionary-toggle.open .chevron { transform: rotate(180deg); }
+.dictionary-icon { width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: #e2f5f2; color: #4da69b; }
+.dictionary-icon svg { width: 12px; height: 12px; }
+.dictionary-body { margin-top: 12px; }
+.dictionary-form { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.dictionary-form input { min-width: 0; padding: 7px 9px; border: 1px solid var(--line); border-radius: 4px; background: var(--paper); color: #354244; font-size: 11px; outline: none; }
+.dictionary-form input:focus { border-color: #a5d6cf; }
+.dictionary-form input::placeholder { color: #aeb8b9; }
+.dictionary-add { grid-column: 1 / -1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 7px 10px; border: 0; border-radius: 4px; background: var(--ink); color: #fff; font-size: 10px; font-weight: 700; transition: background .2s ease; }
+.dictionary-add:hover { background: #2b393b; }
+.dictionary-add svg { width: 13px; height: 13px; }
+.dictionary-list { margin: 10px 0 0; padding: 0; list-style: none; }
+.dictionary-item { display: flex; align-items: center; gap: 8px; padding: 7px 0; border-bottom: 1px solid #e9eeee; }
+.dictionary-item:last-child { border-bottom: 0; }
+.dictionary-pair { min-width: 0; display: flex; align-items: center; gap: 6px; flex: 1; color: #5f6e70; font-size: 11px; }
+.dictionary-pair strong { color: var(--ink); font-weight: 700; white-space: nowrap; }
+.dictionary-pair span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.dictionary-pair svg { width: 12px; height: 12px; flex: 0 0 auto; color: #42a69a; }
+.dictionary-remove { width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: 50%; background: transparent; color: #b3bebf; flex: 0 0 auto; transition: background .15s ease, color .15s ease; }
+.dictionary-remove:hover { background: #faece9; color: var(--coral); }
+.dictionary-remove svg { width: 13px; height: 13px; }
+.dictionary-empty { margin: 10px 0 0; color: #98a4a5; font-size: 9px; line-height: 1.55; }
+
+/* Fase 4 — evento de limpieza en el panel de actividad */
+.cleanup-icon { width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; background: #e2f5f2; color: #2c998b; }
+.cleanup-icon svg { width: 11px; height: 11px; }
+.removed-chips { display: flex; flex-wrap: wrap; gap: 5px; margin: 0 0 9px; }
+.removed-chip { padding: 3px 8px; border-radius: 99px; background: #fdf0ee; color: #c15a4b; font-family: 'DM Mono', monospace; font-size: 9px; font-weight: 500; }
+
 @media (max-width: 800px) {
   .topbar { padding: 0 22px; }
   .workspace { padding: 42px 22px 30px; }
@@ -128,8 +179,11 @@ h2 { margin-bottom: 0; font-size: 15px; letter-spacing: -.3px; }
   .editor-toolbar { padding: 0 14px; }
   .editor-tools { gap: 8px; }
   .saved-label { display: none; }
-  .control-row { align-items: start; gap: 12px; }
+  .control-row { align-items: start; gap: 12px; flex-wrap: wrap; }
+  .dictate-controls { width: 100%; }
   .listen-button { flex: 1; justify-content: center; padding-right: 8px; }
+  .footer-tools { gap: 8px; }
+  .dictionary-form { grid-template-columns: 1fr; }
   .shortcut { display: none; }
   .secondary-actions { flex-direction: column; align-items: stretch; gap: 0; }
   .secondary-button { padding: 6px 4px; }
