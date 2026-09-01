@@ -14,5 +14,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
+arboard = "3.6.1"
+enigo = "0.6.1"
 tauri = { version = "2.11.5", features = [] }
 tauri-plugin-global-shortcut = { version = "2.3.2" }
