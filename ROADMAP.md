@@ -6,7 +6,7 @@ en una sesión nocturna con agentes autónomos. Priorizado por impacto/riesgo.
 Estado verificado al inicio (01/09/2026): tests 40/40 ✓, build web ✓,
 Tauri compilable (deps presentes), SIN git (al iniciar la sesión).
 
-Leer `GUIA-AGENTES.md` primero. Todas las verificaciones con `cmd.exe /c`.
+Leer `AGENTS.md` primero. Todas las verificaciones con `cmd.exe /c`.
 
 ---
 
