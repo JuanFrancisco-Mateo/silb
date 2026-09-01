@@ -1,0 +1,18 @@
+[package]
+name = "whispr-open"
+version = "0.1.0"
+description = "Local open-source dictation workspace"
+authors = ["Whispr Open contributors"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "whispr_open_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.6.3", features = [] }
+
+[dependencies]
+tauri = { version = "2.11.5", features = [] }
+tauri-plugin-global-shortcut = { version = "2.3.2" }
