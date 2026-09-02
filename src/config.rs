@@ -16,6 +16,8 @@ pub struct Config {
     pub cleanup_enabled: Option<bool>,
     pub auto_inject: Option<bool>,
     pub input_device: Option<String>,
+    /// Tema oscuro por defecto (2026: dark mode default); toggle persistido.
+    pub dark_mode: Option<bool>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -52,6 +54,11 @@ impl Config {
             _ => Model::Small,
         }
     }
+
+    /// Tema: dark por defecto (2026); el toggle persiste `dark_mode`.
+    pub fn is_dark(&self) -> bool {
+        self.dark_mode.unwrap_or(true)
+    }
 }
 
 #[cfg(test)]
@@ -75,5 +82,13 @@ mod tests {
     fn invalid_model_falls_back_to_small() {
         let cfg = Config { model: Some("gigante".into()), ..Default::default() };
         assert_eq!(cfg.selected_model(), Model::Small);
+    }
+
+    #[test]
+    fn dark_mode_por_defecto() {
+        let cfg = Config::default();
+        assert!(cfg.is_dark(), "2026: dark mode default");
+        let claro = Config { dark_mode: Some(false), ..Default::default() };
+        assert!(!claro.is_dark());
     }
 }

@@ -6,10 +6,10 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, pick_list, row, scrollable, text,
-    text_input, Column,
+    button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row,
+    scrollable, text, text_input, Column, Space,
 };
-use iced::{Color, Element, Font, Length, Subscription, Task, Theme};
+use iced::{Background, Color, Element, Font, Length, Subscription, Task, Theme};
 use global_hotkey::GlobalHotKeyEvent;
 
 use crate::audio::AudioCapture;
@@ -18,6 +18,7 @@ use crate::domain::cleanup::clean_transcript;
 use crate::domain::correction::CorrectionSession;
 use crate::domain::dictionary::{apply_dictionary, DictionaryEntry};
 use crate::hotkey::HotkeyManager;
+use crate::theme::{self, UiPalette};
 use crate::transcribe::{Model, WhisperEngine};
 use crate::inject::inject_text_into_active_app;
 
@@ -30,19 +31,12 @@ pub enum Status {
     Error(String),
 }
 
-impl Status {
-    pub fn label(&self) -> String {
-        match self {
-            Status::Idle => "Listo".to_string(),
-            Status::Recording => "● Grabando…".to_string(),
-            Status::Transcribing => "Transcribiendo…".to_string(),
-            Status::Downloading { model, downloaded, total } => {
-                let pct = if *total > 0 { (*downloaded as f64 / *total as f64 * 100.0) as u32 } else { 0 };
-                format!("Descargando {}… {}%", model.label(), pct)
-            }
-            Status::Error(e) => e.clone(),
-        }
-    }
+/// Lectura visual del estado del micrófono (feedback doble: color + texto).
+struct MicUi {
+    color: Color,
+    hint_color: Color,
+    label: String,
+    hint: String,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +56,8 @@ pub enum Message {
     EntryToChanged(String),
     RemoveEntry(usize),
     InputDeviceSelected(String),
+    ToggleTheme,
+    ToggleSettings,
     Poll,
 }
 
@@ -80,6 +76,7 @@ pub struct WhisprApp {
     _hotkey: HotkeyManager,
     entry_from: String,
     entry_to: String,
+    settings_open: bool,
 }
 
 impl WhisprApp {
@@ -113,6 +110,7 @@ impl WhisprApp {
             _hotkey,
             entry_from: String::new(),
             entry_to: String::new(),
+            settings_open: false,
         };
         (app, Task::none())
     }
@@ -131,6 +129,50 @@ impl WhisprApp {
     /// Nivel del micrófono en % (0-100) mientras se graba.
     fn mic_level_percent(&self) -> u32 {
         self.audio.as_ref().map(|a| (a.level() * 100.0) as u32).unwrap_or(0)
+    }
+
+    /// Lectura del estado para el hero: color de estado + label + hint
+    /// (feedback doble, nunca solo color).
+    fn mic_ui(&self, t: &UiPalette) -> MicUi {
+        match &self.status {
+            Status::Idle => MicUi {
+                color: t.dim,
+                hint_color: t.dim,
+                label: "Listo".to_string(),
+                hint: "Pulsa el círculo o Ctrl+Shift+D y empieza a hablar".to_string(),
+            },
+            Status::Recording => MicUi {
+                color: t.accent,
+                hint_color: t.dim,
+                label: "Grabando…".to_string(),
+                hint: "Suelta el atajo o pulsa para transcribir".to_string(),
+            },
+            Status::Transcribing => MicUi {
+                color: t.warn,
+                hint_color: t.dim,
+                label: "Transcribiendo…".to_string(),
+                hint: "Procesando el audio con Whisper".to_string(),
+            },
+            Status::Downloading { model, downloaded, total } => {
+                let pct = if *total > 0 { (*downloaded as f64 / *total as f64 * 100.0) as u32 } else { 0 };
+                MicUi {
+                    color: t.warn,
+                    hint_color: t.dim,
+                    label: if *total > 0 {
+                        format!("Descargando {}… {}%", model.label(), pct)
+                    } else {
+                        format!("Descargando {}…", model.label())
+                    },
+                    hint: "Primera vez con este modelo: se descarga una sola vez".to_string(),
+                }
+            }
+            Status::Error(e) => MicUi {
+                color: t.err,
+                hint_color: t.err,
+                label: "Error".to_string(),
+                hint: e.clone(),
+            },
+        }
     }
 
     fn apply_pipeline(&mut self, raw: &str) -> String {
@@ -340,6 +382,15 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            Message::ToggleTheme => {
+                self.config.dark_mode = Some(!self.config.is_dark());
+                self.save_config();
+                Task::none()
+            }
+            Message::ToggleSettings => {
+                self.settings_open = !self.settings_open;
+                Task::none()
+            }
             Message::Poll => {
                 // Atajo global: toggle al detectar press.
                 let mut toggled = false;
@@ -406,175 +457,228 @@ impl WhisprApp {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::Dark
+        theme::custom(self.config.is_dark())
     }
 
     pub fn view(&self) -> Element<'_, Message> {
+        let t = theme::tokens(&self.theme());
+
+        // ── Cabecera: wordmark + controles globales ──────────────────────────
+        let theme_toggle = if self.config.is_dark() { "☀ Claro" } else { "☾ Oscuro" };
+        let settings_label = if self.settings_open { "Ajustes ▾" } else { "Ajustes ▸" };
         let header = row![
-            text("Whispr Open").size(22).font(Font::MONOSPACE),
-            horizontal_rule(1),
-            status_pill(&self.status),
+            text("Whispr Open").size(theme::FONT_XL).font(Font::MONOSPACE).color(t.text),
+            Space::with_width(Length::Fill),
+            button(theme_toggle).on_press(Message::ToggleTheme).style(theme::secondary),
+            button(settings_label).on_press(Message::ToggleSettings).style(theme::secondary),
         ]
-        .spacing(12)
+        .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
 
-        // Zona de transcript.
-        let transcript_area = scrollable(
-            container(text(if self.transcript.is_empty() {
-                "Pulsa Ctrl+Shift+D o el botón Grabar y empieza a hablar."
-            } else {
-                &self.transcript
-            }))
-            .width(Length::Fill)
-            .padding(12),
+        // ── Hero: estado del micrófono como elemento principal ───────────────
+        // Feedback doble: color de estado (punto + borde de la tarjeta) y label.
+        let mic = self.mic_ui(t);
+        let mut hero_content = column![
+            text("●").size(theme::FONT_DOT).color(mic.color),
+            text(mic.label).size(theme::FONT_HERO).color(t.text),
+            text(mic.hint).size(theme::FONT_SM).color(mic.hint_color),
+        ]
+        .spacing(theme::SPACE_2)
+        .align_x(iced::Alignment::Center);
+
+        // Micro-feedback (>= 200 ms) no decorativo: nivel del mic / progreso.
+        match &self.status {
+            Status::Recording => {
+                hero_content = hero_content.push(
+                    progress_bar(0.0..=100.0, self.mic_level_percent() as f32)
+                        .width(Length::Fixed(220.0))
+                        .style(move |th| theme::progress(th, t.accent)),
+                );
+            }
+            Status::Downloading { downloaded, total, .. } if *total > 0 => {
+                let pct = (*downloaded as f32 / *total as f32 * 100.0).min(100.0);
+                hero_content = hero_content.push(
+                    progress_bar(0.0..=100.0, pct)
+                        .width(Length::Fixed(220.0))
+                        .style(move |th| theme::progress(th, t.warn)),
+                );
+            }
+            _ => {}
+        }
+
+        let hero = button(
+            container(hero_content)
+                .width(Length::Fill)
+                .padding(theme::SPACE_4)
+                .style(move |th| theme::mic_card(th, mic.color)),
         )
-        .height(Length::Fill);
+        .on_press(Message::Toggle)
+        .style(theme::mic);
 
-        let recording_pill = match &self.status {
-            Status::Recording => Some("● Grabando… (suelta el atajo para transcribir)"),
-            _ => None,
+        // ── Transcript (ocupa el resto del alto) ─────────────────────────────
+        let transcript_empty = self.transcript.is_empty();
+        let transcript_card = container(
+            scrollable(
+                container(
+                    text(if transcript_empty {
+                        "Pulsa Ctrl+Shift+D o el botón del micrófono y empieza a hablar."
+                    } else {
+                        self.transcript.as_str()
+                    })
+                    .size(theme::FONT_MD)
+                    .color(if transcript_empty { t.dim } else { t.text }),
+                )
+                .width(Length::Fill)
+                .padding(theme::SPACE_3),
+            )
+            .style(theme::scrollable)
+            .height(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(theme::flat);
+
+        // ── Acciones discretas ───────────────────────────────────────────────
+        let inject_label = if self.config.auto_inject.unwrap_or(true) {
+            "Otra vez"
+        } else {
+            "Escribir en app"
         };
-
-        let controls = column![
-            row![
-                match &self.status {
-                    Status::Recording => button("■ Detener").on_press(Message::StopRecording),
-                    _ => button("● Grabar").on_press(Message::StartRecording),
-                },
-                button("Copiar").on_press(Message::CopyTranscript),
-                button("Limpiar").on_press(Message::ClearTranscript),
-                if self.config.auto_inject.unwrap_or(true) {
-                    button("Otra vez").on_press(Message::InjectLast)
-                } else {
-                    button("Escribir en app").on_press(Message::InjectLast)
-                },
-            ]
-            .spacing(8),
-            recording_row(
-                recording_pill,
-                self.mic_level_percent(),
-            ),
-            if let Some(corr) = &self.last_correction {
-                text(corr).size(12).color(Color::from_rgb(0.6, 0.8, 1.0))
+        let actions = row![
+            button("Copiar").on_press(Message::CopyTranscript).style(theme::secondary),
+            button("Limpiar").on_press(Message::ClearTranscript).style(theme::secondary),
+            if self.last_turn.is_empty() {
+                button(inject_label).style(theme::secondary)
             } else {
-                text("")
-            },
-            if !self.removed_fillers.is_empty() {
-                text(format!("Muletillas eliminadas: {}", self.removed_fillers.join(", ")))
-                    .size(12)
-                    .color(Color::from_rgb(0.8, 0.7, 0.5))
-            } else {
-                text("")
+                button(inject_label).on_press(Message::InjectLast).style(theme::secondary)
             },
         ]
-        .spacing(4);
+        .spacing(theme::SPACE_2);
 
-        // Panel de configuración.
+        // ── Feedback textual (éxitos / espera / muletillas) ──────────────────
+        let feedback = if let Some(corr) = &self.last_correction {
+            let color = if corr.starts_with("Esperando") { t.warn } else { t.ok };
+            text(corr.as_str()).size(theme::FONT_SM).color(color)
+        } else if !self.removed_fillers.is_empty() {
+            text(format!("Muletillas eliminadas: {}", self.removed_fillers.join(", ")))
+                .size(theme::FONT_SM)
+                .color(t.dim)
+        } else {
+            text("")
+        };
+
+        // ── Configuración con progressive disclosure (menú, no barra llena) ──
+        let mut content = column![header, hero, transcript_card, actions, feedback]
+            .spacing(theme::SPACE_3)
+            .padding(theme::SPACE_3);
+        if self.settings_open {
+            content = content.push(self.settings_view(t));
+        }
+
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|th| container::Style {
+                background: Some(Background::Color(theme::tokens(th).bg)),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    /// Panel de configuración (oculto tras el botón Ajustes).
+    fn settings_view(&self, t: &UiPalette) -> Element<'_, Message> {
         let model_pick = pick_list(
             Model::all().to_vec(),
             Some(self.config.selected_model()),
             Message::ModelSelected,
         )
-        .placeholder("Modelo");
+        .placeholder("Modelo")
+        .style(theme::pick_list);
+        let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref());
 
-        let settings = column![
-            text("Configuración").size(16).font(Font::MONOSPACE),
+        let panel = column![
             row![
-                text("Micrófono:"),
-                mic_pick_list(&self.input_devices, self.config.input_device.as_deref()),
-            ]
-            .spacing(8)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Modelo Whisper:"),
+                text("Modelo").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
                 model_pick,
                 text(format!("(~{} MB)", self.config.selected_model().approx_mb()))
-                    .size(12),
+                    .size(theme::FONT_SM)
+                    .color(t.dim),
             ]
-            .spacing(8)
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("Micrófono").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
+                mic_pick,
+            ]
+            .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             checkbox(
                 "Limpiar muletillas",
                 self.config.cleanup_enabled.unwrap_or(true),
             )
-            .on_toggle(Message::ToggleCleanup),
+            .on_toggle(Message::ToggleCleanup)
+            .style(theme::checkbox),
             checkbox(
                 "Autoinyectar al terminar",
                 self.config.auto_inject.unwrap_or(true),
             )
-            .on_toggle(Message::ToggleAutoInject),
-            text(format!("Atajo global: {}", crate::hotkey::DICTATION_SHORTCUT_LABEL)).size(12),
-            horizontal_rule(1),
-            text("Diccionario personal").size(16).font(Font::MONOSPACE),
+            .on_toggle(Message::ToggleAutoInject)
+            .style(theme::checkbox),
+            text(format!("Atajo global: {}", crate::hotkey::DICTATION_SHORTCUT_LABEL))
+                .size(theme::FONT_XS)
+                .color(t.dim),
+            horizontal_rule(1).style(theme::rule),
+            text("Diccionario personal")
+                .size(theme::FONT_LG)
+                .font(Font::MONOSPACE)
+                .color(t.text),
             row![
-                text_input("término", &self.entry_from).on_input(Message::EntryFromChanged),
-                text_input("reemplazo", &self.entry_to).on_input(Message::EntryToChanged),
-                button("Añadir").on_press(Message::AddEntry),
+                text_input("término", &self.entry_from)
+                    .on_input(Message::EntryFromChanged)
+                    .style(theme::text_input),
+                text_input("reemplazo", &self.entry_to)
+                    .on_input(Message::EntryToChanged)
+                    .style(theme::text_input),
+                button("Añadir").on_press(Message::AddEntry).style(theme::primary),
             ]
-            .spacing(6),
+            .spacing(theme::SPACE_2),
             dictionary_list(&self.config.dictionary),
         ]
-        .spacing(8)
+        .spacing(theme::SPACE_2)
         .width(Length::Fill);
 
-        let content = column![header, transcript_area, controls, horizontal_rule(1), settings]
-            .spacing(10)
-            .padding(16);
-
-        container(content)
+        container(panel)
             .width(Length::Fill)
-            .height(Length::Fill)
+            .padding(theme::SPACE_3)
+            .style(|th| theme::card(th))
             .into()
-    }
-}
-
-fn status_pill(status: &Status) -> Element<'static, Message> {
-    let (label, color) = match status {
-        Status::Idle => ("Listo", Color::from_rgb(0.5, 0.8, 0.5)),
-        Status::Recording => ("Grabando", Color::from_rgb(1.0, 0.4, 0.4)),
-        Status::Transcribing => ("Transcribiendo…", Color::from_rgb(0.9, 0.8, 0.4)),
-        Status::Downloading { .. } => ("Descargando modelo…", Color::from_rgb(0.8, 0.7, 0.9)),
-        Status::Error(_) => ("Error", Color::from_rgb(1.0, 0.5, 0.5)),
-    };
-    text(label).color(color).size(13).into()
-}
-
-/// Línea de estado durante la grabación: pill + medidor de nivel del micrófono.
-fn recording_row(pill: Option<&'static str>, level_pct: u32) -> Element<'static, Message> {
-    match pill {
-        Some(pill) => row![
-            text(pill).color(Color::from_rgb(1.0, 0.4, 0.4)),
-            text(format!("Nivel: {level_pct}%"))
-                .size(12)
-                .color(Color::from_rgb(0.8, 0.9, 0.7)),
-        ]
-        .spacing(16)
-        .into(),
-        None => text("").into(),
     }
 }
 
 fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static, Message> {
     if devices.is_empty() {
-        return text("(sin micrófonos detectados)").size(12).into();
+        return text("(sin micrófonos detectados)").size(theme::FONT_SM).into();
     }
     pick_list(devices.to_vec(), selected.map(|s| s.to_string()), Message::InputDeviceSelected)
         .placeholder("(por defecto)")
+        .style(theme::pick_list)
         .into()
 }
 
 fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
     if entries.is_empty() {
-        return text("Sin entradas todavía. Añade jerga, nombres o siglas.").size(12).into();
+        return text("Sin entradas todavía. Añade jerga, nombres o siglas.")
+            .size(theme::FONT_SM)
+            .into();
     }
-    let mut col = Column::new().spacing(4);
+    let mut col = Column::new().spacing(theme::SPACE_1);
     for (idx, entry) in entries.iter().enumerate() {
         col = col.push(
             row![
-                text(format!("{} → {}", entry.from, entry.to)).size(13),
-                button("✕").on_press(Message::RemoveEntry(idx)),
+                text(format!("{} → {}", entry.from, entry.to)).size(theme::FONT_MD),
+                button("✕").on_press(Message::RemoveEntry(idx)).style(theme::secondary),
             ]
-            .spacing(8)
+            .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
         );
     }
