@@ -7,6 +7,7 @@
 //! - `inject`: escritura en la app activa (arboard + enigo).
 //! - `hotkey`: atajo global (global-hotkey).
 //! - `theme`: tokens de diseño 2026 + estilos de widgets (única fuente de color).
+//! - `tray`: bandeja del sistema (icono + menú Mostrar/Ocultar/Salir).
 //! - `app`: UI Iced.
 
 pub mod log;
@@ -18,4 +19,5 @@ pub mod domain;
 pub mod hotkey;
 pub mod inject;
 pub mod theme;
+pub mod tray;
 pub mod transcribe;
