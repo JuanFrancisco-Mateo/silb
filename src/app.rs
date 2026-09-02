@@ -81,6 +81,10 @@ pub enum Message {
     WindowOpened(window::Id),
     /// «Mostrar/Ocultar ventana» pulsado en el menú de la bandeja.
     ToggleMainWindow,
+    /// La fuente emoji terminó de cargarse en el FontSystem de Iced
+    /// (resultado de `iced::font::load` al arrancar; `Error` es ininhabitable
+    /// en iced 0.13, pero se loguea por si en el futuro se propaga algo).
+    FontLoaded(Result<(), iced::font::Error>),
 }
 
 pub struct WhisprApp {
@@ -153,6 +157,15 @@ impl WhisprApp {
             }
         };
 
+        // Fuente emoji (Segoe UI Emoji en Windows): que los símbolos de la UI
+        // (✓ ☀ ☾ ▾ ▸ ● → ✕) no aparezcan como cajas vacías. La carga añade
+        // los bytes al FontSystem de Iced; los textos se re-shapean solos al
+        // cambiar la versión del FontSystem (ver src/fonts.rs).
+        let font_task = match crate::fonts::load_emoji_font() {
+            Some(task) => task.map(Message::FontLoaded),
+            None => Task::none(),
+        };
+
         let app = Self {
             config,
             status: Status::Idle,
@@ -179,7 +192,7 @@ impl WhisprApp {
             main_window_id: None,
             main_visible: true,
         };
-        (app, bubble_task)
+        (app, Task::batch([bubble_task, font_task]))
     }
 
     fn save_config(&self) {
@@ -696,6 +709,15 @@ impl WhisprApp {
                 } else {
                     self.show_main_window()
                 }
+            }
+            Message::FontLoaded(result) => {
+                // `iced::font::Error` es ininhabitable en iced 0.13; el arm
+                // Err queda como red de seguridad si cambia en el futuro.
+                match result {
+                    Ok(()) => crate::log!("fonts", "fuente emoji registrada en el FontSystem"),
+                    Err(e) => crate::log!("fonts", "error cargando la fuente emoji: {e:?}"),
+                }
+                Task::none()
             }
             // Cierre de la ventana principal → se oculta a la bandeja (la app
             // sigue viva: burbuja, atajo global y bandeja). El cierre lo

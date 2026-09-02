@@ -47,6 +47,13 @@ fancy-regex = "0.14"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
+[dev-dependencies]
+# Tests de glifos emoji: replica el FontSystem de Iced (cosmic-text) para
+# verificar que los símbolos de la UI (✓ ☀ ☾ ▾ ▸ ● → ✕) no quedan en
+# .notdef ("caja vacía") tras cargar la fuente emoji. Misma versión 0.12.1
+# que ya está en el lockfile vía iced_graphics (sin compilación extra).
+cosmic-text = "0.12"
+
 [profile.release]
 lto = true
 strip = true
