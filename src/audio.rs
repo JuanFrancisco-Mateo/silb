@@ -126,11 +126,20 @@ fn build_stream(
     let err_fn = |e| eprintln!("[audio] error en el stream: {e}");
     let channels = config.channels() as usize;
 
+    // whisper.cpp espera 16 kHz. El default de WASAPI suele ser 48 kHz y
+    // alimentar 48k a whisper = audio 3x acelerado = transcripción basura.
+    // WASAPI remuestrea en modo compartido, así que pedimos 16 kHz directo.
+    let stream_cfg = cpal::StreamConfig {
+        channels: config.channels(),
+        sample_rate: cpal::SampleRate(16_000),
+        buffer_size: cpal::BufferSize::Default,
+    };
+
     match config.sample_format() {
         cpal::SampleFormat::F32 => {
             let stream = device
                 .build_input_stream(
-                    &config.config(),
+                    &stream_cfg,
                     move |data: &[f32], _| {
                         push_f32(data, channels, &samples, &level);
                     },
@@ -144,7 +153,7 @@ fn build_stream(
         cpal::SampleFormat::I16 => {
             let stream = device
                 .build_input_stream(
-                    &config.config(),
+                    &stream_cfg,
                     move |data: &[i16], _| {
                         let mut buf = Vec::with_capacity(data.len());
                         for s in data {
@@ -161,7 +170,7 @@ fn build_stream(
         cpal::SampleFormat::U16 => {
             let stream = device
                 .build_input_stream(
-                    &config.config(),
+                    &stream_cfg,
                     move |data: &[u16], _| {
                         let mut buf = Vec::with_capacity(data.len());
                         for s in data {
