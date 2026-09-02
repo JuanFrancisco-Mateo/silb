@@ -328,12 +328,15 @@ impl WhisprApp {
                 }
 
                 let model = self.config.selected_model();
+                // El diccionario viaja como initial_prompt: sesga el
+                // reconocedor hacia jerga/nombres/siglas ANTES de transcribir.
+                let dictionary = self.config.dictionary.clone();
                 let (tx, rx) = mpsc::channel();
                 self.transcribe_rx = Some(rx);
                 self.status = Status::Transcribing;
 
                 std::thread::spawn(move || {
-                    let result = transcribe_samples(samples, model);
+                    let result = transcribe_samples(samples, model, dictionary);
                     let _ = tx.send(result);
                 });
 
@@ -992,8 +995,13 @@ fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
 }
 
 /// Transcribe en un hilo de trabajo: a) descarga el modelo si falta (la
-/// primera vez, silencioso), b) carga el contexto whisper.cpp, c) transcribe.
-fn transcribe_samples(samples: Vec<f32>, model: Model) -> Result<String, String> {
+/// primera vez, silencioso), b) carga el contexto whisper.cpp, c) transcribe
+/// con el diccionario del usuario como initial_prompt (sesgo léxico).
+fn transcribe_samples(
+    samples: Vec<f32>,
+    model: Model,
+    dictionary: Vec<DictionaryEntry>,
+) -> Result<String, String> {
     if !crate::transcribe::model_exists(model) {
         crate::log!(
             "transcribe",
@@ -1003,7 +1011,8 @@ fn transcribe_samples(samples: Vec<f32>, model: Model) -> Result<String, String>
         crate::transcribe::ensure_model(model, |_, _| {})?;
     }
     let engine = WhisperEngine::load(model)?;
-    engine.transcribe(&samples, "es")
+    let prompt = crate::transcribe::build_initial_prompt(&dictionary);
+    engine.transcribe(&samples, "es", prompt.as_deref())
 }
 
 // ponytail: el contexto whisper se carga en cada turno; si el modelo small
