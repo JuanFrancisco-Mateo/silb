@@ -131,6 +131,7 @@ pub struct WhisperEngine {
 
 impl WhisperEngine {
     pub fn load(model: Model) -> Result<Self, String> {
+        eprintln!("{}", whisper_rs::print_system_info());
         let path = model_path(model);
         let params = WhisperContextParameters::default();
         let ctx = WhisperContext::new_with_params(&path, params)
