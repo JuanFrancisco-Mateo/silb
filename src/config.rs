@@ -18,6 +18,16 @@ pub struct Config {
     pub input_device: Option<String>,
     /// Tema oscuro por defecto (2026: dark mode default); toggle persistido.
     pub dark_mode: Option<bool>,
+    /// Corrección IA: post-procesado con LLM local de los turnos con
+    /// intención correctiva («no no, era 2 en vez de 4»). Toggle en Ajustes;
+    /// spec en docs/CORRECCION-VOZ.md. Default: activada.
+    pub ai_correction_enabled: Option<bool>,
+    /// Override del endpoint OpenAI-compatible del corrector. Default:
+    /// `http://127.0.0.1:8081/v1` (llama.cpp/Ornith en WSL, alcanzable desde
+    /// Windows por localhost forwarding). Groq/Gemini con su base_url.
+    pub llm_base_url: Option<String>,
+    pub llm_model: Option<String>,
+    pub llm_api_key: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -59,6 +69,27 @@ impl Config {
     pub fn is_dark(&self) -> bool {
         self.dark_mode.unwrap_or(true)
     }
+
+    /// Corrección IA activada (toggle en Ajustes; default: on).
+    pub fn ai_correction_enabled(&self) -> bool {
+        self.ai_correction_enabled.unwrap_or(true)
+    }
+
+    /// Configuración del LLM corrector. Defaults: llama.cpp local en WSL
+    /// (Ornith 9B, puerto 8081); overridables en config.json.
+    pub fn llm_settings(&self) -> crate::llm::LlmConfig {
+        crate::llm::LlmConfig {
+            base_url: self
+                .llm_base_url
+                .clone()
+                .unwrap_or_else(|| "http://127.0.0.1:8081/v1".to_string()),
+            model: self
+                .llm_model
+                .clone()
+                .unwrap_or_else(|| "ornith-1.0-9b".to_string()),
+            api_key: self.llm_api_key.clone(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -90,5 +121,27 @@ mod tests {
         assert!(cfg.is_dark(), "2026: dark mode default");
         let claro = Config { dark_mode: Some(false), ..Default::default() };
         assert!(!claro.is_dark());
+    }
+
+    #[test]
+    fn correction_ia_defaults_on_y_local() {
+        let cfg = Config::default();
+        assert!(cfg.ai_correction_enabled(), "corrección IA activada por defecto");
+        let llm = cfg.llm_settings();
+        assert_eq!(llm.base_url, "http://127.0.0.1:8081/v1");
+        assert_eq!(llm.model, "ornith-1.0-9b");
+        // Override de endpoint (p.ej. Groq/Gemini) via config.json.
+        let remoto = Config {
+            llm_base_url: Some("https://api.groq.com/openai/v1".into()),
+            llm_model: Some("llama-3.3-70b-versatile".into()),
+            llm_api_key: Some("clave".into()),
+            ..Default::default()
+        };
+        let l2 = remoto.llm_settings();
+        assert_eq!(l2.base_url, "https://api.groq.com/openai/v1");
+        assert_eq!(l2.model, "llama-3.3-70b-versatile");
+        assert_eq!(l2.api_key.as_deref(), Some("clave"));
+        let off = Config { ai_correction_enabled: Some(false), ..Default::default() };
+        assert!(!off.ai_correction_enabled());
     }
 }
