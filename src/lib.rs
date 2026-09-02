@@ -7,11 +7,14 @@
 //! - `inject`: escritura en la app activa (arboard + enigo).
 //! - `hotkey`: atajo global (global-hotkey).
 //! - `theme`: tokens de diseño 2026 + estilos de widgets (única fuente de color).
+//! - `fonts`: carga de la fuente emoji (Segoe UI Emoji) para que los símbolos
+//!   de la UI (✓ ☀ ☾ ▾ ▸ ● → ✕) no se vean como cajas vacías.
 //! - `tray`: bandeja del sistema (icono + menú Mostrar/Ocultar/Salir).
 //! - `app`: UI Iced.
 
 pub mod log;
 pub mod app;
+pub mod fonts;
 pub mod bubble;
 pub mod audio;
 pub mod config;
