@@ -245,7 +245,9 @@ impl WhisprApp {
         let recording = matches!(self.bubble_status(), Status::Recording);
         let fill = match self.bubble_status() {
             Status::Recording | Status::Error(_) => crate::theme::ERR,
-            Status::Transcribing | Status::Downloading { .. } => crate::theme::WARN,
+            Status::Transcribing | Status::Correcting | Status::Downloading { .. } => {
+                crate::theme::WARN
+            }
             Status::Idle => crate::theme::ACCENT,
         };
 
