@@ -15,6 +15,7 @@ pub struct Config {
     pub model: Option<String>,
     pub cleanup_enabled: Option<bool>,
     pub auto_inject: Option<bool>,
+    pub input_device: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
