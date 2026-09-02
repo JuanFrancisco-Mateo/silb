@@ -6,9 +6,10 @@
 //! #7C6CFF; rojo mientras se graba, ámbar transcribiendo).
 //!
 //! Interacción:
-//! - Pulsar = grabar (mismo `Message::StartRecording` de la ventana principal).
-//! - Soltar  = transcribir y ESCRIBIR el texto en la app que tiene el foco.
-//! - Arrastrar (mover > 7 px lógicos) = mover la burbuja, no dictar.
+//! - Clic izquierdo (pulsar → soltar) = grabar y transcribir, escribiendo el
+//!   texto en la app con foco (comportamiento por defecto; NO se toca).
+//! - Arrastrar la burbuja = SOLO con clic derecho mantenido + movimiento
+//!   (> 7 px lógicos). El clic derecho simple (sin movimiento) no hace nada.
 //!
 //! La inyección reutiliza `inject::inject_text_into_active_app` (clipboard +
 //! Ctrl+V). Para que el Ctrl+V llegue al campo activo de la otra app y no a la
@@ -27,6 +28,15 @@ use iced::{
     Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme,
 };
 
+#[cfg(target_os = "windows")]
+use winapi::shared::windef::{HWND, POINT, RECT};
+#[cfg(target_os = "windows")]
+use winapi::um::winuser::{
+    GetAsyncKeyState, GetCursorPos, GetMonitorInfoW, GetWindowRect, MonitorFromPoint,
+    ReleaseCapture, SetCapture, SetWindowPos, VK_RBUTTON, MONITORINFO, MONITOR_DEFAULTTONEAREST,
+    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+};
+
 use crate::app::{Message, Status, WhisprApp};
 
 /// Tamaño de la ventana de la burbuja (y del círculo), en px lógicos.
@@ -40,6 +50,87 @@ pub const BUBBLE_TITLE: &str = "WhisprOpen-Bubble";
 /// aquí porque `iced::event::listen_with` exige una `fn` estática sin
 /// capturas; el filtro del subscriptor compara contra este valor.
 static BUBBLE_WINDOW_ID: AtomicU64 = AtomicU64::new(0);
+
+// ---------------------------------------------------------------------------
+// Arrastre con botón derecho: umbral y máquina de estados
+// ---------------------------------------------------------------------------
+
+/// Distancia mínima (px lógicos) de movimiento para considerar que es un
+/// arrastre y no un clic (mismo umbral de 7 px que tenía el drag original).
+pub const DRAG_THRESHOLD: f32 = 7.0;
+
+/// True si el movimiento entre `from` y `to` supera el umbral de arrastre
+/// (comparación al cuadrado para evitar la raíz cuadrada).
+pub fn is_drag_movement(from: Point, to: Point) -> bool {
+    let dx = to.x - from.x;
+    let dy = to.y - from.y;
+    dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD
+}
+
+/// Máquina de estados del arrastre con botón derecho.
+///
+/// El botón derecho SOLO arrastra la burbuja: al pulsar se queda «armado»,
+/// si el cursor se mueve más de `DRAG_THRESHOLD` empieza el arrastre, y al
+/// soltar (o cancelar) se cierra todo. Nunca toca audio ni estado de
+/// grabación: un clic derecho simple (pulsar y soltar sin mover) no hace
+/// nada, y al terminar el arrastre no queda ningún estado residual.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RightDragState {
+    /// Botón derecho pulsado dentro de la burbuja.
+    pub pressed: bool,
+    /// El movimiento superó el umbral: la burbuja se está arrastrando.
+    pub dragging: bool,
+    /// Posición del cursor al pulsar (para medir el umbral).
+    press_pos: Point,
+}
+
+impl Default for RightDragState {
+    fn default() -> Self {
+        Self {
+            pressed: false,
+            dragging: false,
+            press_pos: Point::ORIGIN,
+        }
+    }
+}
+
+impl RightDragState {
+    /// Pulsar el botón derecho: arma el posible arrastre (sin grabar).
+    pub fn press(&mut self, pos: Point) {
+        self.pressed = true;
+        self.dragging = false;
+        self.press_pos = pos;
+    }
+
+    /// Movimiento con el botón derecho pulsado. Devuelve `true` solo en el
+    /// instante en que el movimiento cruza el umbral (arranque del arrastre).
+    pub fn move_cursor(&mut self, pos: Point) -> bool {
+        if !self.pressed || self.dragging {
+            return false;
+        }
+        if is_drag_movement(self.press_pos, pos) {
+            self.dragging = true;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Soltar el botón derecho. Devuelve `true` si se estaba arrastrando
+    /// (el llamador debe liberar la captura del ratón).
+    pub fn release(&mut self) -> bool {
+        let was_dragging = self.dragging;
+        self.pressed = false;
+        self.dragging = false;
+        was_dragging
+    }
+
+    /// Cancelar sin arrastre (cursor fuera de la ventana, captura perdida).
+    pub fn cancel(&mut self) {
+        self.pressed = false;
+        self.dragging = false;
+    }
+}
 
 /// Configuración de la ventana de la burbuja. Verificado en iced 0.13.1
 /// (`iced_core::window::Settings`): `decorations`, `transparent`, `level`
@@ -89,9 +180,10 @@ pub fn bubble_theme() -> Theme {
     )
 }
 
-/// Suscripción a los eventos de ratón de la burbuja: pulso, suelta y
-/// movimiento (para detectar arrastre). Filtrada por window::Id, así la
-/// ventana principal no se ve afectada.
+/// Suscripción a los eventos de ratón de la burbuja: pulsos (izquierdo =
+/// grabar, derecho = arrastrar), sueltas y movimiento para detectar el
+/// arrastre. Filtrada por window::Id, así la ventana principal no se ve
+/// afectada.
 pub fn bubble_events_subscription(bubble_id: Option<window::Id>) -> Subscription<Message> {
     if let Some(id) = bubble_id {
         BUBBLE_WINDOW_ID.store(id_num(id), Ordering::Relaxed);
@@ -124,12 +216,18 @@ fn bubble_event_filter(
         iced::Event::Mouse(mouse::Event::ButtonReleased(Button::Left)) => {
             Some(Message::BubbleRelease)
         }
+        iced::Event::Mouse(mouse::Event::ButtonPressed(Button::Right)) => {
+            Some(Message::BubbleRightPress)
+        }
+        iced::Event::Mouse(mouse::Event::ButtonReleased(Button::Right)) => {
+            Some(Message::BubbleRightRelease)
+        }
         iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
             Some(Message::BubbleCursorMoved(position))
         }
-        // El cursor salió de la ventana sin soltar: tratar como soltar
-        // (si no hay press pendiente, BubbleRelease es un no-op).
-        iced::Event::Mouse(mouse::Event::CursorLeft) => Some(Message::BubbleRelease),
+        // El cursor salió de la ventana sin soltar: cerrar ambos botones
+        // (izquierdo dicta igualmente; derecho cancela cualquier arrastre).
+        iced::Event::Mouse(mouse::Event::CursorLeft) => Some(Message::BubbleCursorLeft),
         _ => None,
     }
 }
@@ -257,7 +355,7 @@ pub fn apply_noactivate_async() {
 }
 
 #[cfg(target_os = "windows")]
-type BubbleHwnd = winapi::shared::windef::HWND;
+type BubbleHwnd = HWND;
 
 #[cfg(not(target_os = "windows"))]
 type BubbleHwnd = ();
@@ -312,6 +410,155 @@ fn apply_noactivate(hwnd: BubbleHwnd) {
 #[cfg(not(target_os = "windows"))]
 fn apply_noactivate(_hwnd: BubbleHwnd) {}
 
+// ---------------------------------------------------------------------------
+// Arrastre con botón derecho (winapi): captura del ratón + seguimiento
+// ---------------------------------------------------------------------------
+
+/// Arrastre manual de la burbuja con el botón derecho.
+///
+/// No se usa `window::drag` a propósito: en Windows envía
+/// `WM_NCLBUTTONDOWN` (HTCAPTION) y el bucle modal del sistema espera el
+/// botón IZQUIERDO — si se suelta el derecho, la burbuja quedaría congelada
+/// esperando un clic izquierdo. En su lugar se captura el ratón
+/// (`SetCapture`) y cada movimiento del cursor reposiciona la ventana con
+/// `SetWindowPos` hasta soltar. La captura además garantiza que el evento de
+/// soltado llegue a la burbuja aunque el cursor quede fuera de su rectángulo.
+#[cfg(target_os = "windows")]
+pub struct BubbleDrag {
+    hwnd: BubbleHwnd,
+    /// Última posición del cursor leída (px físicos): el DELTA entre lecturas
+    /// es lo que mueve la ventana (seguimiento exacto aunque el bucle de
+    /// eventos se retrase: cada evento aplica el recorrido acumulado).
+    last_cursor: (i32, i32),
+    /// Tamaño de la ventana en px físicos (para el clamp multi-monitor).
+    size: (i32, i32),
+    /// Última posición aplicada a la ventana; evita `SetWindowPos` redundantes.
+    last: (i32, i32),
+}
+
+#[cfg(not(target_os = "windows"))]
+pub struct BubbleDrag {
+    _private: (),
+}
+
+#[cfg(target_os = "windows")]
+impl BubbleDrag {
+    /// Captura el ratón y prepara el seguimiento. `None` si la ventana de la
+    /// burbuja aún no existe (los eventos vienen de ella, así que en la
+    /// práctica siempre existe).
+    pub fn start() -> Option<BubbleDrag> {
+        unsafe {
+            let hwnd = find_bubble_hwnd()?;
+            let mut rect: RECT = std::mem::zeroed();
+            if GetWindowRect(hwnd, &mut rect) == 0 {
+                return None;
+            }
+            let mut cursor: POINT = std::mem::zeroed();
+            if GetCursorPos(&mut cursor) == 0 {
+                return None;
+            }
+            let size = (rect.right - rect.left, rect.bottom - rect.top);
+            // Los eventos del ratón se dirigen a la burbuja mientras dure el
+            // arrastre, aunque el cursor salga de su rectángulo.
+            SetCapture(hwnd);
+            Some(BubbleDrag {
+                hwnd,
+                last_cursor: (cursor.x, cursor.y),
+                size,
+                last: (rect.left, rect.top),
+            })
+        }
+    }
+
+    /// Reposiciona la ventana siguiendo al cursor, manteniendo al menos
+    /// `MIN_VISIBLE_PX` visibles dentro del área de trabajo del monitor.
+    ///
+    /// Se aplica el DELTA del cursor (no su posición absoluta): si el bucle
+    /// de eventos se retrasa y varios `CursorMoved` llegan de golpe, cada uno
+    /// aplica el recorrido acumulado y la burbuja aterriza siempre donde
+    /// está el cursor, sin «absorber» movimiento.
+    pub fn follow(&mut self) {
+        const MIN_VISIBLE_PX: i32 = 24;
+        unsafe {
+            let mut cursor: POINT = std::mem::zeroed();
+            if GetCursorPos(&mut cursor) == 0 {
+                return;
+            }
+            let (dx, dy) = (cursor.x - self.last_cursor.0, cursor.y - self.last_cursor.1);
+            if dx == 0 && dy == 0 {
+                return;
+            }
+            self.last_cursor = (cursor.x, cursor.y);
+
+            // El monitor que contiene al cursor: permite arrastrar entre
+            // monitores sin que la ventana se pierda fuera de la pantalla.
+            let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
+            let mut info: MONITORINFO = std::mem::zeroed();
+            info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+            if GetMonitorInfoW(monitor, &mut info) == 0 {
+                return;
+            }
+            let work = info.rcWork;
+            let (w, h) = self.size;
+            let mut x = self.last.0 + dx;
+            let mut y = self.last.1 + dy;
+            // Clamp: mantener al menos MIN_VISIBLE_PX dentro del área de
+            // trabajo (siempre recuperable con un segundo arrastre).
+            x = x
+                .max(work.left - w + MIN_VISIBLE_PX)
+                .min(work.right - MIN_VISIBLE_PX);
+            y = y
+                .max(work.top - h + MIN_VISIBLE_PX)
+                .min(work.bottom - MIN_VISIBLE_PX);
+            if (x, y) == self.last {
+                return;
+            }
+            self.last = (x, y);
+            SetWindowPos(
+                self.hwnd,
+                std::ptr::null_mut(),
+                x,
+                y,
+                0,
+                0,
+                SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+            );
+        }
+    }
+
+    /// Libera la captura del ratón (fin del arrastre).
+    pub fn end(&self) {
+        unsafe {
+            ReleaseCapture();
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+impl BubbleDrag {
+    pub fn start() -> Option<BubbleDrag> {
+        None
+    }
+    pub fn follow(&mut self) {}
+    pub fn end(&self) {}
+}
+
+/// True mientras el botón derecho del ratón esté físicamente pulsado.
+///
+/// Red de seguridad del arrastre: si el sistema roba la captura (alt-tab,
+/// menú del sistema) el evento de soltado no llega a la burbuja; el poll de
+/// 100 ms usa este chequeo para cancelar el arrastre al detectar el botón ya
+/// liberado.
+#[cfg(target_os = "windows")]
+pub fn right_button_down() -> bool {
+    unsafe { (GetAsyncKeyState(VK_RBUTTON) as u16) & 0x8000 != 0 }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn right_button_down() -> bool {
+    true
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -360,5 +607,132 @@ mod tests {
         // público: la función acepta None y una Id cualquiera sin pánico).
         let _ = bubble_events_subscription(None);
         let _ = bubble_events_subscription(Some(window::Id::unique()));
+    }
+
+    // Los tests del filtro comparten `BUBBLE_WINDOW_ID` (static global), así
+    // que se serializan con un mutex para no pisarse entre sí.
+    static FILTER_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Estado base para los tests del filtro: dispara a la burbuja real.
+    fn filter_id() -> window::Id {
+        let id = window::Id::unique();
+        let _ = bubble_events_subscription(Some(id));
+        id
+    }
+
+    #[test]
+    fn filtro_mapea_click_derecho_al_arrastre() {
+        let _guard = FILTER_LOCK.lock().unwrap();
+        let id = filter_id();
+        let ev = iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right);
+        match bubble_event_filter(iced::Event::Mouse(ev), iced::event::Status::Ignored, id) {
+            Some(Message::BubbleRightPress) => {}
+            other => panic!("esperaba BubbleRightPress, recibí {other:?}"),
+        }
+        let ev = iced::mouse::Event::ButtonReleased(iced::mouse::Button::Right);
+        match bubble_event_filter(iced::Event::Mouse(ev), iced::event::Status::Ignored, id) {
+            Some(Message::BubbleRightRelease) => {}
+            other => panic!("esperaba BubbleRightRelease, recibí {other:?}"),
+        }
+    }
+
+    #[test]
+    fn filtro_deja_intacto_click_izquierdo() {
+        let _guard = FILTER_LOCK.lock().unwrap();
+        let id = filter_id();
+        let ev = iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left);
+        match bubble_event_filter(iced::Event::Mouse(ev), iced::event::Status::Ignored, id) {
+            Some(Message::BubblePress) => {}
+            other => panic!("esperaba BubblePress, recibí {other:?}"),
+        }
+        let ev = iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left);
+        match bubble_event_filter(iced::Event::Mouse(ev), iced::event::Status::Ignored, id) {
+            Some(Message::BubbleRelease) => {}
+            other => panic!("esperaba BubbleRelease, recibí {other:?}"),
+        }
+    }
+
+    #[test]
+    fn filtro_ignora_otras_ventanas() {
+        let _guard = FILTER_LOCK.lock().unwrap();
+        filter_id(); // el evento se filtra contra `other`, no contra la burbuja
+        let other = window::Id::unique();
+        let ev = iced::mouse::Event::ButtonPressed(iced::mouse::Button::Right);
+        assert!(
+            matches!(
+                bubble_event_filter(iced::Event::Mouse(ev), iced::event::Status::Ignored, other),
+                None
+            ),
+            "evento de otra ventana debe ignorarse"
+        );
+        let ev = iced::mouse::Event::CursorLeft;
+        assert!(
+            matches!(
+                bubble_event_filter(iced::Event::Mouse(ev), iced::event::Status::Ignored, other),
+                None
+            ),
+            "evento de otra ventana debe ignorarse"
+        );
+    }
+
+    #[test]
+    fn umbral_de_arrastre_solo_supera_7px() {
+        use iced::Point;
+        // Por debajo o igual al umbral: no es arrastre (clic con temblor).
+        assert!(!is_drag_movement(Point::ORIGIN, Point::ORIGIN));
+        assert!(!is_drag_movement(Point::ORIGIN, Point::new(4.0, 4.0))); // 5.7 px
+        assert!(!is_drag_movement(Point::ORIGIN, Point::new(7.0, 0.0))); // exacto
+        // Por encima: arrastre.
+        assert!(is_drag_movement(Point::ORIGIN, Point::new(8.0, 0.0)));
+        assert!(is_drag_movement(Point::ORIGIN, Point::new(5.0, 6.0))); // 7.8 px
+        assert!(is_drag_movement(Point::new(10.0, 10.0), Point::ORIGIN));
+    }
+
+    #[test]
+    fn click_derecho_simple_no_arrastra_y_no_deja_estado() {
+        let mut s = RightDragState::default();
+        s.press(Point::ORIGIN);
+        // Soltar sin mover: no fue arrastre y el estado queda limpio.
+        assert!(!s.release(), "el clic simple no debe reportar arrastre");
+        assert!(!s.pressed);
+        assert!(!s.dragging);
+    }
+
+    #[test]
+    fn movimiento_por_encima_del_umbral_arranca_el_arrastre() {
+        let mut s = RightDragState::default();
+        s.press(Point::ORIGIN);
+        // Movimiento por debajo del umbral: sigue armado, sin arrastrar.
+        assert!(!s.move_cursor(Point::new(3.0, 3.0)));
+        assert!(s.pressed);
+        assert!(!s.dragging);
+        // Cruza el umbral: arranque (true solo una vez).
+        assert!(s.move_cursor(Point::new(9.0, 0.0)));
+        assert!(s.dragging);
+        assert!(!s.move_cursor(Point::new(40.0, 40.0)), "ya arrastrando");
+        assert!(s.dragging);
+        // Soltar: reporta el arrastre y limpia todo el estado.
+        assert!(s.release());
+        assert!(!s.pressed);
+        assert!(!s.dragging);
+    }
+
+    #[test]
+    fn estado_limpio_sin_press_previo() {
+        let mut s = RightDragState::default();
+        assert!(!s.move_cursor(Point::new(50.0, 50.0)));
+        assert!(!s.release());
+        assert!(!s.pressed && !s.dragging);
+    }
+
+    #[test]
+    fn cancel_limpia_un_arrastre_en_curso() {
+        let mut s = RightDragState::default();
+        s.press(Point::ORIGIN);
+        s.move_cursor(Point::new(30.0, 0.0));
+        assert!(s.dragging);
+        s.cancel();
+        assert!(!s.pressed);
+        assert!(!s.dragging);
     }
 }
