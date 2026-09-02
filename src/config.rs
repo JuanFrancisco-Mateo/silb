@@ -46,7 +46,10 @@ impl Config {
         match self.model.as_deref() {
             Some("base") => Model::Base,
             Some("small") => Model::Small,
-            _ => Model::Tiny,
+            // Default (sin config) y valores inválidos: Small. Base/tiny en
+            // español producen errores fonéticos (buscar→boscar); small es el
+            // mínimo razonable y la RTX 4070 lo corre en tiempo real.
+            _ => Model::Small,
         }
     }
 }
@@ -58,7 +61,7 @@ mod tests {
     #[test]
     fn defaults_are_safe() {
         let cfg = Config::default();
-        assert_eq!(cfg.selected_model(), Model::Tiny);
+        assert_eq!(cfg.selected_model(), Model::Small);
         assert!(cfg.dictionary.is_empty());
         assert_eq!(cfg.cleanup_enabled, None);
     }
@@ -69,8 +72,8 @@ mod tests {
     }
 
     #[test]
-    fn invalid_model_falls_back_to_tiny() {
+    fn invalid_model_falls_back_to_small() {
         let cfg = Config { model: Some("gigante".into()), ..Default::default() };
-        assert_eq!(cfg.selected_model(), Model::Tiny);
+        assert_eq!(cfg.selected_model(), Model::Small);
     }
 }
