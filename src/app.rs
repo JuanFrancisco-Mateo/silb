@@ -68,8 +68,13 @@ pub enum Message {
     BubbleRelease,
     /// Cursor movido dentro de la burbuja (detección de arrastre).
     BubbleCursorMoved(Point),
-    /// El usuario pidió cerrar una ventana (X de la principal → salir).
+    /// El usuario pidió cerrar una ventana (X de la principal → a la bandeja).
     WindowCloseRequested(window::Id),
+    // ── Bandeja del sistema (tray) ────────────────────────────────────────
+    /// Se abrió una ventana; con su id se identifica la principal.
+    WindowOpened(window::Id),
+    /// «Mostrar/Ocultar ventana» pulsado en el menú de la bandeja.
+    ToggleMainWindow,
 }
 
 pub struct WhisprApp {
@@ -96,6 +101,13 @@ pub struct WhisprApp {
     bubble_press_pos: Point,
     bubble_last_pos: Point,
     pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
+    // ── Bandeja del sistema ───────────────────────────────────────────────
+    tray: Option<crate::tray::SystemTray>,
+    /// Id de la ventana principal (se descubre con `window::open_events()`:
+    /// iced no lo expone al crear la ventana desde `program::run`).
+    main_window_id: Option<window::Id>,
+    /// Si la ventana principal está visible (controla el texto del menú).
+    main_visible: bool,
 }
 
 impl WhisprApp {
@@ -122,6 +134,18 @@ impl WhisprApp {
             (Some(id), task.map(Message::BubbleOpened))
         };
 
+        // Bandeja del sistema. Se crea aquí (hilo principal, el mismo donde
+        // corre el bucle de winit): en Windows, tray-icon crea su ventana
+        // oculta en el hilo llamante y los eventos llegan por canal global.
+        // Si falla, la app sigue funcionando sin bandeja (se avisa en el log).
+        let tray = match crate::tray::SystemTray::new() {
+            Ok(tray) => Some(tray),
+            Err(e) => {
+                crate::log!("tray", "{e}");
+                None
+            }
+        };
+
         let app = Self {
             config,
             status: Status::Idle,
@@ -145,6 +169,9 @@ impl WhisprApp {
             bubble_press_pos: Point::new(0.0, 0.0),
             bubble_last_pos: Point::new(0.0, 0.0),
             pending_inject: false,
+            tray,
+            main_window_id: None,
+            main_visible: true,
         };
         (app, bubble_task)
     }
@@ -464,6 +491,24 @@ impl WhisprApp {
                     return self.update(Message::Toggle);
                 }
 
+                // Bandeja: clics del menú contextual (mostrar/ocultar, salir).
+                // Mismo patrón que el atajo global: canal global drenado aquí.
+                if let Some(tray) = &self.tray {
+                    for _ in 0..8 {
+                        match tray.events.try_recv() {
+                            Ok(ev) if ev.id == crate::tray::MENU_TOGGLE_ID => {
+                                return self.update(Message::ToggleMainWindow);
+                            }
+                            Ok(ev) if ev.id == crate::tray::MENU_QUIT_ID => {
+                                crate::log!("tray", "«Salir» desde la bandeja");
+                                return iced::exit();
+                            }
+                            Ok(_) => continue,
+                            Err(_) => break,
+                        }
+                    }
+                }
+
                 // Resultado de transcripción/descarga.
                 if let Some(rx) = &self.transcribe_rx {
                     match rx.try_recv() {
@@ -558,19 +603,80 @@ impl WhisprApp {
                 }
                 Task::none()
             }
-            // Cerrar cualquier ventana termina la app (el cierre lo gestionamos
-            // nosotros: `exit_on_close_request = false` en ambas ventanas para
-            // que este evento exista; con el default `true`, iced cierra la
-            // ventana sin emitir el evento y la app quedaría viva con la otra).
-            Message::WindowCloseRequested(_id) => iced::exit(),
+            // ── Bandeja del sistema ─────────────────────────────────────────
+            Message::WindowOpened(id) => {
+                // La ventana principal abre antes que la burbuja; pero para no
+                // depender de ordenes, se descarta la del id conocido de la
+                // burbuja: la primera distinta es la principal.
+                if self.main_window_id.is_none() && Some(id) != self.bubble_id {
+                    self.main_window_id = Some(id);
+                    crate::log!("tray", "ventana principal registrada (id={id})");
+                }
+                Task::none()
+            }
+            Message::ToggleMainWindow => {
+                if self.main_visible {
+                    self.hide_main_window()
+                } else {
+                    self.show_main_window()
+                }
+            }
+            // Cierre de la ventana principal → se oculta a la bandeja (la app
+            // sigue viva: burbuja, atajo global y bandeja). El cierre lo
+            // gestionamos nosotros (`exit_on_close_request = false` en ambas
+            // ventanas, ver `bubble::bubble_settings`).
+            Message::WindowCloseRequested(id) if Some(id) == self.main_window_id => {
+                self.hide_main_window()
+            }
+            // La burbuja no tiene botón de cierre (sin decoración): un
+            // WM_CLOSE ahí solo llega desde fuera (taskkill, cierre de sesión)
+            // y sí termina la app. También cubre el caso de que la principal
+            // aún no se haya registrado (cierre antes de WindowOpened).
+            Message::WindowCloseRequested(id) => {
+                crate::log!("tray", "cierre de ventana {id} → salir");
+                iced::exit()
+            }
         }
+    }
+
+    /// Oculta la ventana principal (se queda en la bandeja) y actualiza el
+    /// texto del ítem del menú.
+    fn hide_main_window(&mut self) -> Task<Message> {
+        let Some(id) = self.main_window_id else {
+            return Task::none();
+        };
+        self.main_visible = false;
+        crate::log!("tray", "ocultando ventana principal (queda en la bandeja)");
+        if let Some(tray) = &self.tray {
+            tray.toggle_item.set_text(crate::tray::MENU_LABEL_HIDDEN);
+        }
+        window::change_mode(id, window::Mode::Hidden)
+    }
+
+    /// Vuelve a mostrar (y enfocar) la ventana principal desde la bandeja.
+    fn show_main_window(&mut self) -> Task<Message> {
+        let Some(id) = self.main_window_id else {
+            return Task::none();
+        };
+        self.main_visible = true;
+        crate::log!("tray", "mostrando ventana principal");
+        if let Some(tray) = &self.tray {
+            tray.toggle_item.set_text(crate::tray::MENU_LABEL_VISIBLE);
+        }
+        Task::batch([
+            window::change_mode(id, window::Mode::Windowed),
+            window::gain_focus(id),
+        ])
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
         let poll = iced::time::every(Duration::from_millis(100)).map(|_| Message::Poll);
         let closes = iced::window::close_requests().map(Message::WindowCloseRequested);
+        // Descubre el id de la ventana principal (iced no lo devuelve al
+        // crearla desde `program::run`; la burbuja se identifica por el suyo).
+        let opened = iced::window::open_events().map(Message::WindowOpened);
         let bubble = crate::bubble::bubble_events_subscription(self.bubble_id);
-        Subscription::batch([poll, closes, bubble])
+        Subscription::batch([poll, closes, opened, bubble])
     }
 
     pub fn theme(&self) -> Theme {

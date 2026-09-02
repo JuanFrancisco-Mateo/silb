@@ -18,6 +18,12 @@ iced_winit = { version = "0.13", features = ["program"] }
 # clics no roben el foco de la app donde se dicta
 winapi = { version = "0.3", features = ["winuser", "windef"] }
 
+# Bandeja del sistema: icono en el tray de Windows + menú contextual
+# (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el
+# hilo llamante (el del bucle de winit) y entrega los eventos por canal global
+# (misma mecánica que global-hotkey); ver src/tray.rs
+tray-icon = "0.24"
+
 # Audio + transcripción
 cpal = "0.15"
 whisper-rs = { version = "0.16", features = ["cuda"] }
