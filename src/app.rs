@@ -784,23 +784,33 @@ impl WhisprApp {
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
 
-        // ── Hero: estado del micrófono como elemento principal ───────────────
-        // Feedback doble: color de estado (punto + borde de la tarjeta) y label.
+        // ── Hero: estado del micrófono (tira horizontal compacta) ────────────
+        // En portrait el hero deja de ser una columna centrada y pasa a una
+        // fila: punto de estado + label + hint a la derecha; la barra de
+        // nivel/progreso va debajo, a todo el ancho de la tarjeta.
+        // Feedback doble intacto: color de estado (punto + borde) y label.
         let mic = self.mic_ui(t);
         let mut hero_content = column![
-            text("●").size(theme::FONT_DOT).color(mic.color),
-            text(mic.label).size(theme::FONT_HERO).color(t.text),
-            text(mic.hint).size(theme::FONT_SM).color(mic.hint_color),
+            row![
+                text("●").size(theme::FONT_XL).color(mic.color),
+                column![
+                    text(mic.label).size(theme::FONT_HERO).color(t.text),
+                    text(mic.hint).size(theme::FONT_SM).color(mic.hint_color),
+                ]
+                .width(Length::Fill)
+                .spacing(theme::SPACE_1),
+            ]
+            .spacing(theme::SPACE_3)
+            .align_y(iced::Alignment::Center),
         ]
-        .spacing(theme::SPACE_2)
-        .align_x(iced::Alignment::Center);
+        .spacing(theme::SPACE_2);
 
         // Micro-feedback (>= 200 ms) no decorativo: nivel del mic / progreso.
         match &self.status {
             Status::Recording => {
                 hero_content = hero_content.push(
                     progress_bar(0.0..=100.0, self.mic_level_percent() as f32)
-                        .width(Length::Fixed(220.0))
+                        .width(Length::Fill)
                         .style(move |th| theme::progress(th, t.accent)),
                 );
             }
@@ -808,7 +818,7 @@ impl WhisprApp {
                 let pct = (*downloaded as f32 / *total as f32 * 100.0).min(100.0);
                 hero_content = hero_content.push(
                     progress_bar(0.0..=100.0, pct)
-                        .width(Length::Fixed(220.0))
+                        .width(Length::Fill)
                         .style(move |th| theme::progress(th, t.warn)),
                 );
             }
@@ -818,13 +828,13 @@ impl WhisprApp {
         let hero = button(
             container(hero_content)
                 .width(Length::Fill)
-                .padding(theme::SPACE_4)
+                .padding(theme::SPACE_3)
                 .style(move |th| theme::mic_card(th, mic.color)),
         )
         .on_press(Message::Toggle)
         .style(theme::mic);
 
-        // ── Transcript (ocupa el resto del alto) ─────────────────────────────
+        // ── Transcript: la zona central, scroll propio (tipo chat) ───────────
         let transcript_empty = self.transcript.is_empty();
         let transcript_card = container(
             scrollable(
@@ -841,6 +851,9 @@ impl WhisprApp {
                 .padding(theme::SPACE_3),
             )
             .style(theme::scrollable)
+            // Sigue al final del texto: cada turno nuevo se ve al instante
+            // (como una conversación de chat).
+            .anchor_bottom()
             .height(Length::Fill),
         )
         .width(Length::Fill)
@@ -876,12 +889,26 @@ impl WhisprApp {
             text("")
         };
 
-        // ── Configuración con progressive disclosure (menú, no barra llena) ──
-        let mut content = column![header, hero, transcript_card, actions, feedback]
+        // ── Zona central: transcript o ajustes (progressive disclosure) ──────
+        // En portrait el ancho es pequeño: los ajustes se apoderan de la zona
+        // central con su propio scroll en vez de empujar el transcript hacia
+        // abajo (el transcript conserva su scroll independiente).
+        let middle: Element<'_, Message> = if self.settings_open {
+            scrollable(self.settings_view(t))
+                .style(theme::scrollable)
+                .height(Length::Fill)
+                .into()
+        } else {
+            transcript_card.into()
+        };
+
+        let mut content = column![header, hero, middle]
             .spacing(theme::SPACE_3)
             .padding(theme::SPACE_3);
-        if self.settings_open {
-            content = content.push(self.settings_view(t));
+        // Las acciones y el feedback operan sobre el transcript: solo se
+        // muestran cuando este está visible, no dentro de los ajustes.
+        if !self.settings_open {
+            content = content.push(actions).push(feedback);
         }
 
         container(content)
@@ -902,6 +929,9 @@ impl WhisprApp {
             Message::ModelSelected,
         )
         .placeholder("Modelo")
+        // En portrait el ancho es limitado: el selector absorbe el espacio
+        // sobrante de la fila en vez de desbordar la ventana.
+        .width(Length::Fill)
         .style(theme::pick_list);
         let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref());
 
@@ -970,6 +1000,9 @@ fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static,
     }
     pick_list(devices.to_vec(), selected.map(|s| s.to_string()), Message::InputDeviceSelected)
         .placeholder("(por defecto)")
+        // Los nombres de dispositivos son largos: el selector se ajusta al
+        // ancho disponible (critical en portrait).
+        .width(Length::Fill)
         .style(theme::pick_list)
         .into()
 }

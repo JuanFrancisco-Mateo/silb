@@ -109,8 +109,8 @@ pub const FONT_SM: u16 = 12;
 pub const FONT_MD: u16 = 14;
 pub const FONT_LG: u16 = 16;
 pub const FONT_XL: u16 = 20;
-pub const FONT_HERO: u16 = 24;
-pub const FONT_DOT: u16 = 44; // indicador de estado del micrófono
+pub const FONT_HERO: u16 = 24; // label del estado del micrófono
+// (FONT_DOT se eliminó: el punto de estado del hero ahora usa FONT_XL)
 
 // ─────────────────────────────── Temas iced ───────────────────────────────
 
