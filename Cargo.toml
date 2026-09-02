@@ -1,0 +1,38 @@
+[package]
+name = "whispr-open"
+version = "0.2.0"
+description = "Local open-source dictation workspace (native desktop)"
+authors = ["Whispr Open contributors"]
+edition = "2021"
+license = "MIT"
+
+[dependencies]
+# UI nativa (sin webview)
+iced = { version = "0.13", features = ["tokio"] }
+
+# Audio + transcripción
+cpal = "0.15"
+whisper-rs = "0.16"
+
+# Inyección de texto en app activa
+arboard = "3.6.1"
+enigo = "0.6.1"
+
+# Atajo global
+global-hotkey = "0.6"
+crossbeam-channel = "0.5"
+
+# Descarga de modelos + config
+ureq = { version = "2.12", features = ["tls"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+dirs = "6"
+
+# Dominio (port de la lógica TS)
+fancy-regex = "0.14"
+uuid = { version = "1", features = ["v4"] }
+chrono = "0.4"
+
+[profile.release]
+lto = true
+strip = true
