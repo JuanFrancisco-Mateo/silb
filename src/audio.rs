@@ -1,39 +1,62 @@
 //! Captura de micrófono con cpal. Ciclo por turnos: `start()` abre el stream
-//! del dispositivo de entrada por defecto y acumula muestras f32; `stop()`
-//! detiene la captura y devuelve las muestras para transcripción.
+//! del dispositivo de entrada y acumula muestras f32; `stop()` detiene la
+//! captura, normaliza la ganancia si el nivel fue bajo y devuelve las muestras
+//! para transcripción.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
+/// Lista los dispositivos de entrada disponibles (para el selector de la UI).
+pub fn input_devices() -> Vec<String> {
+    let host = cpal::default_host();
+    match host.input_devices() {
+        Ok(devs) => devs.filter_map(|d| d.name().ok()).collect(),
+        Err(_) => vec![],
+    }
+}
+
 pub struct AudioCapture {
     samples: Arc<Mutex<Vec<f32>>>,
     stop: Arc<AtomicBool>,
+    level: Arc<AtomicU32>, // pico reciente en 0..=1000, para el medidor de la UI
     handle: Option<std::thread::JoinHandle<()>>,
-    sample_rate: u32,
 }
 
 impl AudioCapture {
-    pub fn start() -> Result<Self, String> {
+    /// Abre el dispositivo por nombre (si `device_name` es Some y existe);
+    /// si no, usa el dispositivo de entrada por defecto.
+    pub fn start(device_name: Option<&str>) -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = host
-            .default_input_device()
-            .ok_or_else(|| "no hay dispositivo de entrada (micrófono)".to_string())?;
+
+        let device: cpal::Device = match device_name {
+            Some(name) => host
+                .input_devices()
+                .map_err(|e| format!("no se pudo listar los micrófonos: {e}"))?
+                .find(|d| d.name().map(|n| n == name).unwrap_or(false))
+                .ok_or_else(|| format!("micrófono \"{name}\" no encontrado"))?,
+            None => host
+                .default_input_device()
+                .ok_or_else(|| "no hay dispositivo de entrada (micrófono)".to_string())?,
+        };
+
         let config = device
             .default_input_config()
             .map_err(|e| format!("no se pudo abrir la config de entrada: {e}"))?;
 
-        let sample_rate = config.sample_rate().0;
         let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
+        let level = Arc::new(AtomicU32::new(0));
 
         let samples_cb = Arc::clone(&samples);
         let stop_cb = Arc::clone(&stop);
+        let level_cb = Arc::clone(&level);
+        let level_cleanup = Arc::clone(&level);
         let stop_loop = Arc::clone(&stop);
 
         let handle = std::thread::spawn(move || {
-            let stream = match build_stream(&device, &config, samples_cb, stop_cb) {
+            let stream = match build_stream(&device, &config, samples_cb, stop_cb, level_cb) {
                 Ok(s) => s,
                 Err(e) => {
                     eprintln!("[audio] error creando stream: {e}");
@@ -55,27 +78,41 @@ impl AudioCapture {
                 }
                 std::thread::sleep(std::time::Duration::from_millis(10));
             }
+            let _ = level_cleanup.store(0, Ordering::Relaxed);
             drop(stream);
         });
 
-        Ok(Self { samples, stop, handle: Some(handle), sample_rate })
+        Ok(Self { samples, stop, level, handle: Some(handle) })
     }
 
-    /// Detiene la captura y devuelve las muestras f32 mono recogidas.
+    /// Detiene la captura y devuelve las muestras f32 mono, con ganancia
+    /// normalizada si el audio fue demasiado bajo (micrófono silencioso).
     pub fn stop(&mut self) -> Vec<f32> {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.handle.take() {
             let _ = h.join();
         }
-        std::mem::take(&mut *self.samples.lock().unwrap_or_else(|e| e.into_inner()))
+        let mut samples = std::mem::take(&mut *self.samples.lock().unwrap_or_else(|e| e.into_inner()));
+        normalize_gain(&mut samples);
+        samples
     }
 
-    pub fn sample_rate(&self) -> u32 {
-        self.sample_rate
+    /// Nivel del micrófono en 0..=1 (pico reciente), para el medidor.
+    pub fn level(&self) -> f32 {
+        self.level.load(Ordering::Relaxed) as f32 / 1000.0
     }
+}
 
-    pub fn is_recording(&self) -> bool {
-        !self.stop.load(Ordering::Relaxed)
+/// Amplifica si el audio quedó casi mudo (pico < 5%): un micrófono a volumen
+/// bajo hace que whisper "oiga" ruido y alucine (p. ej. "Música").
+/// La ganancia se calcula sobre el pico absoluto y se satura a 1.0.
+fn normalize_gain(samples: &mut [f32]) {
+    let peak = samples.iter().fold(0.0f32, |acc, s| acc.max(s.abs()));
+    if peak > 0.0 && peak < 0.05 {
+        let gain = 0.3 / peak;
+        for s in samples.iter_mut() {
+            *s = (*s * gain).clamp(-1.0, 1.0);
+        }
     }
 }
 
@@ -84,6 +121,7 @@ fn build_stream(
     config: &cpal::SupportedStreamConfig,
     samples: Arc<Mutex<Vec<f32>>>,
     stop: Arc<AtomicBool>,
+    level: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, String> {
     let err_fn = |e| eprintln!("[audio] error en el stream: {e}");
     let channels = config.channels() as usize;
@@ -94,7 +132,7 @@ fn build_stream(
                 .build_input_stream(
                     &config.config(),
                     move |data: &[f32], _| {
-                        push_f32(data, channels, &samples);
+                        push_f32(data, channels, &samples, &level);
                     },
                     err_fn,
                     None,
@@ -112,7 +150,7 @@ fn build_stream(
                         for s in data {
                             buf.push(*s as f32 / 32768.0);
                         }
-                        push_f32(&buf, channels, &samples);
+                        push_f32(&buf, channels, &samples, &level);
                     },
                     err_fn,
                     None,
@@ -129,7 +167,7 @@ fn build_stream(
                         for s in data {
                             buf.push((*s as f32 / 32768.0) - 1.0);
                         }
-                        push_f32(&buf, channels, &samples);
+                        push_f32(&buf, channels, &samples, &level);
                     },
                     err_fn,
                     None,
@@ -141,11 +179,16 @@ fn build_stream(
     }
 }
 
-/// Convierte a mono promediando canales y acumula en el buffer compartido.
-fn push_f32(data: &[f32], channels: usize, samples: &Arc<Mutex<Vec<f32>>>) {
+/// Convierte a mono promediando canales, acumula en el buffer y actualiza el
+/// pico reciente del medidor.
+fn push_f32(data: &[f32], channels: usize, samples: &Arc<Mutex<Vec<f32>>>, level: &Arc<AtomicU32>) {
     if data.is_empty() {
         return;
     }
+    let peak = data.iter().fold(0.0f32, |acc, s| acc.max(s.abs()));
+    let peak_pct = (peak * 1000.0) as u32;
+    level.store(peak_pct.max(level.load(Ordering::Relaxed)), Ordering::Relaxed);
+
     let mut guard = samples.lock().unwrap_or_else(|e| e.into_inner());
     if channels <= 1 {
         guard.extend_from_slice(data);
@@ -154,5 +197,27 @@ fn push_f32(data: &[f32], channels: usize, samples: &Arc<Mutex<Vec<f32>>>) {
     for chunk in data.chunks(channels) {
         let sum: f32 = chunk.iter().sum();
         guard.push(sum / (chunk.len() as f32));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_silent_audio() {
+        let mut samples = vec![0.001, -0.002, 0.0015, -0.001];
+        normalize_gain(&mut samples);
+        let peak = samples.iter().fold(0.0f32, |acc, s| acc.max(s.abs()));
+        // 0.3/0.002 = 150 -> pico final ~0.3 (saturado a 1.0)
+        assert!(peak > 0.2 && peak <= 1.0);
+    }
+
+    #[test]
+    fn leaves_loud_audio_untouched() {
+        let mut samples = vec![0.2, -0.4, 0.3];
+        let original = samples.clone();
+        normalize_gain(&mut samples);
+        assert_eq!(samples, original);
     }
 }

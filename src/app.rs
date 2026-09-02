@@ -61,6 +61,7 @@ pub enum Message {
     EntryFromChanged(String),
     EntryToChanged(String),
     RemoveEntry(usize),
+    InputDeviceSelected(String),
     Poll,
 }
 
@@ -73,6 +74,7 @@ pub struct WhisprApp {
     last_correction: Option<String>,
     session: CorrectionSession,
     audio: Option<AudioCapture>,
+    input_devices: Vec<String>,
     transcribe_rx: Option<Receiver<Result<String, String>>>,
     hotkey_rx: crossbeam_channel::Receiver<GlobalHotKeyEvent>,
     _hotkey: HotkeyManager,
@@ -105,6 +107,7 @@ impl WhisprApp {
             last_correction: None,
             session: CorrectionSession::new(),
             audio: None,
+            input_devices: crate::audio::input_devices(),
             transcribe_rx: None,
             hotkey_rx,
             _hotkey,
@@ -123,6 +126,11 @@ impl WhisprApp {
 
     fn dictionary_snapshot(&self) -> Vec<DictionaryEntry> {
         self.config.dictionary.clone()
+    }
+
+    /// Nivel del micrófono en % (0-100) mientras se graba.
+    fn mic_level_percent(&self) -> u32 {
+        self.audio.as_ref().map(|a| (a.level() * 100.0) as u32).unwrap_or(0)
     }
 
     fn apply_pipeline(&mut self, raw: &str) -> String {
@@ -170,7 +178,8 @@ impl WhisprApp {
                 if self.audio.is_some() {
                     return Task::none();
                 }
-                match AudioCapture::start() {
+                let device = self.config.input_device.clone();
+                match AudioCapture::start(device.as_deref()) {
                     Ok(capture) => {
                         self.audio = Some(capture);
                         self.status = Status::Recording;
@@ -322,6 +331,15 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            Message::InputDeviceSelected(name) => {
+                self.config.input_device = Some(name);
+                // El micrófono se aplica en el siguiente turno de grabación.
+                if self.audio.is_none() {
+                    self.status = Status::Idle;
+                }
+                self.save_config();
+                Task::none()
+            }
             Message::Poll => {
                 // Atajo global: toggle al detectar press.
                 let mut toggled = false;
@@ -432,11 +450,10 @@ impl WhisprApp {
                 },
             ]
             .spacing(8),
-            if let Some(pill) = recording_pill {
-                text(pill).color(Color::from_rgb(1.0, 0.4, 0.4))
-            } else {
-                text("")
-            },
+            recording_row(
+                recording_pill,
+                self.mic_level_percent(),
+            ),
             if let Some(corr) = &self.last_correction {
                 text(corr).size(12).color(Color::from_rgb(0.6, 0.8, 1.0))
             } else {
@@ -462,6 +479,12 @@ impl WhisprApp {
 
         let settings = column![
             text("Configuración").size(16).font(Font::MONOSPACE),
+            row![
+                text("Micrófono:"),
+                mic_pick_list(&self.input_devices, self.config.input_device.as_deref()),
+            ]
+            .spacing(8)
+            .align_y(iced::Alignment::Center),
             row![
                 text("Modelo Whisper:"),
                 model_pick,
@@ -514,6 +537,30 @@ fn status_pill(status: &Status) -> Element<'static, Message> {
         Status::Error(_) => ("Error", Color::from_rgb(1.0, 0.5, 0.5)),
     };
     text(label).color(color).size(13).into()
+}
+
+/// Línea de estado durante la grabación: pill + medidor de nivel del micrófono.
+fn recording_row(pill: Option<&'static str>, level_pct: u32) -> Element<'static, Message> {
+    match pill {
+        Some(pill) => row![
+            text(pill).color(Color::from_rgb(1.0, 0.4, 0.4)),
+            text(format!("Nivel: {level_pct}%"))
+                .size(12)
+                .color(Color::from_rgb(0.8, 0.9, 0.7)),
+        ]
+        .spacing(16)
+        .into(),
+        None => text("").into(),
+    }
+}
+
+fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static, Message> {
+    if devices.is_empty() {
+        return text("(sin micrófonos detectados)").size(12).into();
+    }
+    pick_list(devices.to_vec(), selected.map(|s| s.to_string()), Message::InputDeviceSelected)
+        .placeholder("(por defecto)")
+        .into()
 }
 
 fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
