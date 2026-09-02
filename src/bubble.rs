@@ -32,7 +32,7 @@ use iced::{
 use winapi::shared::windef::{HWND, POINT, RECT};
 #[cfg(target_os = "windows")]
 use winapi::um::winuser::{
-    GetAsyncKeyState, GetCursorPos, GetMonitorInfoW, GetWindowRect, MonitorFromPoint,
+    GetAsyncKeyState, GetCapture, GetCursorPos, GetMonitorInfoW, GetWindowRect, MonitorFromPoint,
     ReleaseCapture, SetCapture, SetWindowPos, VK_RBUTTON, MONITORINFO, MONITOR_DEFAULTTONEAREST,
     SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
 };
@@ -58,6 +58,11 @@ static BUBBLE_WINDOW_ID: AtomicU64 = AtomicU64::new(0);
 /// Distancia mínima (px lógicos) de movimiento para considerar que es un
 /// arrastre y no un clic (mismo umbral de 7 px que tenía el drag original).
 pub const DRAG_THRESHOLD: f32 = 7.0;
+
+/// Mínimo de la burbuja que debe quedar visible dentro del área de trabajo
+/// del monitor al arrastrar (px físicos): siempre recuperable con un
+/// segundo arrastre. Compartido por el clamp de `drag_target` y sus tests.
+const MIN_VISIBLE_PX: i32 = 24;
 
 /// True si el movimiento entre `from` y `to` supera el umbral de arrastre
 /// (comparación al cuadrado para evitar la raíz cuadrada).
@@ -426,10 +431,13 @@ fn apply_noactivate(_hwnd: BubbleHwnd) {}
 #[cfg(target_os = "windows")]
 pub struct BubbleDrag {
     hwnd: BubbleHwnd,
-    /// Última posición del cursor leída (px físicos): el DELTA entre lecturas
-    /// es lo que mueve la ventana (seguimiento exacto aunque el bucle de
-    /// eventos se retrase: cada evento aplica el recorrido acumulado).
-    last_cursor: (i32, i32),
+    /// Esquina superior izquierda de la ventana en el momento de agarrar
+    /// (px físicos). ANCLAJE ABSOLUTO: la posición se recalcula siempre como
+    /// `grab_window + (cursor_actual - grab_cursor)`, nunca por deltas
+    /// acumulados (ver `drag_target`).
+    grab_window: (i32, i32),
+    /// Posición del cursor al agarrar (px físicos, coordenadas de pantalla).
+    grab_cursor: (i32, i32),
     /// Tamaño de la ventana en px físicos (para el clamp multi-monitor).
     size: (i32, i32),
     /// Última posición aplicada a la ventana; evita `SetWindowPos` redundantes.
@@ -441,11 +449,45 @@ pub struct BubbleDrag {
     _private: (),
 }
 
+/// Posición objetivo de la burbuja para un cursor dado (px físicos).
+///
+/// Anclaje absoluto al punto de agarre (`grab_window + (cursor - grab_cursor)`)
+/// con clamp al área de trabajo del monitor (`work` = left, top, right, bottom
+/// del `rcWork`). Función pura: no toca winapi, testeable en cualquier target.
+///
+/// Por qué anclaje absoluto y no delta incremental: cuando la ventana NO se
+/// mueve 1:1 con el cursor —al chocar con el clamp o durante un hueco sin
+/// eventos (captura robada, alt-tab)— el enfoque `last + dx` acumula error y
+/// lo aplica de golpe al siguiente movimiento: la burbuja «se teletransporta»
+/// lejos de donde debería estar. Con anclaje absoluto la posición depende SOLO
+/// del cursor actual: cualquier evento perdido o clamp se auto-corrige en el
+/// siguiente `follow`, sin saltos.
+pub fn drag_target(
+    grab_window: (i32, i32),
+    grab_cursor: (i32, i32),
+    cursor: (i32, i32),
+    size: (i32, i32),
+    work: (i32, i32, i32, i32),
+) -> (i32, i32) {
+    let x = (grab_window.0 + (cursor.0 - grab_cursor.0))
+        .max(work.0 - size.0 + MIN_VISIBLE_PX)
+        .min(work.2 - MIN_VISIBLE_PX);
+    let y = (grab_window.1 + (cursor.1 - grab_cursor.1))
+        .max(work.1 - size.1 + MIN_VISIBLE_PX)
+        .min(work.3 - MIN_VISIBLE_PX);
+    (x, y)
+}
+
 #[cfg(target_os = "windows")]
 impl BubbleDrag {
     /// Captura el ratón y prepara el seguimiento. `None` si la ventana de la
     /// burbuja aún no existe (los eventos vienen de ella, así que en la
     /// práctica siempre existe).
+    ///
+    /// Se llama en el PULSADO del botón derecho (no al cruzar el umbral): con
+    /// movimientos rápidos el cursor puede salir de la ventana antes de medir
+    /// los 7 px del umbral, y con la captura ya activa los eventos siguen
+    /// llegando aunque el cursor esté fuera.
     pub fn start() -> Option<BubbleDrag> {
         unsafe {
             let hwnd = find_bubble_hwnd()?;
@@ -458,12 +500,23 @@ impl BubbleDrag {
                 return None;
             }
             let size = (rect.right - rect.left, rect.bottom - rect.top);
+            crate::log!(
+                "bubble",
+                "drag start: ventana=({},{}) size=({},{}) cursor=({},{})",
+                rect.left,
+                rect.top,
+                size.0,
+                size.1,
+                cursor.x,
+                cursor.y
+            );
             // Los eventos del ratón se dirigen a la burbuja mientras dure el
             // arrastre, aunque el cursor salga de su rectángulo.
             SetCapture(hwnd);
             Some(BubbleDrag {
                 hwnd,
-                last_cursor: (cursor.x, cursor.y),
+                grab_window: (rect.left, rect.top),
+                grab_cursor: (cursor.x, cursor.y),
                 size,
                 last: (rect.left, rect.top),
             })
@@ -473,23 +526,17 @@ impl BubbleDrag {
     /// Reposiciona la ventana siguiendo al cursor, manteniendo al menos
     /// `MIN_VISIBLE_PX` visibles dentro del área de trabajo del monitor.
     ///
-    /// Se aplica el DELTA del cursor (no su posición absoluta): si el bucle
-    /// de eventos se retrasa y varios `CursorMoved` llegan de golpe, cada uno
-    /// aplica el recorrido acumulado y la burbuja aterriza siempre donde
-    /// está el cursor, sin «absorber» movimiento.
+    /// Posición absoluta desde el agarre (no delta acumulado): cada llamada
+    /// recalcula el destino solo con el cursor actual, así que aunque el
+    /// bucle de eventos se retrase o se pierdan movimientos, la burbuja
+    /// siempre aterriza exactamente donde debe estar el cursor. Idempotente:
+    /// se puede llamar desde cada `CursorMoved` y desde el poll de 100 ms.
     pub fn follow(&mut self) {
-        const MIN_VISIBLE_PX: i32 = 24;
         unsafe {
             let mut cursor: POINT = std::mem::zeroed();
             if GetCursorPos(&mut cursor) == 0 {
                 return;
             }
-            let (dx, dy) = (cursor.x - self.last_cursor.0, cursor.y - self.last_cursor.1);
-            if dx == 0 && dy == 0 {
-                return;
-            }
-            self.last_cursor = (cursor.x, cursor.y);
-
             // El monitor que contiene al cursor: permite arrastrar entre
             // monitores sin que la ventana se pierda fuera de la pantalla.
             let monitor = MonitorFromPoint(cursor, MONITOR_DEFAULTTONEAREST);
@@ -499,21 +546,27 @@ impl BubbleDrag {
                 return;
             }
             let work = info.rcWork;
-            let (w, h) = self.size;
-            let mut x = self.last.0 + dx;
-            let mut y = self.last.1 + dy;
-            // Clamp: mantener al menos MIN_VISIBLE_PX dentro del área de
-            // trabajo (siempre recuperable con un segundo arrastre).
-            x = x
-                .max(work.left - w + MIN_VISIBLE_PX)
-                .min(work.right - MIN_VISIBLE_PX);
-            y = y
-                .max(work.top - h + MIN_VISIBLE_PX)
-                .min(work.bottom - MIN_VISIBLE_PX);
+            let (x, y) = drag_target(
+                self.grab_window,
+                self.grab_cursor,
+                (cursor.x, cursor.y),
+                self.size,
+                (work.left, work.top, work.right, work.bottom),
+            );
             if (x, y) == self.last {
                 return;
             }
             self.last = (x, y);
+            crate::log!(
+                "bubble",
+                "drag target=({},{}) grab=({},{}) cursor=({},{})",
+                x,
+                y,
+                self.grab_window.0,
+                self.grab_window.1,
+                cursor.x,
+                cursor.y
+            );
             SetWindowPos(
                 self.hwnd,
                 std::ptr::null_mut(),
@@ -526,7 +579,19 @@ impl BubbleDrag {
         }
     }
 
-    /// Libera la captura del ratón (fin del arrastre).
+    /// True si el HILO ACTUAL sigue teniendo la captura del ratón en la burbuja.
+    ///
+    /// El watchdog del poll la consulta: si el sistema roba la captura
+    /// (alt-tab, menú del sistema, doble clic en otra ventana, nuevo
+    /// `SetCapture` de otra app) el evento de soltado puede no llegar nunca;
+    /// `GetCapture` lo detecta ≤ 100 ms después y el arrastre cierra limpio,
+    /// sin esperar a un evento fantasma.
+    pub fn is_captured(&self) -> bool {
+        unsafe { GetCapture() == self.hwnd }
+    }
+
+    /// Libera la captura del ratón (fin del arrastre). No-op si el sistema
+    /// ya la había robado (ReleaseCapture no hace nada sin captura propia).
     pub fn end(&self) {
         unsafe {
             ReleaseCapture();
@@ -540,15 +605,18 @@ impl BubbleDrag {
         None
     }
     pub fn follow(&mut self) {}
+    pub fn is_captured(&self) -> bool {
+        true
+    }
     pub fn end(&self) {}
 }
 
 /// True mientras el botón derecho del ratón esté físicamente pulsado.
 ///
-/// Red de seguridad del arrastre: si el sistema roba la captura (alt-tab,
-/// menú del sistema) el evento de soltado no llega a la burbuja; el poll de
-/// 100 ms usa este chequeo para cancelar el arrastre al detectar el botón ya
-/// liberado.
+/// Red de seguridad del arrastre (el detector principal de robo de captura es
+/// `BubbleDrag::is_captured` / `GetCapture`): si el evento de soltado se pierde
+/// (alt-tab, menú del sistema) el poll de 100 ms usa este chequeo para cancelar
+/// el arrastre al detectar el botón ya liberado.
 #[cfg(target_os = "windows")]
 pub fn right_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_RBUTTON) as u16) & 0x8000 != 0 }
@@ -734,5 +802,77 @@ mod tests {
         s.cancel();
         assert!(!s.pressed);
         assert!(!s.dragging);
+    }
+
+    // ── drag_target: anclaje absoluto + clamp (núcleo del fix del salto) ──
+
+    const TAM: (i32, i32) = (56, 56);
+    const WORK_1080P: (i32, i32, i32, i32) = (0, 0, 1920, 1040);
+
+    #[test]
+    fn drag_target_sigue_al_cursor_desde_el_agarre() {
+        // La esquina de la ventana se mueve 1:1 con el cursor a partir del
+        // punto de agarre (grab_window, grab_cursor).
+        assert_eq!(
+            drag_target((100, 100), (120, 128), (650, 500), TAM, WORK_1080P),
+            (630, 472)
+        );
+        // El agarre puede estar en cualquier punto del círculo: la esquina
+        // conserva el mismo offset relativo al cursor.
+        assert_eq!(
+            drag_target((100, 100), (150, 150), (500, 500), TAM, WORK_1080P),
+            (450, 450)
+        );
+    }
+
+    #[test]
+    fn drag_target_clamp_mantiene_min_visible() {
+        // Cursor lejos a la derecha/abajo: la burbuja conserva MIN_VISIBLE_PX.
+        assert_eq!(
+            drag_target((0, 0), (0, 0), (99999, 99999), TAM, WORK_1080P),
+            (1920 - MIN_VISIBLE_PX, 1040 - MIN_VISIBLE_PX)
+        );
+        // Cursor lejos a la izquierda/arriba: entra completa en el área (el
+        // clamp inferior deja el borde derecho/tamaño tocando el área).
+        assert_eq!(
+            drag_target((0, 0), (0, 0), (-99999, -99999), TAM, WORK_1080P),
+            (0 - 56 + MIN_VISIBLE_PX, 0 - 56 + MIN_VISIBLE_PX)
+        );
+        // En el centro no hay clamp: posiciones normales.
+        assert_eq!(
+            drag_target((0, 0), (0, 0), (800, 500), TAM, WORK_1080P),
+            (800, 500)
+        );
+    }
+
+    #[test]
+    fn drag_target_no_acumula_error_tras_un_clamp() {
+        // Propiedad clave del anclaje absoluto: el destino depende SOLO del
+        // cursor actual, no del historial. El enfoque anterior (`last + dx`)
+        // acumulaba el error del clamp: si el cursor chocaba contra el borde
+        // (la ventana se quedaba clavada) y luego volvía, el delta de retorno
+        // incluía la distancia «perdida» y la burbuja saltaba de golpe.
+        // Historia 1: el cursor choca a la derecha (ventana clavada en el
+        // clamp) y luego vuelve a (800, 500).
+        let clamped = drag_target((0, 0), (0, 0), (5000, 500), TAM, WORK_1080P);
+        assert_eq!(clamped.0, 1920 - MIN_VISIBLE_PX, "clavada en el borde");
+        let back = drag_target((0, 0), (0, 0), (800, 500), TAM, WORK_1080P);
+        // Historia 2: el mismo cursor final sin haber pasado por el clamp.
+        let direct = drag_target((0, 0), (0, 0), (800, 500), TAM, WORK_1080P);
+        assert_eq!(back, direct, "sin error acumulado: mismo cursor ⇒ misma posición");
+        assert_eq!(back, (800, 500));
+    }
+
+    #[test]
+    fn drag_target_ancla_respecto_al_agarre_aunque_se_pierdan_eventos() {
+        // Si el bucle se congela (captura robada) y se pierden movimientos,
+        // el siguiente follow recalcula desde el agarre original: la burbuja
+        // aterriza donde debe, no donde la dejó el último evento.
+        let ancla = drag_target((400, 300), (500, 400), (700, 600), TAM, WORK_1080P);
+        assert_eq!(ancla, (600, 500));
+        // Tras un hueco de 300 px de cursor (eventos nunca vistos), el primer
+        // follow pone la ventana exactamente 100 px arriba-izquierda del cursor.
+        let rescate = drag_target((400, 300), (500, 400), (1000, 700), TAM, WORK_1080P);
+        assert_eq!(rescate, (900, 600));
     }
 }
