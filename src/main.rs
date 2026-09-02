@@ -18,7 +18,10 @@ fn main() -> iced::Result {
     // un tema por window::Id. La ventana principal es la app completa; la
     // burbuja flotante (whispr_open::bubble) se abre al iniciar.
     let mut main_window = iced::window::Settings::default();
-    main_window.size = iced::Size::new(780.0, 640.0);
+    // Diseño vertical (portrait, tipo chat): alto > ancho. La burbuja
+    // flotante tiene su propio tamaño (56×56, no se toca aquí).
+    main_window.size = iced::Size::new(480.0, 800.0);
+    main_window.min_size = Some(iced::Size::new(380.0, 600.0));
     // El cierre lo gestiona la app (WindowCloseRequested → iced::exit): ver
     // nota en `bubble::bubble_settings`.
     main_window.exit_on_close_request = false;
