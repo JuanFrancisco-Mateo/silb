@@ -9,7 +9,7 @@ use iced::widget::{
     button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row,
     scrollable, text, text_input, Column, Space,
 };
-use iced::{Background, Color, Element, Font, Length, Subscription, Task, Theme};
+use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
 use global_hotkey::GlobalHotKeyEvent;
 
 use crate::audio::AudioCapture;
@@ -59,6 +59,17 @@ pub enum Message {
     ToggleTheme,
     ToggleSettings,
     Poll,
+    // ── Burbuja flotante (overlay) ────────────────────────────────────────
+    /// La ventana de la burbuja ya fue creada (aplicar WS_EX_NOACTIVATE).
+    BubbleOpened(window::Id),
+    /// Botón izquierdo pulsado dentro de la burbuja (empieza a grabar).
+    BubblePress,
+    /// Botón izquierdo soltado (transcribir + escribir en la app activa).
+    BubbleRelease,
+    /// Cursor movido dentro de la burbuja (detección de arrastre).
+    BubbleCursorMoved(Point),
+    /// El usuario pidió cerrar una ventana (X de la principal → salir).
+    WindowCloseRequested(window::Id),
 }
 
 pub struct WhisprApp {
@@ -77,6 +88,14 @@ pub struct WhisprApp {
     entry_from: String,
     entry_to: String,
     settings_open: bool,
+    // ── Estado de la burbuja flotante ─────────────────────────────────────
+    bubble_id: Option<window::Id>,
+    bubble_pressed: bool,
+    bubble_dragging: bool,
+    bubble_recording: bool, // este press inició la captura (para cancelar si es arrastre)
+    bubble_press_pos: Point,
+    bubble_last_pos: Point,
+    pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
 }
 
 impl WhisprApp {
@@ -95,6 +114,14 @@ impl WhisprApp {
             }
         };
 
+        // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando la
+        // ventana exista llegará `Message::BubbleOpened` y se le aplicará
+        // WS_EX_NOACTIVATE (no robar el foco de la app donde se dicta).
+        let (bubble_id, bubble_task) = {
+            let (id, task) = window::open(crate::bubble::bubble_settings());
+            (Some(id), task.map(Message::BubbleOpened))
+        };
+
         let app = Self {
             config,
             status: Status::Idle,
@@ -111,8 +138,15 @@ impl WhisprApp {
             entry_from: String::new(),
             entry_to: String::new(),
             settings_open: false,
+            bubble_id,
+            bubble_pressed: false,
+            bubble_dragging: false,
+            bubble_recording: false,
+            bubble_press_pos: Point::new(0.0, 0.0),
+            bubble_last_pos: Point::new(0.0, 0.0),
+            pending_inject: false,
         };
-        (app, Task::none())
+        (app, bubble_task)
     }
 
     fn save_config(&self) {
@@ -120,6 +154,19 @@ impl WhisprApp {
         cfg.dictionary = self.dictionary_snapshot();
         cfg.model = Some(self.config.selected_model().id().to_string());
         cfg.save();
+    }
+
+    // ── Accesores para la burbuja flotante (bubble.rs) ─────────────────────
+    pub(crate) fn is_bubble_window(&self, id: window::Id) -> bool {
+        Some(id) == self.bubble_id
+    }
+
+    pub(crate) fn bubble_status(&self) -> &Status {
+        &self.status
+    }
+
+    pub(crate) fn config_is_dark(&self) -> bool {
+        self.config.is_dark()
     }
 
     fn dictionary_snapshot(&self) -> Vec<DictionaryEntry> {
@@ -220,6 +267,8 @@ impl WhisprApp {
                 if self.audio.is_some() {
                     return Task::none();
                 }
+                // Una grabación nueva descarta cualquier inyección pendiente.
+                self.pending_inject = false;
                 let device = self.config.input_device.clone();
                 match AudioCapture::start(device.as_deref()) {
                     Ok(capture) => {
@@ -240,6 +289,7 @@ impl WhisprApp {
                 };
                 let samples = capture.stop();
                 if samples.is_empty() {
+                    self.pending_inject = false;
                     self.status = Status::Idle;
                     return Task::none();
                 }
@@ -258,6 +308,10 @@ impl WhisprApp {
             }
             Message::TranscriptionDone(result) => {
                 self.transcribe_rx = None;
+                // La burbuja marca `pending_inject` en el soltado: ese turno
+                // se escribe en la app activa aunque autoinyectar esté off.
+                let force_inject = self.pending_inject;
+                self.pending_inject = false;
                 match result {
                     Ok(raw) => {
                         let processed = self.apply_pipeline(&raw);
@@ -272,7 +326,9 @@ impl WhisprApp {
                         }
                         self.status = Status::Idle;
 
-                        if self.config.auto_inject.unwrap_or(true) && !self.last_turn.is_empty() {
+                        if (force_inject || self.config.auto_inject.unwrap_or(true))
+                            && !self.last_turn.is_empty()
+                        {
                             match inject_text_into_active_app(&self.last_turn) {
                                 Ok(()) => self.last_correction =
                                     Some("Texto escrito en la app activa ✓".to_string()),
@@ -449,11 +505,72 @@ impl WhisprApp {
                     Task::none()
                 }
             }
+            Message::BubbleOpened(_id) => {
+                // La ventana ya existe: quitarle la activación para que el
+                // Ctrl+V simulado caiga en la app del usuario, no en la burbuja.
+                crate::bubble::apply_noactivate_async();
+                Task::none()
+            }
+            Message::BubblePress => {
+                self.bubble_pressed = true;
+                self.bubble_dragging = false;
+                self.bubble_recording = self.audio.is_none();
+                self.bubble_press_pos = self.bubble_last_pos;
+                if self.bubble_recording {
+                    return self.update(Message::StartRecording);
+                }
+                // Ya se estaba grabando (desde la ventana principal): la burbuja
+                // no vuelve a abrir el micrófono; el soltado transcribirá ese turno.
+                Task::none()
+            }
+            Message::BubbleRelease => {
+                let was_pressed = self.bubble_pressed;
+                let was_dragging = self.bubble_dragging;
+                self.bubble_pressed = false;
+                self.bubble_dragging = false;
+                if !was_pressed || was_dragging {
+                    return Task::none();
+                }
+                // Este turno va sí o sí a la app activa.
+                self.pending_inject = true;
+                self.update(Message::StopRecording)
+            }
+            Message::BubbleCursorMoved(pos) => {
+                self.bubble_last_pos = pos;
+                if self.bubble_pressed && !self.bubble_dragging {
+                    let dx = pos.x - self.bubble_press_pos.x;
+                    let dy = pos.y - self.bubble_press_pos.y;
+                    if dx * dx + dy * dy > 49.0 {
+                        // Movimiento real: es un arrastre, no un dictado.
+                        self.bubble_dragging = true;
+                        if self.bubble_recording {
+                            if let Some(mut cap) = self.audio.take() {
+                                let _ = cap.stop();
+                            }
+                            if matches!(self.status, Status::Recording) {
+                                self.status = Status::Idle;
+                            }
+                        }
+                        if let Some(id) = self.bubble_id {
+                            return window::drag(id);
+                        }
+                    }
+                }
+                Task::none()
+            }
+            // Cerrar cualquier ventana termina la app (el cierre lo gestionamos
+            // nosotros: `exit_on_close_request = false` en ambas ventanas para
+            // que este evento exista; con el default `true`, iced cierra la
+            // ventana sin emitir el evento y la app quedaría viva con la otra).
+            Message::WindowCloseRequested(_id) => iced::exit(),
         }
     }
 
     pub fn subscription(&self) -> Subscription<Message> {
-        iced::time::every(Duration::from_millis(100)).map(|_| Message::Poll)
+        let poll = iced::time::every(Duration::from_millis(100)).map(|_| Message::Poll);
+        let closes = iced::window::close_requests().map(Message::WindowCloseRequested);
+        let bubble = crate::bubble::bubble_events_subscription(self.bubble_id);
+        Subscription::batch([poll, closes, bubble])
     }
 
     pub fn theme(&self) -> Theme {
