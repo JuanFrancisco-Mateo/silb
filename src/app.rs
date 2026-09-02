@@ -516,12 +516,32 @@ impl WhisprApp {
                 }
 
                 // Auto-recuperación del arrastre con botón derecho: si el
-                // sistema roba la captura (alt-tab, menú del sistema) el
-                // evento de soltado no llega; se detecta el botón ya liberado
-                // y se cierra el arrastre para no quedarse «atascado».
-                if self.bubble_right.dragging && !crate::bubble::right_button_down() {
-                    self.bubble_right.cancel();
-                    self.end_bubble_drag("captura perdida (botón liberado)");
+                // sistema roba la captura (alt-tab, menú del sistema, doble
+                // clic en otra ventana) o el evento de soltado se pierde, se
+                // cierra el arrastre limpio para no quedarse «atascado» ni
+                // acumular saltos. `GetCapture` es el detector fiable de robo
+                // de captura (equivale a WM_CAPTURECHANGED); el botón ya
+                // liberado es la red de seguridad del evento perdido.
+                if self.bubble_right.pressed || self.bubble_right.dragging {
+                    let stolen = match &self.bubble_drag {
+                        Some(drag) => !drag.is_captured(),
+                        None => false,
+                    };
+                    if stolen {
+                        self.bubble_right.cancel();
+                        self.end_bubble_drag("captura robada por el sistema (GetCapture)");
+                    } else if !crate::bubble::right_button_down() {
+                        self.bubble_right.cancel();
+                        self.end_bubble_drag("captura perdida (botón liberado)");
+                    } else if self.bubble_right.dragging {
+                        // Seguimiento redundante (anclaje absoluto, idempotente):
+                        // si el bucle de eventos no entrega CursorMoved con el
+                        // cursor fuera de la ventana, el poll sigue al cursor
+                        // igualmente a 10 Hz.
+                        if let Some(drag) = &mut self.bubble_drag {
+                            drag.follow();
+                        }
+                    }
                 }
 
                 // Resultado de transcripción/descarga.
@@ -596,24 +616,40 @@ impl WhisprApp {
                 // El botón derecho solo arrastra: nunca inicia grabación ni
                 // abre nada (el clic derecho simple queda en no-op).
                 self.bubble_right.press(self.bubble_last_pos);
+                // Captura YA en el pulsado (no al cruzar el umbral): con un
+                // movimiento rápido el cursor puede salir de la ventana antes
+                // de medir los 7 px del umbral; con la captura activa los
+                // eventos siguen llegando y el arrastre arranca igualmente.
+                // El clic derecho simple (pulsar+soltar sin mover) libera la
+                // captura en la suelta, sin dejar nada raro.
+                if self.bubble_drag.is_none() {
+                    match crate::bubble::BubbleDrag::start() {
+                        Some(drag) => {
+                            crate::log!("bubble", "botón derecho pulsado: captura del ratón activa");
+                            self.bubble_drag = Some(drag);
+                        }
+                        None => crate::log!("bubble", "no se pudo iniciar la captura del ratón"),
+                    }
+                }
                 Task::none()
             }
             Message::BubbleRightRelease => {
-                if self.bubble_right.release() {
+                // Soltar el botón derecho siempre cierra la captura, hubiera
+                // arrastre o no (la captura está activa desde el pulsado).
+                self.bubble_right.release();
+                if self.bubble_drag.is_some() {
                     self.end_bubble_drag("botón derecho soltado");
                 }
                 Task::none()
             }
             Message::BubbleCursorMoved(pos) => {
                 self.bubble_last_pos = pos;
-                // Arrastre con botón derecho: al superar el umbral se captura
-                // el ratón y la burbuja sigue al cursor hasta soltar.
+                // Arrastre con botón derecho: al superar el umbral la burbuja
+                // empieza a seguir al cursor (la captura ya está activa desde
+                // el pulsado, así que los movimientos llegan aunque el cursor
+                // esté fuera de la ventana).
                 if self.bubble_right.move_cursor(pos) {
-                    let started = crate::bubble::BubbleDrag::start();
-                    if started.is_some() {
-                        crate::log!("bubble", "arrastre con botón derecho iniciado");
-                    }
-                    self.bubble_drag = started;
+                    crate::log!("bubble", "arrastre con botón derecho iniciado");
                 }
                 if self.bubble_right.dragging {
                     if let Some(drag) = &mut self.bubble_drag {
@@ -623,12 +659,20 @@ impl WhisprApp {
                 Task::none()
             }
             Message::BubbleCursorLeft => {
-                // El cursor salió sin soltar: el izquierdo dicta igualmente
-                // (mismo comportamiento que antes) y el derecho cancela
-                // cualquier arrastre en curso.
+                // El izquierdo dicta igualmente aunque el cursor se haya ido
+                // (mismo comportamiento que antes, no se toca).
                 let task = self.update(Message::BubbleRelease);
-                if self.bubble_right.release() {
-                    self.end_bubble_drag("cursor fuera de la burbuja");
+                if self.bubble_right.pressed || self.bubble_right.dragging {
+                    // El botón derecho sigue pulsado con captura activa: el
+                    // cursor salir de la ventana de 56 px es NORMAL durante
+                    // un arrastre (SetCapture sigue entregando los movimientos
+                    // aunque esté fuera). Aquí NO se cancela — cancelarlo era
+                    // la causa de que con movimientos rápidos el drag se
+                    // perdiera y la burbuja se quedara atrás saltando.
+                    crate::log!(
+                        "bubble",
+                        "cursor fuera de la burbuja con botón derecho pulsado (el arrastre se mantiene)"
+                    );
                 }
                 task
             }
