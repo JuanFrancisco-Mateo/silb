@@ -88,7 +88,7 @@ impl WhisprApp {
                 (m, rx)
             }
             Err(e) => {
-                eprintln!("[hotkey] {e}");
+                crate::log!("hotkey", "{e}");
                 let stub = HotkeyManager::stub();
                 let rx = stub.listen();
                 (stub, rx)
@@ -689,8 +689,9 @@ fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
 /// primera vez, silencioso), b) carga el contexto whisper.cpp, c) transcribe.
 fn transcribe_samples(samples: Vec<f32>, model: Model) -> Result<String, String> {
     if !crate::transcribe::model_exists(model) {
-        eprintln!(
-            "[transcribe] modelo {} no está descargado, descargando…",
+        crate::log!(
+            "transcribe",
+            "modelo {} no está descargado, descargando…",
             model.id()
         );
         crate::transcribe::ensure_model(model, |_, _| {})?;
