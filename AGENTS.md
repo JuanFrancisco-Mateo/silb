@@ -1,62 +1,50 @@
 # AGENTS.md — Reglas de entorno para agentes autónomos
 
-Proyecto: **Whispr Open** — dictado por voz local (whisper.cpp WASM + Tauri v2).
-Ruta: `E:\AI\FREEBUFF` (desde WSL: `/mnt/e/AI/FREEBUFF`).
-Leer este archivo ANTES de tocar nada. Es obligatorio.
+Proyecto: **Whispr Open** — dictado por voz local NATIVO de escritorio
+(Iced + whisper.cpp vía whisper-rs). Cero frontend web (sin webview, sin
+React/TS/Vite — eso vive en la rama `main` como versión legada).
+Rama activa: `native-iced`. Ruta: `E:\AI\FREEBUFF` (desde WSL: `/mnt/e/AI/FREEBUFF`).
+Leer este archivo ANTES de tocar nada.
 
-## Entorno de ejecución (CRÍTICO — verificado el 01/09/2026)
+## Entorno de ejecución (CRÍTICO — verificado el 02/09/2026)
 
-- El proyecto vive en un disco Windows (E:). `node_modules` está instalado
-  **solo con bindings nativos de Windows** (rolldown `binding-win32-x64-msvc`).
-- **PROHIBIDO ejecutar `npm` o `npx` directamente desde WSL**: falla con
-  `Cannot find native binding` (rolldown/vitest).
-  - ✅ Comando correcto desde WSL:
-    - `cmd.exe /c "cd /d E:\AI\FREEBUFF && npm test"`
-    - `cmd.exe /c "cd /d E:\AI\FREEBUFF && npm run build"`
-  - ❌ `npm test` a secas en WSL = error de bindings. No es un bug del código.
-- **PROHIBIDO reinstalar node_modules** (`npm install`, borrar package-lock, etc.)
-  salvo orden explícita. Si algún agente lo rompe, restaurar desde git y
-  reinstalar con `cmd.exe /c "cd /d E:\AI\FREEBUFF && npm install"`.
-- Rust/cargo también es el de Windows (`C:\Users\usuario\.cargo\bin\cargo.exe`).
-  Todo lo de Tauri se compila/verifica con `cmd.exe /c "cd /d E:\AI\FREEBUFF && cargo ..."`.
-  NO compilar Tauri apuntando al cargo de WSL (target Linux, faltan deps de webkit).
-- La primera compilación completa de Tauri tarda 5–10 min. Es normal.
-- Navegador objetivo: WebView2 (ya presente en Windows 11). Vite ya envía
-  cabeceras COOP/COEP (necesarias para SharedArrayBuffer/WASM SIMD).
+- El proyecto vive en un disco Windows (E:). Rust/cargo es el de Windows:
+  `C:\Users\usuario\.cargo\bin\cargo.exe` (`cmd.exe` NO tiene cargo en PATH).
+- NO compilar apuntando al cargo de WSL (target Linux, faltan deps).
+- La primera compilación completa tarda 5–10 min (iced + whisper.cpp). Es normal.
+- TOOLCHAIN: cmake 4.x y MSVC (VS2019 BuildTools, 14.29) presentes — necesarios
+  para compilar whisper-rs (whisper.cpp en C). `where cl` desde WSL falla pero
+  cargo encuentra MSVC vía vswhere, así que compila igual.
+- whisper-rs: DEBE ser 0.16+ (0.12/0.14 fallan contra whisper.cpp actual:
+  campos de `whisper_full_params` cambiados). API 0.16:
+  `SamplingStrategy`, `state.get_segment(i) -> Option<WhisperSegment>`, `seg.to_str()`.
+- Modelos GGML (whisper.cpp, de HF ggerganov) en `%APPDATA%/whispr-open/models/`.
 
 ## Definición de "done" (criterios innegociables)
 
-1. `npm test` pasa vía `cmd.exe /c` (nunca menos tests que el baseline actual).
-2. `npm run build` (tsc + vite) pasa sin errores. Warnings de chunk size se toleran.
-3. Si se tocó Rust/Tauri: `cmd.exe /c "cd /d E:\AI\FREEBUFF && cargo check"` pasa.
-4. Commit en git por fase lógica terminada, mensaje en español describiendo la fase.
-
-## Estilo de código obligatorio
-
-- Módulos de lógica pura en `src/domain/` (funciones puras, sin side effects).
-- Tests junto al módulo: `src/domain/<modulo>.test.ts` con Vitest (`environment: node`).
-  Los imports de `@remotion/whisper-web` y de navegador se mockean como ya hace
-  `src/services/local-whisper.test.ts` y `src/services/recording-controller.test.ts`.
-- NO añadir dependencias npm nuevas sin necesidad probada. Primero mirar qué hay.
-- TypeScript estricto. No usar `any`.
-- No borrar código que ya funciona. Cambios pequeños y verificables por commit.
+1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → 39 tests verdes.
+2. `... cargo.exe check` → sin errores (warnings tolerados).
+3. Commit en git por fase lógica, mensaje en español.
 
 ## Arquitectura actual (mapa de ficheros)
 
-- `src/App.tsx` — UI + cableado de todo el flujo (SUPERFICIE DE CONFLICTOS:
-  por defecto SOLO el agente integrador lo modifica).
-- `src/domain/correction.ts` — motor de rectificaciones habladas (regex puras) + `CorrectionSession`.
-- `src/services/local-whisper.ts` — descarga/cache del modelo WASM + transcripción.
-- `src/services/recording-controller.ts` — ciclo grabación/transcripción por turnos (deps inyectables).
-- `src/services/desktop-shortcut.ts` — listener del atajo global Tauri (Ctrl/Cmd+Shift+D).
-- `src-tauri/src/lib.rs` — shell Tauri v2: plugin global-shortcut, emite `global-dictation-toggle`.
-- `src/styles.css` — sistema visual.
+- `src/main.rs` — entrypoint Iced 0.13 (patrón funcional: application + run_with).
+- `src/app.rs` — UI completa (WhisprApp): status, transcript, controles,
+  selector de modelo, diccionario, checkboxes. Hilos std para audio/transcripción,
+  eventos por canales mpsc + subscription de poll cada 100 ms.
+- `src/domain/correction.rs` — rectificaciones habladas (port fiel de TS).
+- `src/domain/cleanup.rs` — muletillas + repeticiones (port fiel de TS).
+- `src/domain/dictionary.rs` — diccionario personal (port fiel de TS).
+- `src/audio.rs` — captura micrófono cpal (f32 mono, por turnos).
+- `src/transcribe.rs` — Model (tiny/base/small), descarga GGML con progreso
+  (ureq), WhisperEngine (Mutex<WhisperContext>).
+- `src/inject.rs` — inyección de texto en app activa (arboard + enigo, Ctrl+V).
+- `src/hotkey.rs` — atajo global Ctrl+Shift+D (global-hotkey + crossbeam).
+- `src/config.rs` — config persistente JSON en %APPDATA%/whispr-open/config.json.
 
 ## No hacer
 
-- No tocar el hardware ni cron del sistema.
-- No lanzar la app con micrófono real ni pedir permiso de audio.
-- No asumir que la app "funciona dictando" — la verificación es tests/build,
-  el flujo real de micrófono lo prueba el usuario.
-- No iniciar servidores en foreground que bloqueen. Si necesitas correr la app,
-  background + health check.
+- No volver a introduce web frontend ni Tauri (es el objetivo de la rama native-iced).
+- No tocar la rama `main` desde aquí (versión web legada, se mantiene como referencia).
+- No tocar hardware ni cron del sistema.
+- El flujo real de micrófono lo prueba el usuario; verificación = tests/build.
