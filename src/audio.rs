@@ -21,6 +21,7 @@ pub struct AudioCapture {
     samples: Arc<Mutex<Vec<f32>>>,
     stop: Arc<AtomicBool>,
     level: Arc<AtomicU32>, // pico reciente en 0..=1000, para el medidor de la UI
+    rate: u32,             // sample rate nativo del dispositivo (p. ej. 48 kHz)
     handle: Option<std::thread::JoinHandle<()>>,
 }
 
@@ -44,6 +45,7 @@ impl AudioCapture {
         let config = device
             .default_input_config()
             .map_err(|e| format!("no se pudo abrir la config de entrada: {e}"))?;
+        let rate = config.sample_rate().0;
 
         let samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
         let stop = Arc::new(AtomicBool::new(false));
@@ -82,7 +84,7 @@ impl AudioCapture {
             drop(stream);
         });
 
-        Ok(Self { samples, stop, level, handle: Some(handle) })
+        Ok(Self { samples, stop, level, rate, handle: Some(handle) })
     }
 
     /// Detiene la captura y devuelve las muestras f32 mono, con ganancia
@@ -94,6 +96,9 @@ impl AudioCapture {
         }
         let mut samples = std::mem::take(&mut *self.samples.lock().unwrap_or_else(|e| e.into_inner()));
         normalize_gain(&mut samples);
+        if self.rate != 16_000 {
+            samples = resample_to_16k(&samples, self.rate);
+        }
         samples
     }
 
@@ -116,6 +121,26 @@ fn normalize_gain(samples: &mut [f32]) {
     }
 }
 
+/// Remuestrea a 16 kHz por interpolación lineal (whisper.cpp espera 16 kHz;
+/// el micrófono suele dar 44.1/48 kHz). Suficiente para dictado; si la
+/// calidad auditiva lo exige, cambiar a un sinc (rubato).
+fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
+    if samples.is_empty() || from_rate == 16_000 {
+        return samples.to_vec();
+    }
+    let ratio = 16_000.0 / from_rate as f64;
+    let out_len = ((samples.len() as f64) * ratio).floor() as usize;
+    let mut out = Vec::with_capacity(out_len);
+    for i in 0..out_len {
+        let pos = i as f64 / ratio;
+        let idx = pos.floor() as usize;
+        let frac = (pos - idx as f64) as f32;
+        let next = (idx + 1).min(samples.len() - 1);
+        out.push(samples[idx] * (1.0 - frac) + samples[next] * frac);
+    }
+    out
+}
+
 fn build_stream(
     device: &cpal::Device,
     config: &cpal::SupportedStreamConfig,
@@ -126,20 +151,11 @@ fn build_stream(
     let err_fn = |e| eprintln!("[audio] error en el stream: {e}");
     let channels = config.channels() as usize;
 
-    // whisper.cpp espera 16 kHz. El default de WASAPI suele ser 48 kHz y
-    // alimentar 48k a whisper = audio 3x acelerado = transcripción basura.
-    // WASAPI remuestrea en modo compartido, así que pedimos 16 kHz directo.
-    let stream_cfg = cpal::StreamConfig {
-        channels: config.channels(),
-        sample_rate: cpal::SampleRate(16_000),
-        buffer_size: cpal::BufferSize::Default,
-    };
-
     match config.sample_format() {
         cpal::SampleFormat::F32 => {
             let stream = device
                 .build_input_stream(
-                    &stream_cfg,
+                    &config.config(),
                     move |data: &[f32], _| {
                         push_f32(data, channels, &samples, &level);
                     },
@@ -153,7 +169,7 @@ fn build_stream(
         cpal::SampleFormat::I16 => {
             let stream = device
                 .build_input_stream(
-                    &stream_cfg,
+                    &config.config(),
                     move |data: &[i16], _| {
                         let mut buf = Vec::with_capacity(data.len());
                         for s in data {
@@ -170,7 +186,7 @@ fn build_stream(
         cpal::SampleFormat::U16 => {
             let stream = device
                 .build_input_stream(
-                    &stream_cfg,
+                    &config.config(),
                     move |data: &[u16], _| {
                         let mut buf = Vec::with_capacity(data.len());
                         for s in data {
@@ -228,5 +244,25 @@ mod tests {
         let original = samples.clone();
         normalize_gain(&mut samples);
         assert_eq!(samples, original);
+    }
+
+    #[test]
+    fn resamples_48k_to_16k_third_length() {
+        let samples: Vec<f32> = (0..48).map(|i| (i % 3) as f32 / 3.0).collect();
+        let out = resample_to_16k(&samples, 48_000);
+        assert_eq!(out.len(), 16);
+        assert!((out[0] - 0.0).abs() < 1e-6);
+        assert!((out[15] - 0.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn resample_preserves_dc_and_passthrough() {
+        let dc = vec![0.5f32; 30];
+        let out = resample_to_16k(&dc, 44_100);
+        assert_eq!(out.len(), 10);
+        assert!(out.iter().all(|s| (*s - 0.5).abs() < 1e-6));
+
+        let already = resample_to_16k(&dc, 16_000);
+        assert_eq!(already, dc);
     }
 }
