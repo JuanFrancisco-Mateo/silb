@@ -66,8 +66,14 @@ pub enum Message {
     BubblePress,
     /// Botón izquierdo soltado (transcribir + escribir en la app activa).
     BubbleRelease,
-    /// Cursor movido dentro de la burbuja (detección de arrastre).
+    /// Botón derecho pulsado dentro de la burbuja (arma el arrastre).
+    BubbleRightPress,
+    /// Botón derecho soltado (fin del arrastre; clic simple = no-op).
+    BubbleRightRelease,
+    /// Cursor movido dentro de la burbuja (detección de arrastre derecho).
     BubbleCursorMoved(Point),
+    /// Cursor salió de la burbuja sin soltar (cerrar botones pendientes).
+    BubbleCursorLeft,
     /// El usuario pidió cerrar una ventana (X de la principal → a la bandeja).
     WindowCloseRequested(window::Id),
     // ── Bandeja del sistema (tray) ────────────────────────────────────────
@@ -95,11 +101,12 @@ pub struct WhisprApp {
     settings_open: bool,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
     bubble_id: Option<window::Id>,
-    bubble_pressed: bool,
-    bubble_dragging: bool,
-    bubble_recording: bool, // este press inició la captura (para cancelar si es arrastre)
-    bubble_press_pos: Point,
+    bubble_pressed: bool, // botón izquierdo pulsado (graba)
     bubble_last_pos: Point,
+    /// Botón derecho: solo arrastra la burbuja (nunca graba ni abre nada).
+    bubble_right: crate::bubble::RightDragState,
+    /// Captura del ratón + seguimiento de la posición durante el arrastre.
+    bubble_drag: Option<crate::bubble::BubbleDrag>,
     pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
     // ── Bandeja del sistema ───────────────────────────────────────────────
     tray: Option<crate::tray::SystemTray>,
@@ -164,10 +171,9 @@ impl WhisprApp {
             settings_open: false,
             bubble_id,
             bubble_pressed: false,
-            bubble_dragging: false,
-            bubble_recording: false,
-            bubble_press_pos: Point::new(0.0, 0.0),
             bubble_last_pos: Point::new(0.0, 0.0),
+            bubble_right: crate::bubble::RightDragState::default(),
+            bubble_drag: None,
             pending_inject: false,
             tray,
             main_window_id: None,
@@ -509,6 +515,15 @@ impl WhisprApp {
                     }
                 }
 
+                // Auto-recuperación del arrastre con botón derecho: si el
+                // sistema roba la captura (alt-tab, menú del sistema) el
+                // evento de soltado no llega; se detecta el botón ya liberado
+                // y se cierra el arrastre para no quedarse «atascado».
+                if self.bubble_right.dragging && !crate::bubble::right_button_down() {
+                    self.bubble_right.cancel();
+                    self.end_bubble_drag("captura perdida (botón liberado)");
+                }
+
                 // Resultado de transcripción/descarga.
                 if let Some(rx) = &self.transcribe_rx {
                     match rx.try_recv() {
@@ -557,11 +572,10 @@ impl WhisprApp {
                 Task::none()
             }
             Message::BubblePress => {
+                // Clic izquierdo: siempre graba (comportamiento original,
+                // no se toca). El arrastre ya NO se dispara con el izquierdo.
                 self.bubble_pressed = true;
-                self.bubble_dragging = false;
-                self.bubble_recording = self.audio.is_none();
-                self.bubble_press_pos = self.bubble_last_pos;
-                if self.bubble_recording {
+                if self.audio.is_none() {
                     return self.update(Message::StartRecording);
                 }
                 // Ya se estaba grabando (desde la ventana principal): la burbuja
@@ -570,38 +584,53 @@ impl WhisprApp {
             }
             Message::BubbleRelease => {
                 let was_pressed = self.bubble_pressed;
-                let was_dragging = self.bubble_dragging;
                 self.bubble_pressed = false;
-                self.bubble_dragging = false;
-                if !was_pressed || was_dragging {
+                if !was_pressed {
                     return Task::none();
                 }
                 // Este turno va sí o sí a la app activa.
                 self.pending_inject = true;
                 self.update(Message::StopRecording)
             }
+            Message::BubbleRightPress => {
+                // El botón derecho solo arrastra: nunca inicia grabación ni
+                // abre nada (el clic derecho simple queda en no-op).
+                self.bubble_right.press(self.bubble_last_pos);
+                Task::none()
+            }
+            Message::BubbleRightRelease => {
+                if self.bubble_right.release() {
+                    self.end_bubble_drag("botón derecho soltado");
+                }
+                Task::none()
+            }
             Message::BubbleCursorMoved(pos) => {
                 self.bubble_last_pos = pos;
-                if self.bubble_pressed && !self.bubble_dragging {
-                    let dx = pos.x - self.bubble_press_pos.x;
-                    let dy = pos.y - self.bubble_press_pos.y;
-                    if dx * dx + dy * dy > 49.0 {
-                        // Movimiento real: es un arrastre, no un dictado.
-                        self.bubble_dragging = true;
-                        if self.bubble_recording {
-                            if let Some(mut cap) = self.audio.take() {
-                                let _ = cap.stop();
-                            }
-                            if matches!(self.status, Status::Recording) {
-                                self.status = Status::Idle;
-                            }
-                        }
-                        if let Some(id) = self.bubble_id {
-                            return window::drag(id);
-                        }
+                // Arrastre con botón derecho: al superar el umbral se captura
+                // el ratón y la burbuja sigue al cursor hasta soltar.
+                if self.bubble_right.move_cursor(pos) {
+                    let started = crate::bubble::BubbleDrag::start();
+                    if started.is_some() {
+                        crate::log!("bubble", "arrastre con botón derecho iniciado");
+                    }
+                    self.bubble_drag = started;
+                }
+                if self.bubble_right.dragging {
+                    if let Some(drag) = &mut self.bubble_drag {
+                        drag.follow();
                     }
                 }
                 Task::none()
+            }
+            Message::BubbleCursorLeft => {
+                // El cursor salió sin soltar: el izquierdo dicta igualmente
+                // (mismo comportamiento que antes) y el derecho cancela
+                // cualquier arrastre en curso.
+                let task = self.update(Message::BubbleRelease);
+                if self.bubble_right.release() {
+                    self.end_bubble_drag("cursor fuera de la burbuja");
+                }
+                task
             }
             // ── Bandeja del sistema ─────────────────────────────────────────
             Message::WindowOpened(id) => {
@@ -637,6 +666,16 @@ impl WhisprApp {
                 iced::exit()
             }
         }
+    }
+
+    /// Libera la captura del ratón y cierra el arrastre con botón derecho
+    /// (la máquina de estados ya quedó limpia en el llamador). Log con el
+    /// motivo: clave para diagnosticar arrastres que terminen raro.
+    fn end_bubble_drag(&mut self, reason: &str) {
+        if let Some(drag) = self.bubble_drag.take() {
+            drag.end();
+        }
+        crate::log!("bubble", "fin de arrastre con botón derecho ({reason})");
     }
 
     /// Oculta la ventana principal (se queda en la bandeja) y actualiza el
