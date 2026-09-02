@@ -12,7 +12,7 @@ iced = { version = "0.13", features = ["tokio"] }
 
 # Audio + transcripción
 cpal = "0.15"
-whisper-rs = "0.16"
+whisper-rs = { version = "0.16", features = ["cuda"] }
 
 # Inyección de texto en app activa
 arboard = "3.6.1"
