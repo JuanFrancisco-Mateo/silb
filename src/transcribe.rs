@@ -91,7 +91,7 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
     std::fs::create_dir_all(models_dir()).map_err(|e| format!("no se pudo crear models dir: {e}"))?;
 
     let url = model.download_url();
-    eprintln!("[transcribe] descargando {url}");
+    crate::log!("transcribe", "descargando {url}");
     let resp = ureq::get(&url)
         .call()
         .map_err(|e| format!("no se pudo descargar el modelo: {e}"))?;
@@ -131,7 +131,7 @@ pub struct WhisperEngine {
 
 impl WhisperEngine {
     pub fn load(model: Model) -> Result<Self, String> {
-        eprintln!("{}", whisper_rs::print_system_info());
+        crate::log!("transcribe", "{}", whisper_rs::print_system_info());
         let path = model_path(model);
         let params = WhisperContextParameters::default();
         let ctx = WhisperContext::new_with_params(&path, params)

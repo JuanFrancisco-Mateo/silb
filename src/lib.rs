@@ -9,6 +9,7 @@
 //! - `theme`: tokens de diseño 2026 + estilos de widgets (única fuente de color).
 //! - `app`: UI Iced.
 
+pub mod log;
 pub mod app;
 pub mod audio;
 pub mod config;

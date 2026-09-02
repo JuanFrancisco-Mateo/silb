@@ -61,14 +61,14 @@ impl AudioCapture {
             let stream = match build_stream(&device, &config, samples_cb, stop_cb, level_cb) {
                 Ok(s) => s,
                 Err(e) => {
-                    eprintln!("[audio] error creando stream: {e}");
+                    crate::log!("audio", "error creando stream: {e}");
                     return;
                 }
             };
             match stream.play() {
                 Ok(()) => {}
                 Err(e) => {
-                    eprintln!("[audio] error en stream.play(): {e}");
+                    crate::log!("audio", "error en stream.play(): {e}");
                     return;
                 }
             }
@@ -148,7 +148,7 @@ fn build_stream(
     stop: Arc<AtomicBool>,
     level: Arc<AtomicU32>,
 ) -> Result<cpal::Stream, String> {
-    let err_fn = |e| eprintln!("[audio] error en el stream: {e}");
+    let err_fn = |e| crate::log!("audio", "error en el stream: {e}");
     let channels = config.channels() as usize;
 
     match config.sample_format() {
