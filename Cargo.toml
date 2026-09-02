@@ -10,6 +10,14 @@ license = "MIT"
 # UI nativa (sin webview)
 iced = { version = "0.13", features = ["tokio"] }
 
+# Multi-ventana de Iced (la burbuja flotante es una segunda ventana del mismo
+# proceso, con vista y tema propios por window::Id)
+iced_winit = { version = "0.13", features = ["program"] }
+
+# Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
+# clics no roben el foco de la app donde se dicta
+winapi = { version = "0.3", features = ["winuser", "windef"] }
+
 # Audio + transcripción
 cpal = "0.15"
 whisper-rs = { version = "0.16", features = ["cuda"] }

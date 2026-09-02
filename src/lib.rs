@@ -11,6 +11,7 @@
 
 pub mod log;
 pub mod app;
+pub mod bubble;
 pub mod audio;
 pub mod config;
 pub mod domain;
