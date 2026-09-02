@@ -6,6 +6,7 @@
 //! - `transcribe`: transcripción con whisper-rs (GGML).
 //! - `inject`: escritura en la app activa (arboard + enigo).
 //! - `hotkey`: atajo global (global-hotkey).
+//! - `theme`: tokens de diseño 2026 + estilos de widgets (única fuente de color).
 //! - `app`: UI Iced.
 
 pub mod app;
@@ -14,4 +15,5 @@ pub mod config;
 pub mod domain;
 pub mod hotkey;
 pub mod inject;
+pub mod theme;
 pub mod transcribe;
