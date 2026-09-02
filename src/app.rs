@@ -27,9 +27,6 @@ pub enum Status {
     Idle,
     Recording,
     Transcribing,
-    /// El LLM corrector está trabajando sobre el último turno dictado
-    /// (docs/CORRECCION-VOZ.md §4.4: estado ámbar como Transcribing).
-    Correcting,
     Downloading { model: Model, downloaded: u64, total: u64 },
     Error(String),
 }
@@ -42,14 +39,6 @@ struct MicUi {
     hint: String,
 }
 
-/// La instrucción hablada que se está enviando al LLM corrector. Si la
-/// llamada falla, se reinserta como dictado normal (spec §3.3.1).
-struct LlmPending {
-    instruction: String,
-    /// El turno venía de la burbuja (inyección forzada al soltar).
-    force_inject: bool,
-}
-
 #[derive(Debug, Clone)]
 pub enum Message {
     Toggle,
@@ -59,12 +48,6 @@ pub enum Message {
     ModelSelected(Model),
     ToggleCleanup(bool),
     ToggleAutoInject(bool),
-    /// Corrección IA (otro modelo) activada/desactivada — Ajustes.
-    ToggleAiCorrection(bool),
-    /// Resultado del LLM corrector: diff a aplicar sobre el último turno.
-    CorrectionDone(Result<crate::domain::corrective::Diff, String>),
-    /// Deshacer la última corrección IA aplicada (un nivel).
-    UndoLastCorrection,
     ClearTranscript,
     CopyTranscript,
     InjectLast,
@@ -129,13 +112,6 @@ pub struct WhisprApp {
     /// Captura del ratón + seguimiento de la posición durante el arrastre.
     bubble_drag: Option<crate::bubble::BubbleDrag>,
     pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
-    // ── Corrección IA (LLM) ────────────────────────────────────────────────
-    llm_rx: Option<Receiver<Result<crate::domain::corrective::Diff, String>>>,
-    /// Instrucción en ruta al LLM: si la llamada falla o el diff no aplica,
-    /// se reinserta como dictado normal (spec §3.3.1: nunca perder el texto).
-    llm_pending: Option<LlmPending>,
-    /// Undo de 1 nivel: (transcript, last_turn) antes de la última corrección.
-    undo_state: Option<(String, String)>,
     // ── Bandeja del sistema ───────────────────────────────────────────────
     tray: Option<crate::tray::SystemTray>,
     /// Id de la ventana principal (se descubre con `window::open_events()`:
@@ -212,9 +188,6 @@ impl WhisprApp {
             bubble_right: crate::bubble::RightDragState::default(),
             bubble_drag: None,
             pending_inject: false,
-            llm_rx: None,
-            llm_pending: None,
-            undo_state: None,
             tray,
             main_window_id: None,
             main_visible: true,
@@ -227,76 +200,6 @@ impl WhisprApp {
         cfg.dictionary = self.dictionary_snapshot();
         cfg.model = Some(self.config.selected_model().id().to_string());
         cfg.save();
-    }
-
-    /// Aplica el diff del LLM al último turno (o recupera la instrucción si
-    /// la llamada falló: dictado normal, nunca perder texto del usuario).
-    fn handle_llm_correction(
-        &mut self,
-        result: Result<crate::domain::corrective::Diff, String>,
-    ) -> Task<Message> {
-        self.llm_rx = None;
-        let pending = self.llm_pending.take();
-
-        match result {
-            Ok(diff) => {
-                let target = self.last_turn.clone();
-                match crate::domain::corrective::apply_diff(&target, &diff) {
-                    Some(after) => {
-                        // Undo de 1 nivel ANTES de mutar.
-                        self.undo_state = Some((self.transcript.clone(), target.clone()));
-                        if let Some(t) = crate::domain::corrective::replace_last_turn(
-                            &self.transcript,
-                            &target,
-                            &after,
-                        ) {
-                            self.transcript = t;
-                        }
-                        self.last_turn = after;
-                        self.last_correction = Some(format!(
-                            "Rectificado IA: “{}” → “{}”",
-                            diff.find, diff.replace
-                        ));
-                        crate::log!("llm", "rectificado: {} → {}", diff.find, diff.replace);
-
-                        let force_inject = pending.as_ref().map(|p| p.force_inject).unwrap_or(false);
-                        if (self.config.auto_inject.unwrap_or(true) || force_inject)
-                            && !self.last_turn.is_empty()
-                        {
-                            if let Err(e) = inject_text_into_active_app(&self.last_turn) {
-                                self.status = Status::Error(format!("Inyección: {e}"));
-                            }
-                        }
-                    }
-                    None => {
-                        self.last_correction =
-                            Some("De momento no sé qué corregir en el último turno".to_string());
-                        self.restore_instruction_as_dictation(pending);
-                    }
-                }
-            }
-            Err(e) => {
-                self.last_correction = Some(format!("Corrección IA no disponible: {e}"));
-                self.restore_instruction_as_dictation(pending);
-            }
-        }
-        self.status = Status::Idle;
-        self.save_config();
-        Task::none()
-    }
-
-    /// Spec §3.3.1: si el LLM no llega a corregir nada (caído, timeout o
-    /// diff inválido), la instrucción se trata como dictado normal.
-    fn restore_instruction_as_dictation(&mut self, pending: Option<LlmPending>) {
-        let Some(p) = pending else { return };
-        if p.instruction.is_empty() {
-            return;
-        }
-        self.last_turn = p.instruction.clone();
-        self.transcript = crate::domain::correction::append_transcript(&self.transcript, &p.instruction);
-        if self.config.auto_inject.unwrap_or(true) || p.force_inject {
-            let _ = inject_text_into_active_app(&self.last_turn);
-        }
     }
 
     // ── Accesores para la burbuja flotante (bubble.rs) ─────────────────────
@@ -343,12 +246,6 @@ impl WhisprApp {
                 label: "Transcribiendo…".to_string(),
                 hint: "Procesando el audio con Whisper".to_string(),
             },
-            Status::Correcting => MicUi {
-                color: t.warn,
-                hint_color: t.dim,
-                label: "Corrigiendo…".to_string(),
-                hint: "El modelo de corrección ajusta lo que dictaste".to_string(),
-            },
             Status::Downloading { model, downloaded, total } => {
                 let pct = if *total > 0 { (*downloaded as f64 / *total as f64 * 100.0) as u32 } else { 0 };
                 MicUi {
@@ -371,10 +268,7 @@ impl WhisprApp {
         }
     }
 
-    /// Aplica cleanup + diccionario + reglas de corrección hablada.
-    /// Devuelve el texto del turno y si las REGLAS resolvieron una corrección
-    /// (en ese caso el LLM no debe intervenir — nivel A de la spec).
-    fn apply_pipeline(&mut self, raw: &str) -> (String, bool) {
+    fn apply_pipeline(&mut self, raw: &str) -> String {
         // Orden de procesado (igual que la web): cleanup -> diccionario.
         let mut text = raw.to_string();
         self.removed_fillers.clear();
@@ -402,7 +296,7 @@ impl WhisprApp {
         } else if !self.last_turn.is_empty() {
             self.last_correction = None;
         }
-        (turn.text, turn.correction.is_some())
+        turn.text
     }
 }
 
@@ -469,42 +363,11 @@ impl WhisprApp {
                 self.pending_inject = false;
                 match result {
                     Ok(raw) => {
-                        let (processed, rule_corrected) = self.apply_pipeline(&raw);
+                        let processed = self.apply_pipeline(&raw);
                         if processed.is_empty() && raw.trim().is_empty() {
                             self.status = Status::Idle;
                             return Task::none();
                         }
-
-                        // Corrección IA (v2, docs/CORRECCION-VOZ.md §3): si las
-                        // reglas no resolvieron el turno, la función está activa
-                        // y el turno huele a corrección («no no lo último está
-                        // mal, es 2 en vez de 4»), se enruta al LLM: corrige el
-                        // ÚLTIMO turno dictado usando esta frase como instrucción.
-                        if !rule_corrected
-                            && self.config.ai_correction_enabled()
-                            && !self.last_turn.is_empty()
-                            && crate::domain::corrective::classify(&processed)
-                                == crate::domain::corrective::CorrectiveDecision::NeedsLlm
-                        {
-                            let target = self.last_turn.clone();
-                            let instruction = processed.clone();
-                            let llm_cfg = self.config.llm_settings();
-                            let (tx, rx) = mpsc::channel();
-                            self.llm_rx = Some(rx);
-                            self.llm_pending = Some(LlmPending {
-                                instruction: instruction.clone(),
-                                force_inject,
-                            });
-                            self.status = Status::Correcting;
-                            crate::log!("llm", "corrección IA en camino…");
-                            std::thread::spawn(move || {
-                                let result =
-                                    crate::llm::correct(&target, &instruction, &llm_cfg);
-                                let _ = tx.send(result);
-                            });
-                            return Task::none();
-                        }
-
                         self.last_turn = processed.clone();
                         if !self.last_turn.is_empty() {
                             self.transcript =
@@ -563,20 +426,6 @@ impl WhisprApp {
             Message::ToggleAutoInject(on) => {
                 self.config.auto_inject = Some(on);
                 self.save_config();
-                Task::none()
-            }
-            Message::ToggleAiCorrection(on) => {
-                self.config.ai_correction_enabled = Some(on);
-                self.save_config();
-                Task::none()
-            }
-            Message::CorrectionDone(result) => self.handle_llm_correction(result),
-            Message::UndoLastCorrection => {
-                if let Some((transcript, last_turn)) = self.undo_state.take() {
-                    self.transcript = transcript;
-                    self.last_turn = last_turn;
-                    self.last_correction = Some("Corrección IA deshecha ↩".to_string());
-                }
                 Task::none()
             }
             Message::ClearTranscript => {
@@ -712,7 +561,7 @@ impl WhisprApp {
                 }
 
                 // Resultado de transcripción/descarga.
-                let _drained: Task<Message> = if let Some(rx) = &self.transcribe_rx {
+                if let Some(rx) = &self.transcribe_rx {
                     match rx.try_recv() {
                         Ok(Ok(msg)) if msg.starts_with("__PROGRESS__") => {
                             if let Some(rest) = msg.strip_prefix("__PROGRESS__") {
@@ -750,20 +599,7 @@ impl WhisprApp {
                     }
                 } else {
                     Task::none()
-                };
-
-                // Resultado de la corrección IA (mismo patrón que transcrito).
-                if let Some(rx) = &self.llm_rx {
-                    return match rx.try_recv() {
-                        Ok(result) => self.update(Message::CorrectionDone(result)),
-                        Err(mpsc::TryRecvError::Empty) => Task::none(),
-                        Err(mpsc::TryRecvError::Disconnected) => {
-                            self.llm_rx = None;
-                            Task::none()
-                        }
-                    };
                 }
-                Task::none()
             }
             Message::BubbleOpened(_id) => {
                 // La ventana ya existe: quitarle la activación para que el
@@ -1064,33 +900,15 @@ impl WhisprApp {
         .spacing(theme::SPACE_2);
 
         // ── Feedback textual (éxitos / espera / muletillas) ──────────────────
-        let feedback: Element<'_, Message> = if let Some(corr) = &self.last_correction {
-            let color = if corr.starts_with("Esperando")
-                || corr.contains("no disponible")
-                || corr.contains("no sé qué corregir")
-            {
-                t.warn
-            } else {
-                t.ok
-            };
-            let mut row_el = row![text(corr.as_str()).size(theme::FONT_SM).color(color)]
-                .spacing(theme::SPACE_2)
-                .align_y(iced::Alignment::Center);
-            if self.undo_state.is_some() {
-                row_el = row_el.push(
-                    button("↩ Deshacer")
-                        .on_press(Message::UndoLastCorrection)
-                        .style(theme::secondary),
-                );
-            }
-            row_el.into()
+        let feedback = if let Some(corr) = &self.last_correction {
+            let color = if corr.starts_with("Esperando") { t.warn } else { t.ok };
+            text(corr.as_str()).size(theme::FONT_SM).color(color)
         } else if !self.removed_fillers.is_empty() {
             text(format!("Muletillas eliminadas: {}", self.removed_fillers.join(", ")))
                 .size(theme::FONT_SM)
                 .color(t.dim)
-                .into()
         } else {
-            text("").into()
+            text("")
         };
 
         // ── Zona central: transcript o ajustes (progressive disclosure) ──────
@@ -1166,12 +984,6 @@ impl WhisprApp {
                 self.config.auto_inject.unwrap_or(true),
             )
             .on_toggle(Message::ToggleAutoInject)
-            .style(theme::checkbox),
-            checkbox(
-                "Corrección IA: otro modelo corrige lo dictado",
-                self.config.ai_correction_enabled(),
-            )
-            .on_toggle(Message::ToggleAiCorrection)
             .style(theme::checkbox),
             text(format!("Atajo global: {}", crate::hotkey::DICTATION_SHORTCUT_LABEL))
                 .size(theme::FONT_XS)

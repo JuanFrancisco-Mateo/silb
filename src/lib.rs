@@ -21,7 +21,6 @@ pub mod config;
 pub mod domain;
 pub mod hotkey;
 pub mod inject;
-pub mod llm;
 pub mod theme;
 pub mod tray;
 pub mod transcribe;
