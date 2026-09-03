@@ -10,6 +10,205 @@ use serde::{Deserialize, Serialize};
 use crate::domain::dictionary::DictionaryEntry;
 use crate::transcribe::Model;
 
+/// Modo de tema de la app. `Auto` sigue el tema del SISTEMA Windows
+/// (`AppsUseLightTheme` del registro, cacheado en el Poll cada 5 s);
+/// `Claro`/`Oscuro` fuerzan un modo manual.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ThemeMode {
+    Auto,
+    Claro,
+    Oscuro,
+}
+
+impl ThemeMode {
+    /// Siguiente modo en el ciclo del botón del header: Auto → Claro → Oscuro.
+    pub fn next(self) -> ThemeMode {
+        match self {
+            ThemeMode::Auto => ThemeMode::Claro,
+            ThemeMode::Claro => ThemeMode::Oscuro,
+            ThemeMode::Oscuro => ThemeMode::Auto,
+        }
+    }
+
+    /// ¿Este modo fuerza un lado concreto? `Auto` no fuerza (None): decide el
+    /// sistema operativo.
+    pub fn forced_dark(self) -> Option<bool> {
+        match self {
+            ThemeMode::Auto => None,
+            ThemeMode::Claro => Some(false),
+            ThemeMode::Oscuro => Some(true),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            ThemeMode::Auto => "Auto",
+            ThemeMode::Claro => "Claro",
+            ThemeMode::Oscuro => "Oscuro",
+        }
+    }
+}
+
+impl std::fmt::Display for ThemeMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+impl std::str::FromStr for ThemeMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(ThemeMode::Auto),
+            "claro" | "light" => Ok(ThemeMode::Claro),
+            "oscuro" | "dark" => Ok(ThemeMode::Oscuro),
+            other => Err(format!("modo de tema desconocido: {other}")),
+        }
+    }
+}
+
+/// Tamaño de fuente global de la UI (Ajustes → Apariencia). Factores sobre
+/// los tamaños base de `theme.rs`: 0.85 / 1.0 / 1.15 / 1.3.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum FontSize {
+    Small,
+    Normal,
+    Large,
+    XLarge,
+}
+
+impl FontSize {
+    pub fn factor(self) -> f32 {
+        match self {
+            FontSize::Small => 0.85,
+            FontSize::Normal => 1.0,
+            FontSize::Large => 1.15,
+            FontSize::XLarge => 1.3,
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            FontSize::Small => "Pequeña",
+            FontSize::Normal => "Normal",
+            FontSize::Large => "Grande",
+            FontSize::XLarge => "Muy grande",
+        }
+    }
+}
+
+impl std::fmt::Display for FontSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// Tamaño del círculo de la burbuja flotante, en px lógicos.
+/// La ventana acepta el rango completo 48–72 (min/max) para que el resize en
+/// caliente por `window::resize` no se tope con el clamp de WM_GETMINMAXINFO.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BubbleSize {
+    Small,
+    Mid,
+    Large,
+}
+
+impl BubbleSize {
+    pub fn px(self) -> f32 {
+        match self {
+            BubbleSize::Small => 48.0,
+            BubbleSize::Mid => 56.0,
+            BubbleSize::Large => 72.0,
+        }
+    }
+
+    pub fn label(self) -> String {
+        format!("{} px", self.px() as u16)
+    }
+}
+
+impl std::fmt::Display for BubbleSize {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label())
+    }
+}
+
+/// Esquina del monitor donde se ancla la burbuja (posición inicial y destino
+/// de «mover a esquina» al cambiar la selección en Ajustes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BubbleCorner {
+    TopRight,
+    TopLeft,
+    BottomRight,
+    BottomLeft,
+}
+
+impl BubbleCorner {
+    pub fn label(self) -> &'static str {
+        match self {
+            BubbleCorner::TopRight => "Arriba derecha",
+            BubbleCorner::TopLeft => "Arriba izquierda",
+            BubbleCorner::BottomRight => "Abajo derecha",
+            BubbleCorner::BottomLeft => "Abajo izquierda",
+        }
+    }
+}
+
+impl std::fmt::Display for BubbleCorner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
+/// Auto-ocultar la burbuja tras un rato sin dictar. Se re-muestra al pulsar
+/// el micrófono (o al abrir la burbuja).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BubbleHideTimeout {
+    #[serde(rename = "nunca")]
+    Never,
+    #[serde(rename = "5")]
+    S5,
+    #[serde(rename = "10")]
+    S10,
+    #[serde(rename = "30")]
+    S30,
+    #[serde(rename = "60")]
+    S60,
+}
+
+impl BubbleHideTimeout {
+    pub fn secs(self) -> Option<u64> {
+        match self {
+            BubbleHideTimeout::Never => None,
+            BubbleHideTimeout::S5 => Some(5),
+            BubbleHideTimeout::S10 => Some(10),
+            BubbleHideTimeout::S30 => Some(30),
+            BubbleHideTimeout::S60 => Some(60),
+        }
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            BubbleHideTimeout::Never => "Nunca",
+            BubbleHideTimeout::S5 => "5 s",
+            BubbleHideTimeout::S10 => "10 s",
+            BubbleHideTimeout::S30 => "30 s",
+            BubbleHideTimeout::S60 => "60 s",
+        }
+    }
+}
+
+impl std::fmt::Display for BubbleHideTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Config {
     pub dictionary: Vec<DictionaryEntry>,
@@ -87,6 +286,30 @@ pub struct Config {
     /// informativa: si está apagada y el dispositivo NO está a 16 kHz,
     /// whisper fallaría; la app registra un aviso y remuestrea igual.
     pub auto_resample_to_16k: Option<bool>,
+    // ── Apariencia (tema / fuente / burbuja) ────────────────────────────────
+    /// Tema claro/oscuro/auto. `None` = legacy: se deriva de `dark_mode`
+    /// (el toggle antiguo) para no cambiar el comportamiento de configs
+    /// viejas. Al elegir modo en la UI se escribe `theme_mode` y `dark_mode`
+    /// queda como fallback para configs futuras sin el campo.
+    pub theme_mode: Option<ThemeMode>,
+    /// Tamaño de fuente global (Ajustes → Apariencia). `None` = Normal.
+    pub font_size: Option<FontSize>,
+    /// Tamaño del círculo de la burbuja flotante. `None` = 56 px (Mid).
+    pub bubble_size: Option<BubbleSize>,
+    /// Esquina del monitor donde se ancla la burbuja. `None` = arriba
+    /// derecha (posición histórica).
+    pub bubble_corner: Option<BubbleCorner>,
+    /// Opacidad de la burbuja en % (rango 20..=100). `None` = 100.
+    pub bubble_opacity: Option<u8>,
+    /// Auto-ocultar la burbuja tras N segundos sin dictar. `None` = nunca.
+    /// Se re-muestra al pulsar el micrófono o al abrir la burbuja.
+    pub bubble_hide_timeout: Option<BubbleHideTimeout>,
+    /// Posición física (px de pantalla) de la burbuja arrastrada por el
+    /// usuario. Pareja: si solo uno está presente se ignoran ambos (mover
+    /// sin arrastre no persiste). Al elegir una esquina en Ajustes se
+    /// limpian: la esquina vuelve a mandar en el siguiente arranque.
+    pub bubble_x: Option<i32>,
+    pub bubble_y: Option<i32>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -253,6 +476,64 @@ impl Config {
     /// y forzar el remuestreo si va a pasarle las muestras a whisper.
     pub fn auto_resample_16k(&self) -> bool {
         self.auto_resample_to_16k.unwrap_or(true)
+    }
+
+    /// Modo de tema efectivo. `None` (config vieja sin el campo) se deriva
+    /// del `dark_mode` legacy: true → Oscuro, false → Claro, ausente →
+    /// Oscuro (default 2026). El modo `Auto` delega en el sistema.
+    pub fn theme_mode(&self) -> ThemeMode {
+        self.theme_mode.unwrap_or_else(|| {
+            if self.dark_mode.unwrap_or(true) {
+                ThemeMode::Oscuro
+            } else {
+                ThemeMode::Claro
+            }
+        })
+    }
+
+    /// ¿Modo oscuro efectivo? `system_dark` es el estado del SISTEMA (leído
+    /// por `theme::system_dark_mode()` y cacheado en el Poll del App cada
+    /// 5 s). Solo se consulta cuando el modo es Auto.
+    pub fn resolved_dark(&self, system_dark: bool) -> bool {
+        match self.theme_mode() {
+            ThemeMode::Auto => system_dark,
+            ThemeMode::Claro => false,
+            ThemeMode::Oscuro => true,
+        }
+    }
+
+    /// Tamaño de fuente global. Default: Normal (factor 1.0 = baseline).
+    pub fn font_size(&self) -> FontSize {
+        self.font_size.unwrap_or(FontSize::Normal)
+    }
+
+    /// Tamaño del círculo de la burbuja. Default: 56 px (Mid).
+    pub fn bubble_size(&self) -> BubbleSize {
+        self.bubble_size.unwrap_or(BubbleSize::Mid)
+    }
+
+    /// Esquina de anclaje de la burbuja. Default: arriba derecha.
+    pub fn bubble_corner(&self) -> BubbleCorner {
+        self.bubble_corner.unwrap_or(BubbleCorner::TopRight)
+    }
+
+    /// Opacidad de la burbuja en % (20..=100). Default: 100 (opaca).
+    pub fn bubble_opacity(&self) -> u8 {
+        self.bubble_opacity.unwrap_or(100).clamp(20, 100)
+    }
+
+    /// Auto-ocultar de la burbuja. Default: nunca.
+    pub fn bubble_hide_timeout(&self) -> BubbleHideTimeout {
+        self.bubble_hide_timeout.unwrap_or(BubbleHideTimeout::Never)
+    }
+
+    /// Posición persistida de la burbuja (px físicos de pantalla). Solo Some
+    /// si la pareja x/y está completa: un solo campo no significa nada.
+    pub fn bubble_position(&self) -> Option<(i32, i32)> {
+        match (self.bubble_x, self.bubble_y) {
+            (Some(x), Some(y)) => Some((x, y)),
+            _ => None,
+        }
     }
 }
 
@@ -493,5 +774,126 @@ mod tests {
         assert_eq!(cfg.n_threads(), 4);
         assert!(cfg.auto_resample_16k());
         assert!(cfg.dictionary.is_empty());
+    }
+
+    #[test]
+    fn theme_mode_legacy_y_explicito() {
+        // Default (sin nada): Oscuro (2026: dark por defecto).
+        assert_eq!(Config::default().theme_mode(), ThemeMode::Oscuro);
+        // Legacy dark_mode=false → Claro (config vieja con toggle en claro).
+        let claro = Config { dark_mode: Some(false), ..Default::default() };
+        assert_eq!(claro.theme_mode(), ThemeMode::Claro);
+        // theme_mode explícito manda sobre dark_mode.
+        let c = Config {
+            dark_mode: Some(true),
+            theme_mode: Some(ThemeMode::Claro),
+            ..Default::default()
+        };
+        assert_eq!(c.theme_mode(), ThemeMode::Claro);
+        // FromStr tolera casing y alias inglés (usa "dark"/"light").
+        assert_eq!("auto".parse::<ThemeMode>(), Ok(ThemeMode::Auto));
+        assert_eq!("OSCURO".parse::<ThemeMode>(), Ok(ThemeMode::Oscuro));
+        assert_eq!("light".parse::<ThemeMode>(), Ok(ThemeMode::Claro));
+        assert!("neon".parse::<ThemeMode>().is_err());
+    }
+
+    #[test]
+    fn resolved_dark_sigue_al_modo_y_al_sistema() {
+        // Auto: decide el sistema (cacheado en el Poll).
+        let auto = Config { theme_mode: Some(ThemeMode::Auto), ..Default::default() };
+        assert!(auto.resolved_dark(true));
+        assert!(!auto.resolved_dark(false));
+        // Claro/Oscuro: fuerzan sin mirar al sistema.
+        let claro = Config { theme_mode: Some(ThemeMode::Claro), ..Default::default() };
+        assert!(!claro.resolved_dark(true), "claro gana aunque el sistema sea oscuro");
+        let oscuro = Config { theme_mode: Some(ThemeMode::Oscuro), ..Default::default() };
+        assert!(oscuro.resolved_dark(false), "oscuro gana aunque el sistema sea claro");
+        // Default (None) = Oscuro, ignora al sistema.
+        assert!(Config::default().resolved_dark(false));
+    }
+
+    #[test]
+    fn ciclo_de_tema_auto_claro_oscuro() {
+        let m = ThemeMode::Auto;
+        assert_eq!(m.next(), ThemeMode::Claro);
+        assert_eq!(m.next().next(), ThemeMode::Oscuro);
+        assert_eq!(m.next().next().next(), ThemeMode::Auto, "ciclo cerrado");
+        assert_eq!(ThemeMode::Oscuro.next(), ThemeMode::Auto);
+        // forced_dark: solo Auto delega.
+        assert_eq!(ThemeMode::Auto.forced_dark(), None);
+        assert_eq!(ThemeMode::Claro.forced_dark(), Some(false));
+        assert_eq!(ThemeMode::Oscuro.forced_dark(), Some(true));
+    }
+
+    #[test]
+    fn font_size_default_y_factores() {
+        assert_eq!(Config::default().font_size(), FontSize::Normal);
+        assert_eq!(Config::default().font_size().factor(), 1.0);
+        assert_eq!(FontSize::Small.factor(), 0.85);
+        assert_eq!(FontSize::Large.factor(), 1.15);
+        assert_eq!(FontSize::XLarge.factor(), 1.3);
+        let c = Config { font_size: Some(FontSize::XLarge), ..Default::default() };
+        assert_eq!(c.font_size(), FontSize::XLarge);
+    }
+
+    #[test]
+    fn burbuja_accessors_defaults_y_clamps() {
+        let cfg = Config::default();
+        assert_eq!(cfg.bubble_size(), BubbleSize::Mid);
+        assert_eq!(cfg.bubble_size().px(), 56.0);
+        assert_eq!(cfg.bubble_corner(), BubbleCorner::TopRight);
+        assert_eq!(cfg.bubble_opacity(), 100);
+        assert_eq!(cfg.bubble_hide_timeout(), BubbleHideTimeout::Never);
+        assert_eq!(cfg.bubble_position(), None, "sin arrastre no hay posición");
+        // Opacidad fuera de rango (config.json a mano) se clampea a 20..=100.
+        let baja = Config { bubble_opacity: Some(5), ..Default::default() };
+        assert_eq!(baja.bubble_opacity(), 20);
+        let alta = Config { bubble_opacity: Some(255), ..Default::default() };
+        assert_eq!(alta.bubble_opacity(), 100);
+        // Posición solo con la pareja completa.
+        let solo_x = Config { bubble_x: Some(10), ..Default::default() };
+        assert_eq!(solo_x.bubble_position(), None);
+        let par = Config { bubble_x: Some(10), bubble_y: Some(20), ..Default::default() };
+        assert_eq!(par.bubble_position(), Some((10, 20)));
+        // Timeouts: Nunca = None, el resto segundos exactos.
+        assert_eq!(BubbleHideTimeout::Never.secs(), None);
+        assert_eq!(BubbleHideTimeout::S5.secs(), Some(5));
+        assert_eq!(BubbleHideTimeout::S60.secs(), Some(60));
+    }
+
+    #[test]
+    fn serializa_y_relee_campos_nuevos_de_ui() {
+        // Roundtrip por JSON (lo que pasa con config.json en disco).
+        let original = Config {
+            theme_mode: Some(ThemeMode::Auto),
+            font_size: Some(FontSize::Large),
+            bubble_size: Some(BubbleSize::Large),
+            bubble_corner: Some(BubbleCorner::BottomLeft),
+            bubble_opacity: Some(80),
+            bubble_hide_timeout: Some(BubbleHideTimeout::S10),
+            bubble_x: Some(1400),
+            bubble_y: Some(920),
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&original).expect("serializa");
+        let leida: Config = serde_json::from_str(&raw).expect("deserializa");
+        assert_eq!(leida.theme_mode(), ThemeMode::Auto);
+        assert_eq!(leida.font_size(), FontSize::Large);
+        assert_eq!(leida.bubble_size(), BubbleSize::Large);
+        assert_eq!(leida.bubble_corner(), BubbleCorner::BottomLeft);
+        assert_eq!(leida.bubble_opacity(), 80);
+        assert_eq!(leida.bubble_hide_timeout(), BubbleHideTimeout::S10);
+        assert_eq!(leida.bubble_position(), Some((1400, 920)));
+
+        // Compatibilidad hacia atrás: un config.json viejo sin los campos
+        // nuevos se deserializa sin error y los getters devuelven los defaults.
+        let viejo = r#"{"dictionary":[]}"#;
+        let cfg: Config = serde_json::from_str(viejo).expect("json viejo");
+        assert_eq!(cfg.theme_mode(), ThemeMode::Oscuro, "legacy → dark");
+        assert_eq!(cfg.font_size(), FontSize::Normal);
+        assert_eq!(cfg.bubble_size(), BubbleSize::Mid);
+        assert_eq!(cfg.bubble_corner(), BubbleCorner::TopRight);
+        assert_eq!(cfg.bubble_opacity(), 100);
+        assert_eq!(cfg.bubble_hide_timeout(), BubbleHideTimeout::Never);
     }
 }
