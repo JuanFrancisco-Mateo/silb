@@ -48,13 +48,51 @@ const REFERENCE: &str = r"(?i)\b(lo [úu]ltimo|la [úu]ltima palabra|la [úu]lti
 
 /// Clasificador de dos niveles (§2): solo enruta al LLM los turnos con
 /// (negación o verbo correctivo) Y (numeral o referencia al texto previo).
+///
+/// El parámetro `threshold` (0..=100) modula la sensibilidad: una vez que
+/// un turno pasa la regla de los dos niveles, se puntúa por el número de
+/// señales presentes (neg/verb/num/reference) sobre 4. Como la regla de
+/// los dos niveles exige mínimo 2 señales, el `ratio` resultante vive
+/// en `[50, 100]`. El umbral decide si se enruta: default 50 (todo lo
+/// que pasa la regla va al LLM, igual que la conducta previa); subir =
+/// más conservador (precision > recall, spec §2). 0 = pasivo (no enruta
+/// nada; equivalente a desactivar la corrección IA sin tocar el toggle).
 pub fn classify(turn: &str) -> CorrectiveDecision {
+    classify_with(turn, 50)
+}
+
+/// Variante con umbral explícito (la usa `app.rs` con el valor de
+/// `Config::llm_classifier_threshold`). Misma regla de los dos niveles;
+/// añade el gate de confianza por encima.
+pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
     let neg = rx(NEGATION).is_match(turn).unwrap_or(false);
     let verb = rx(CORRECTIVE_VERB).is_match(turn).unwrap_or(false);
     let num = rx(NUMERAL).is_match(turn).unwrap_or(false);
     let reference = rx(REFERENCE).is_match(turn).unwrap_or(false);
 
-    if (neg || verb) && (num || reference) {
+    // Regla de los dos niveles (spec §2): sin (neg|verb) o sin
+    // (num|reference) NO se enruta al LLM — falso positivo es peor que
+    // falso negativo (un acierto casual nos cuesta una llamada al LLM y
+    // un `find` vacío).
+    if !(neg || verb) || !(num || reference) {
+        return CorrectiveDecision::Plain;
+    }
+    if threshold == 0 {
+        return CorrectiveDecision::Plain;
+    }
+
+    // Puntuación: nº de señales presentes. Mínimo 2 (regla de los dos
+    // niveles), máximo 4. Ratio sobre 100: 50, 75, 100. threshold=50
+    // deja pasar cualquier caso que cumpla la regla (conducta previa);
+    // 60+ empieza a filtrar los casos de solo 2 señales; 80+ es muy
+    // conservador (solo los de 3+ señales).
+    let score = [neg, verb, num, reference].iter().filter(|x| **x).count() as u16;
+    let ratio: u16 = match score {
+        2 => 50,
+        3 => 75,
+        _ => 100, // score == 4
+    };
+    if ratio >= u16::from(threshold) {
         CorrectiveDecision::NeedsLlm
     } else {
         CorrectiveDecision::Plain
@@ -155,6 +193,95 @@ mod tests {
     fn verbos_correctivos_con_objetivo_se_envian_al_llm() {
         for turn in ["borra la última frase", "sustituye eso", "quítame el número ese"] {
             assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
+        }
+    }
+
+    // ── Umbral del clasificador (spec §2): modula sensibilidad ────────────
+
+    #[test]
+    fn clasificador_default_thresholds_son_consistentes() {
+        // classify(turn) == classify_with(turn, 50) por contrato: el
+        // default preserva la conducta previa (todo lo que pasa la regla
+        // de los dos niveles va al LLM).
+        for turn in [
+            "no no lo último está mal es 2 en vez de 4",
+            "esto no, era lo otro",
+            "no era 4, era 2",
+            "la reunión es el jueves", // Plain
+            "no me gusta el café",     // Plain
+        ] {
+            assert_eq!(
+                classify(turn),
+                classify_with(turn, 50),
+                "{turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn umbral_cero_apaga_la_correccion() {
+        // §2: threshold 0 = clasificador pasivo (atajo equivalente al toggle off).
+        for turn in [
+            "no no lo último está mal es 2 en vez de 4",
+            "esto no, era lo otro",
+            "no era 4, era 2",
+            "borra la última frase",
+        ] {
+            assert_eq!(
+                classify_with(turn, 0),
+                CorrectiveDecision::Plain,
+                "umbral 0 nunca enruta: {turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn umbral_alto_filtra_los_casos_de_2_senales() {
+        // Con threshold > 50 (3/4=75, 4/4=100) los casos de solo 2 señales
+        // (ratio 50) caen. Subir el umbral = más conservador (precision
+        // > recall, spec §2).
+        let ambiguo = "no era 4, era 2"; // neg + num = 2/4 → ratio 50
+        assert_eq!(classify(ambiguo), CorrectiveDecision::NeedsLlm);
+        // Con threshold 60, ratio 50 < 60 → NO se enruta.
+        assert_eq!(classify_with(ambiguo, 60), CorrectiveDecision::Plain);
+        // Con threshold 80 (muy conservador) tampoco.
+        assert_eq!(classify_with(ambiguo, 80), CorrectiveDecision::Plain);
+        // El caso canónico (3/4 → ratio 75) sigue pasando con 60.
+        let canonico = "no no lo último está mal es 2 en vez de 4";
+        assert_eq!(classify_with(canonico, 60), CorrectiveDecision::NeedsLlm);
+        // Solo con 80+ cae también.
+        assert_eq!(classify_with(canonico, 80), CorrectiveDecision::Plain);
+    }
+
+    #[test]
+    fn umbral_bajo_no_relaja_la_regla_de_los_dos_niveles() {
+        // Aunque el umbral sea bajo, sigue vigente la regla base: sin
+        // (neg|verb) o sin (num|reference) NO se enruta (spec §2:
+        // «opción más segura es tratar el turno como dictado normal»).
+        for turn in ["no me gusta el café", "tengo dos reuniones", "cambia el canal"] {
+            for threshold in [10, 25, 50] {
+                assert_eq!(
+                    classify_with(turn, threshold),
+                    CorrectiveDecision::Plain,
+                    "debe seguir siendo Plain: {turn:?} @ threshold={threshold}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn clasificador_default_es_el_50_que_preserva_la_conducta_previa() {
+        // El contrato: classify(t) == classify_with(t, 50). Verificamos
+        // contra un mix realista: el caso canónico y el «borra la última
+        // frase» que la v1 ya enrutaba.
+        for turn in [
+            "no no lo último está mal es 2 en vez de 4",
+            "borra la última frase",
+            "no era 4, era 2",
+            "sustituye eso",
+        ] {
+            assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
+            assert_eq!(classify_with(turn, 50), CorrectiveDecision::NeedsLlm, "{turn:?}");
         }
     }
 

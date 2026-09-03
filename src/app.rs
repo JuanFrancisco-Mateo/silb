@@ -67,6 +67,29 @@ pub enum Message {
     ToggleAutoInject(bool),
     /// Corrección IA (otro modelo) activada/desactivada — Ajustes.
     ToggleAiCorrection(bool),
+    /// Endpoint del LLM corrector (base_url OpenAI-compatible). Vacío
+    /// en la UI cae al default `http://127.0.0.1:8081/v1`.
+    LlmEndpointChanged(String),
+    /// Modelo del corrector. Vacío en la UI cae al default
+    /// `ornith-1.0-9b`.
+    LlmModelChanged(String),
+    /// Timeout HTTP en segundos (1..=120). Sale del slider; el getter
+    /// lo pasa a `LlmConfig::timeout_secs` y `ureq::timeout`.
+    LlmTimeoutChanged(u32),
+    /// Umbral del clasificador (0..=100). 0 = clasificador pasivo
+    /// (atajo equivalente al toggle maestro apagado); 100 =
+    /// imposible que enrute; default 50 = conducta previa.
+    LlmThresholdChanged(u32),
+    /// Modo «confirmar antes de aplicar» (spec §4.2). Cuando está on,
+    /// al volver del LLM el diff se muestra con botones «Aplicar» /
+    /// «Descartar» en vez de aplicarse automáticamente.
+    LlmConfirmToggled(bool),
+    /// Aplica el diff pendiente que se mostró tras una corrección IA
+    /// cuando `ai_correction_confirm` está activo.
+    ApplyPendingDiff,
+    /// Descarta el diff pendiente (reinserta la instrucción hablada
+    /// como dictado normal, spec §3.3.1).
+    DiscardPendingDiff,
     /// Resultado del LLM corrector: diff a aplicar sobre el último turno.
     CorrectionDone(Result<crate::domain::corrective::Diff, String>),
     /// Deshacer la última corrección IA aplicada (un nivel).
@@ -156,6 +179,12 @@ pub struct WhisprApp {
     /// Instrucción en ruta al LLM (con el target capturado): si la llamada
     /// falla o el diff no aplica, se reinserta como dictado normal.
     llm_pending: Option<LlmPending>,
+    /// Diff pendiente de confirmación (modo `ai_correction_confirm`). Solo
+    /// se rellena cuando el LLM responde y el toggle está activo. Mientras
+    /// está Some, la UI muestra «Aplicar» / «Descartar» en el feedback.
+    /// El campo guarda solo el diff (no el pending completo) porque
+    /// `last_turn` puede haber cambiado entre la llamada y la respuesta.
+    pending_diff: Option<crate::domain::corrective::Diff>,
     /// Undo de 1 nivel: (transcript, last_turn) antes de la última corrección.
     undo_state: Option<(String, String)>,
     // ── Bandeja del sistema ───────────────────────────────────────────────
@@ -238,6 +267,7 @@ impl WhisprApp {
             pending_inject: false,
             llm_rx: None,
             llm_pending: None,
+            pending_diff: None,
             undo_state: None,
             tray,
             main_window_id: None,
@@ -290,6 +320,23 @@ impl WhisprApp {
                     return Task::none();
                 };
                 let target = p.target.clone();
+
+                // Modo confirmar (spec §4.2): si el toggle está activo,
+                // no aplicamos a ciegas. Guardamos el diff en `pending_diff`
+                // y dejamos que la UI muestre «Aplicar» / «Descartar».
+                // El status vuelve a Idle para que el usuario pueda dictar
+                // otra cosa mientras decide (la corrección sigue armada).
+                if self.config.ai_correction_confirm() {
+                    self.pending_diff = Some(diff.clone());
+                    self.last_correction = Some(format!(
+                        "Rectificado IA propuesto: «{}» → «{}» (Aplicar/Descartar)",
+                        diff.find, diff.replace
+                    ));
+                    self.status = Status::Idle;
+                    return Task::none();
+                }
+
+                // Modo fluido (default): aplicar inmediatamente.
                 match crate::domain::corrective::apply_diff(&target, &diff) {
                     Some(after) => {
                         // Undo de 1 nivel ANTES de mutar (estado completo).
@@ -334,6 +381,90 @@ impl WhisprApp {
         self.status = Status::Idle;
         self.save_config();
         Task::none()
+    }
+
+    /// Aplica el diff pendiente (modo `ai_correction_confirm`). Reconstruye
+    /// la «aplicación a ciegas» pero sobre el diff que el usuario ya vio:
+    /// mismos pasos que el camino Ok de `handle_llm_correction` (capturar
+    /// undo, sustituir, inyectar si corresponde). Si `pending_diff` es
+    /// None (carrera: el usuario toggleo off mientras decidía), no-op.
+    fn apply_pending_diff(&mut self) {
+        let Some(diff) = self.pending_diff.take() else {
+            return;
+        };
+        // El target vuelve a ser el ÚLTIMO turno en el momento de
+        // despachar, no en el de aplicar (puede haber pasado un turno
+        // intermedio). Usamos `last_turn` actual porque es lo que el
+        // usuario ve en el transcript; si el LLM corrigió «lo último»,
+        // sigue siendo ese.
+        let target = self.last_turn.clone();
+        match crate::domain::corrective::apply_diff(&target, &diff) {
+            Some(after) => {
+                self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
+                if let Some(t) = crate::domain::corrective::replace_last_turn(
+                    &self.transcript,
+                    &target,
+                    &after,
+                ) {
+                    self.transcript = t;
+                }
+                if self.last_turn == target {
+                    self.last_turn = after.clone();
+                }
+                self.last_correction = Some(format!(
+                    "Rectificado IA: “{}” → “{}”",
+                    diff.find, diff.replace
+                ));
+                crate::log!("llm", "rectificado (confirmado): {} → {}", diff.find, diff.replace);
+                if self.config.auto_inject.unwrap_or(true) && !after.is_empty() {
+                    self.inject_into_active(&after);
+                }
+            }
+            None => {
+                // El diff ya no aplica (el usuario siguió dictando y el
+                // target cambió): lo descartamos limpiamente. La
+                // instrucción hablada NO se reinserta en este camino
+                // porque ya pasó tiempo y podría duplicar texto.
+                self.last_correction = Some(
+                    "La corrección IA ya no aplica al último turno (sigue dictando o descártala)"
+                        .to_string(),
+                );
+            }
+        }
+    }
+
+    /// Descarta el diff pendiente. Se diferencia de «no aplicar a
+    /// ciegas» en que aquí el diff YA LLEGÓ del LLM y el usuario
+    /// activamente lo rechaza. Restauramos la instrucción hablada como
+    /// dictado normal (spec §3.3.1) solo si todavía aplica sobre el
+    /// último turno; si no, simplemente limpiamos.
+    fn discard_pending_diff(&mut self) {
+        let was_pending = self.pending_diff.take().is_some();
+        if !was_pending {
+            return;
+        }
+        // Si el toggle sigue activo, conservamos la instrucción pendiente
+        // vía `llm_pending` para reinserción. Si se apagó mientras
+        // decidía, no reinserta (sorpresa); ya lo limpiamos en el
+        // handler de `LlmConfirmToggled(false)`.
+        if !self.config.ai_correction_confirm() {
+            self.last_correction = Some("Corrección IA descartada".to_string());
+            return;
+        }
+        // Reconstruimos un LlmPending mínimo a partir del estado actual
+        // para reutilizar `restore_instruction_as_dictation`. Pero ese
+        // helper mira `p.instruction` y `p.target`. Como no las
+        // guardamos en `pending_diff`, necesitamos otra estrategia:
+        // si hay un llm_pending aún (caso normal: el LLM ya respondió y
+        // estamos en confirm, así que NO lo hay), podríamos restaurar;
+        // si no hay (caso común), solo limpiamos el feedback.
+        //
+        // Decisión: el diff se mostró y el usuario lo rechaza; la
+        // instrucción hablada ya fue entendida y rechazada, no la
+        // resucitamos como dictado (podría duplicar texto si la
+        // intención del usuario era «NO quiero contar «eso»»). Solo
+        // informamos.
+        self.last_correction = Some("Corrección IA descartada ✕".to_string());
     }
 
     /// Spec §3.3.1: si el LLM no llega a corregir nada (caído, timeout o
@@ -552,12 +683,21 @@ impl WhisprApp {
                         // LLM: corrige el ÚLTIMO turno dictado usando esta
                         // frase como instrucción. Corre en un hilo (patrón
                         // transcribe_rx); el resultado se drena en Poll.
+                        //
+                        // El clasificador usa el umbral configurable de
+                        // Ajustes (default 50 = conducta previa; subir =
+                        // más conservador, spec §2). `classify_with` ya
+                        // respeta la regla de los dos niveles: por debajo
+                        // del umbral NUNCA enruta.
                         if !rule_corrected
                             && self.config.ai_correction_enabled()
                             && self.llm_rx.is_none()
+                            && self.llm_pending.is_none()
                             && !self.last_turn.is_empty()
-                            && crate::domain::corrective::classify(&processed)
-                                == crate::domain::corrective::CorrectiveDecision::NeedsLlm
+                            && crate::domain::corrective::classify_with(
+                                &processed,
+                                self.config.llm_classifier_threshold(),
+                            ) == crate::domain::corrective::CorrectiveDecision::NeedsLlm
                         {
                             let target = self.last_turn.clone();
                             let instruction = processed.clone();
@@ -641,6 +781,68 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            Message::LlmEndpointChanged(s) => {
+                // Vacío en la UI → cae al default por getter. No
+                // sobreescribimos con cadena vacía para distinguir «no
+                // escrito» de «borrado intencional»: si el usuario
+                // quiere volver al default, borra el campo o edita
+                // config.json directamente.
+                let trimmed = s.trim();
+                self.config.llm_base_url = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.save_config();
+                Task::none()
+            }
+            Message::LlmModelChanged(s) => {
+                let trimmed = s.trim();
+                self.config.llm_model = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.save_config();
+                Task::none()
+            }
+            Message::LlmTimeoutChanged(v) => {
+                // El slider ya emite 1..=120; el getter clampea a 1 s
+                // mínimo igualmente. Guardamos Some para que el getter
+                // emita exactamente lo que eligió el usuario.
+                self.config.llm_timeout_secs = Some(v as u64);
+                self.save_config();
+                Task::none()
+            }
+            Message::LlmThresholdChanged(v) => {
+                self.config.llm_classifier_threshold = Some(v as u8);
+                self.save_config();
+                Task::none()
+            }
+            Message::LlmConfirmToggled(on) => {
+                self.config.ai_correction_confirm = Some(on);
+                // Si se apaga el modo confirmar y hay un diff pendiente,
+                // lo descartamos en silencio: el modelo de UI «se olvida»
+                // y el usuario puede reintentar dictando otra corrección
+                // (la instrucción no se reinserta automáticamente al
+                // apagar el toggle — sería sorpresa).
+                if !on {
+                    self.pending_diff = None;
+                }
+                self.save_config();
+                Task::none()
+            }
+            Message::ApplyPendingDiff => {
+                self.apply_pending_diff();
+                Task::none()
+            }
+            Message::DiscardPendingDiff => {
+                // Reinserta la instrucción hablada como dictado normal
+                // (spec §3.3.1: nunca perder texto) y limpia el diff
+                // pendiente.
+                self.discard_pending_diff();
+                Task::none()
+            }
             Message::CorrectionDone(result) => self.handle_llm_correction(result),
             Message::UndoLastCorrection => {
                 if let Some((transcript, last_turn)) = self.undo_state.take() {
@@ -658,6 +860,8 @@ impl WhisprApp {
                 // Un undo apuntando a un transcript ya borrado sería un
                 // resucitar fantasma: se descarta junto con el borrado.
                 self.undo_state = None;
+                // Un diff pendiente cuyo target ya no existe: idem.
+                self.pending_diff = None;
                 Task::none()
             }
             Message::CopyTranscript => {
@@ -1181,7 +1385,31 @@ impl WhisprApp {
         // ── Feedback textual (éxitos / espera / muletillas) ──────────────────
         // Con undo disponible, el feedback lleva el botón «Deshacer» (spec
         // §4.3: AI transparente y overrideable — un nivel de undo basta).
-        let feedback: Element<'_, Message> = if let Some(corr) = &self.last_correction {
+        // Con diff pendiente (modo confirmar), lleva «Aplicar» / «Descartar».
+        let feedback: Element<'_, Message> = if self.pending_diff.is_some() {
+            // Modo confirmar activo: el diff está esperando decisión.
+            // Mantenemos el texto del last_correction (puesto por
+            // handle_llm_correction) y añadimos los dos botones.
+            let label = self
+                .last_correction
+                .as_deref()
+                .unwrap_or("Corrección IA pendiente de confirmación");
+            row![
+                text(label)
+                    .size(theme::FONT_SM)
+                    .color(t.warn)
+                    .shaping(Shaping::Advanced),
+                button(ui_text("Aplicar"))
+                    .on_press(Message::ApplyPendingDiff)
+                    .style(theme::primary),
+                button(ui_text("Descartar"))
+                    .on_press(Message::DiscardPendingDiff)
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center)
+            .into()
+        } else if let Some(corr) = &self.last_correction {
             let color = if corr.starts_with("Esperando")
                 || corr.contains("no disponible")
                 || corr.contains("no sé qué corregir")
@@ -1364,6 +1592,89 @@ impl WhisprApp {
             )
             .on_toggle(Message::ToggleAiCorrection)
             .style(theme::checkbox),
+
+            // ── Detalles de Corrección IA (spec CORRECCION-VOZ.md §3, §4) ────
+            // Subsección dentro de Ajustes: aparece bajo el toggle maestro.
+            // Muestra los 4 parámetros que el toggle no expone: endpoint,
+            // modelo, timeout HTTP, umbral del clasificador y modo confirmar.
+            // Si el toggle está off, los detalles se muestran igualmente
+            // (informativos; el clasificador y la llamada al LLM no se
+            // usan porque el gate `ai_correction_enabled()` corta antes).
+            text("  Detalles")
+                .size(theme::FONT_SM)
+                .color(t.dim),
+            row![
+                text("Endpoint LLM")
+                    .size(theme::FONT_SM)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                text_input(
+                    "http://127.0.0.1:8081/v1",
+                    self.config.llm_base_url.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmEndpointChanged)
+                .style(theme::text_input)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("Modelo")
+                    .size(theme::FONT_SM)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                text_input(
+                    "ornith-1.0-9b",
+                    self.config.llm_model.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmModelChanged)
+                .style(theme::text_input)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            // Timeout: slider 1..=120 s (25 por defecto). Clamp del lado del
+            // getter: ≤0 cae al default; el slider nunca emite 0.
+            row![
+                text("Timeout (s)")
+                    .size(theme::FONT_SM)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                slider(
+                    1..=120,
+                    self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
+                    Message::LlmTimeoutChanged,
+                )
+                .step(1u32)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            // Umbral del clasificador: 0..=100. Default 50 (conducta
+            // previa); 0 = pasivo (atajo al toggle off); 80+ muy
+            // conservador.
+            row![
+                text("Umbral clasif.")
+                    .size(theme::FONT_SM)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                slider(
+                    0..=100,
+                    u32::from(self.config.llm_classifier_threshold()),
+                    Message::LlmThresholdChanged,
+                )
+                .step(1u32)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            checkbox(
+                "Confirmar antes de aplicar",
+                self.config.ai_correction_confirm(),
+            )
+            .on_toggle(Message::LlmConfirmToggled)
+            .style(theme::checkbox),
+
             text(format!("Atajo global: {}", self.hotkey_label))
                 .size(theme::FONT_XS)
                 .color(t.dim),

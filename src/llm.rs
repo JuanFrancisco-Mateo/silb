@@ -16,13 +16,17 @@ use serde::Serialize;
 use crate::domain::corrective::Diff;
 
 /// Endpoint + modelo del corrector. Lo rellena `Config::llm_settings()` con
-/// los defaults locales; `base_url`/`model`/`api_key` son override desde
-/// config.json.
+/// los defaults locales; `base_url`/`model`/`api_key`/`timeout_secs` son
+/// override desde config.json.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LlmConfig {
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
+    /// Timeout HTTP en segundos. Default 25 (cubre los ~4-6 s de un
+    /// modelo 9B en local con margen para endpoints remotos Groq/Gemini;
+    /// spec §3.4). Sale de `Config::llm_timeout_secs`.
+    pub timeout_secs: u64,
 }
 
 impl Default for LlmConfig {
@@ -31,6 +35,7 @@ impl Default for LlmConfig {
             base_url: "http://127.0.0.1:8081/v1".to_string(),
             model: "ornith-1.0-9b".to_string(),
             api_key: None,
+            timeout_secs: 25,
         }
     }
 }
@@ -68,7 +73,7 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
     });
 
     let mut request = ureq::post(&url)
-        .timeout(Duration::from_secs(25))
+        .timeout(Duration::from_secs(cfg.timeout_secs.max(1)))
         .set("Content-Type", "application/json");
     if let Some(key) = cfg.api_key.as_deref().filter(|k| !k.is_empty()) {
         request = request.set("Authorization", &format!("Bearer {key}"));
@@ -171,5 +176,6 @@ mod tests {
         assert_eq!(cfg.base_url, "http://127.0.0.1:8081/v1");
         assert_eq!(cfg.model, "ornith-1.0-9b");
         assert_eq!(cfg.api_key, None);
+        assert_eq!(cfg.timeout_secs, 25, "timeout por defecto: 25 s");
     }
 }
