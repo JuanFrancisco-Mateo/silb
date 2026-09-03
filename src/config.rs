@@ -28,6 +28,11 @@ pub struct Config {
     pub llm_base_url: Option<String>,
     pub llm_model: Option<String>,
     pub llm_api_key: Option<String>,
+    /// Atajo global de dictado, formato `Mod1+Mod2+Tecla` (p.ej.
+    /// "Ctrl+Shift+D", "Alt+Space", "Ctrl+Alt+F12"). Se registra al arrancar;
+    /// si el valor es inválido o el atajo ya lo usa otra app, se vuelve al
+    /// default y la UI sigue funcionando (botones). Default: Ctrl+Shift+D.
+    pub shortcut: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -73,6 +78,16 @@ impl Config {
     /// Corrección IA activada (toggle en Ajustes; default: on).
     pub fn ai_correction_enabled(&self) -> bool {
         self.ai_correction_enabled.unwrap_or(true)
+    }
+
+    /// Atajo global de dictado: valor de `shortcut` en config.json o el
+    /// default Ctrl+Shift+D si está ausente/en blanco. El parseo fino (y el
+    /// volver a default si el string es inválido) vive en `hotkey.rs`.
+    pub fn shortcut(&self) -> String {
+        match self.shortcut.as_deref().map(str::trim) {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => crate::hotkey::DEFAULT_SHORTCUT.to_string(),
+        }
     }
 
     /// Configuración del LLM corrector. Defaults: llama.cpp local en WSL
@@ -121,6 +136,17 @@ mod tests {
         assert!(cfg.is_dark(), "2026: dark mode default");
         let claro = Config { dark_mode: Some(false), ..Default::default() };
         assert!(!claro.is_dark());
+    }
+
+    #[test]
+    fn atajo_global_default_y_personalizado() {
+        let cfg = Config::default();
+        assert_eq!(cfg.shortcut(), "Ctrl+Shift+D");
+        let c = Config { shortcut: Some("Alt+Space".into()), ..Default::default() };
+        assert_eq!(c.shortcut(), "Alt+Space");
+        // En blanco/ausente → default (la config nunca rompe el arranque).
+        let c = Config { shortcut: Some("   ".into()), ..Default::default() };
+        assert_eq!(c.shortcut(), "Ctrl+Shift+D");
     }
 
     #[test]
