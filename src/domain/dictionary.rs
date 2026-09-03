@@ -2,6 +2,12 @@
 //!
 //! Reemplazo de términos por palabra completa y case-insensitive,
 //! preservando la capitalización de `to`.
+//!
+//! Además de la lógica de reemplazo, aquí viven la importación y exportación
+//! del diccionario a JSON (backup/restore manual del usuario; la ruta por
+//! defecto es `%APPDATA%/whispr-open/dictionary.json` vía `config::dictionary_path`).
+
+use std::path::Path;
 
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -16,6 +22,37 @@ pub struct DictionaryEntry {
 pub struct DictionaryResult {
     pub text: String,
     pub applied: Vec<String>,
+}
+
+/// Exporta el diccionario a un JSON legible (lista de `{from, to}`).
+/// Crea el directorio padre si falta. Errores con mensaje en español.
+pub fn export_dictionary_to(path: &Path, entries: &[DictionaryEntry]) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("No se pudo crear {}: {e}", parent.display()))?;
+    }
+    let raw = serde_json::to_string_pretty(entries)
+        .map_err(|e| format!("No se pudo serializar el diccionario: {e}"))?;
+    std::fs::write(path, raw).map_err(|e| format!("No se pudo escribir {}: {e}", path.display()))
+}
+
+/// Importa un diccionario desde JSON (lista de `{from, to}`).
+/// Reemplaza por completo la lista actual (semántica backup/restore
+/// predecible). Falla con mensaje claro si el fichero no es una lista de
+/// entradas válidas, y descarta ficheros con la lista vacía (una importación
+/// vacía no debe borrar el diccionario por accidente).
+pub fn import_dictionary_from(path: &Path) -> Result<Vec<DictionaryEntry>, String> {
+    let raw = std::fs::read_to_string(path)
+        .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
+    let entries: Vec<DictionaryEntry> = serde_json::from_str(&raw)
+        .map_err(|e| format!("El fichero no es una lista de {{from, to}}: {e}"))?;
+    if entries.iter().any(|e| e.from.trim().is_empty()) {
+        return Err("El fichero contiene entradas sin «from»".to_string());
+    }
+    if entries.is_empty() {
+        return Err("El fichero importado está vacío: no se toca el diccionario actual".to_string());
+    }
+    Ok(entries)
 }
 
 fn escape_regexp(value: &str) -> String {
@@ -135,5 +172,76 @@ mod tests {
         let r = apply_dictionary("whatsapp y lidl", &entries);
         assert_eq!(r.text, "WhatsApp y LIDR");
         assert_eq!(r.applied, vec!["whatsapp", "lidl"]);
+    }
+
+    // ── Import / export ─────────────────────────────────────────────────────
+
+    /// Directorio temporal único por test (uuid ya está en dev-deps).
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("whispr-dict-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn export_import_roundtrip() {
+        let dir = temp_dir();
+        let path = dir.join("dictionary.json");
+        let entries = vec![dict("whatsapp", "WhatsApp"), dict("open ai", "OpenAI")];
+
+        export_dictionary_to(&path, &entries).unwrap();
+        let back = import_dictionary_from(&path).unwrap();
+
+        assert_eq!(back, entries);
+        // El fichero es JSON legible (roundtrip serde idéntico).
+        let raw = std::fs::read_to_string(&path).unwrap();
+        assert!(raw.contains("whatsapp"));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn export_crea_el_directorio_padre() {
+        let dir = temp_dir();
+        let path = dir.join("anidado").join("dictionary.json");
+        export_dictionary_to(&path, &[dict("a", "b")]).unwrap();
+        assert!(path.exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_fichero_inexistente_da_error_claro() {
+        let err = import_dictionary_from(std::path::Path::new("no-existe-xyz.json")).unwrap_err();
+        assert!(err.contains("No se pudo leer"), "{err}");
+    }
+
+    #[test]
+    fn import_json_invalido_da_error_claro() {
+        let dir = temp_dir();
+        let path = dir.join("dictionary.json");
+        std::fs::write(&path, "esto no es json").unwrap();
+        let err = import_dictionary_from(&path).unwrap_err();
+        assert!(err.contains("lista de {from, to}"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_lista_vacia_se_descarta() {
+        let dir = temp_dir();
+        let path = dir.join("dictionary.json");
+        std::fs::write(&path, "[]").unwrap();
+        let err = import_dictionary_from(&path).unwrap_err();
+        assert!(err.contains("vacío"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn import_rechaza_entrada_sin_from() {
+        let dir = temp_dir();
+        let path = dir.join("dictionary.json");
+        std::fs::write(&path, r#"[{"from":"","to":"x"}]"#).unwrap();
+        let err = import_dictionary_from(&path).unwrap_err();
+        assert!(err.contains("sin «from»"), "{err}");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
