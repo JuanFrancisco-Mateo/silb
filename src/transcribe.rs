@@ -216,23 +216,49 @@ pub struct ParamsDecision {
     pub vad: bool,
 }
 
+/// Parámetros de inferencia configurables por el usuario. Los defaults
+/// coinciden con los valores fijos que la app usaba antes de exponerlos
+/// en Ajustes (idioma es, beam 5, threads 4, remuestreo 16 k on).
+/// `vad` lo decide el llamador (normalmente `vad_available()`); no es un
+/// parámetro de usuario.
+#[derive(Debug, Clone)]
+pub struct InferenceParams {
+    /// Idioma BCP-47 (`Some("es")`, `Some("en")`, …) o `None` para
+    /// autodetección (whisper decide).
+    pub language: Option<String>,
+    /// Beam size para `SamplingStrategy::BeamSearch`. 1..=8; 1 = greedy.
+    pub beam_size: i32,
+    /// Hilos del decoder.
+    pub n_threads: i32,
+}
+
+impl Default for InferenceParams {
+    fn default() -> Self {
+        Self {
+            language: Some("es".to_string()),
+            beam_size: BEAM_SIZE,
+            n_threads: 4,
+        }
+    }
+}
+
 /// Parámetros de inferencia de la app (ver tabla en el header del módulo).
 /// `vad` lo decide el llamador (normalmente `vad_available()`).
 fn build_params<'a>(
-    language: &'a str,
+    inference: &'a InferenceParams,
     initial_prompt: Option<&str>,
     vad: bool,
 ) -> (FullParams<'a, 'static>, ParamsDecision) {
     let mut params = FullParams::new(SamplingStrategy::BeamSearch {
-        beam_size: BEAM_SIZE,
+        beam_size: inference.beam_size,
         // -1.0 = default de whisper.cpp 1.8.3; el campo es legacy (nunca se
         // lee en el decodificador de esta versión, verificado en la fuente).
         patience: -1.0,
     });
-    params.set_language(Some(language));
+    params.set_language(inference.language.as_deref());
     params.set_temperature(0.0);
     params.set_no_timestamps(true);
-    params.set_n_threads(4);
+    params.set_n_threads(inference.n_threads);
 
     let prompt = initial_prompt
         .map(str::trim)
@@ -252,11 +278,11 @@ fn build_params<'a>(
 
     let decision = ParamsDecision {
         strategy: "beam_search",
-        beam_size: BEAM_SIZE,
+        beam_size: inference.beam_size,
         temperature: 0.0,
-        n_threads: 4,
+        n_threads: inference.n_threads,
         no_timestamps: true,
-        language: language.to_string(),
+        language: inference.language.clone().unwrap_or_else(|| "auto".to_string()),
         initial_prompt: prompt,
         vad,
     };
@@ -280,10 +306,14 @@ impl WhisperEngine {
 
     /// Transcribe muestras f32 mono a texto. Bloquea mientras transcribe
     /// (llamado desde un hilo de trabajo, nunca desde la UI).
+    ///
+    /// `inference` agrupa los parámetros ajustables por el usuario
+    /// (idioma, beam size, threads); `initial_prompt` es el sesgo léxico
+    /// desde el diccionario personal.
     pub fn transcribe(
         &self,
         samples: &[f32],
-        language: &str,
+        inference: &InferenceParams,
         initial_prompt: Option<&str>,
     ) -> Result<String, String> {
         let ctx = self.inner.lock().map_err(|e| e.to_string())?;
@@ -291,7 +321,7 @@ impl WhisperEngine {
             .create_state()
             .map_err(|e| format!("no se pudo crear estado de transcripción: {e}"))?;
 
-        let (params, decision) = build_params(language, initial_prompt, vad_available());
+        let (params, decision) = build_params(inference, initial_prompt, vad_available());
         crate::log!("transcribe", "{decision:?}");
 
         state
@@ -404,7 +434,8 @@ mod tests {
 
     #[test]
     fn decision_uses_beam_five_and_no_timestamps() {
-        let (_, d) = build_params("es", None, false);
+        let inference = InferenceParams::default();
+        let (_, d) = build_params(&inference, None, false);
         assert_eq!(d.strategy, "beam_search");
         assert_eq!(d.beam_size, 5);
         assert_eq!(d.temperature, 0.0);
@@ -416,13 +447,14 @@ mod tests {
 
     #[test]
     fn decision_carries_prompt_and_vad() {
-        let (_, d) = build_params("es", Some("  openai sape  "), true);
+        let inference = InferenceParams::default();
+        let (_, d) = build_params(&inference, Some("  openai sape  "), true);
         assert_eq!(d.language, "es");
         assert_eq!(d.initial_prompt.as_deref(), Some("openai sape"));
         assert!(d.vad);
         // el prompt con nulo se descarta para no llegar al panic de
         // set_initial_prompt (CString::new)
-        let (_, d2) = build_params("es", Some("a\0b"), false);
+        let (_, d2) = build_params(&inference, Some("a\0b"), false);
         assert_eq!(d2.initial_prompt, None);
     }
 
@@ -430,8 +462,47 @@ mod tests {
     fn decision_vad_path_set_before_enable() {
         // el orden path→enable es lo que evita el panic de whisper-rs;
         // build_params(vad=true) no debe paniquear aunque el archivo no exista
-        let (_, d) = build_params("es", None, true);
+        let inference = InferenceParams::default();
+        let (_, d) = build_params(&inference, None, true);
         assert!(d.vad);
+    }
+
+    #[test]
+    fn decision_refleja_beam_y_threads_de_inference() {
+        // Configuración alternativa del usuario: beam 3, threads 8, en inglés.
+        let inference = InferenceParams {
+            language: Some("en".into()),
+            beam_size: 3,
+            n_threads: 8,
+        };
+        let (_, d) = build_params(&inference, None, false);
+        assert_eq!(d.beam_size, 3);
+        assert_eq!(d.n_threads, 8);
+        assert_eq!(d.language, "en");
+    }
+
+    #[test]
+    fn decision_con_language_none_reporta_auto() {
+        // language: None → autodetección de whisper; el ParamsDecision
+        // registra "auto" para diagnóstico legible en logs (whisper
+        // internamente no recibe set_language).
+        let inference = InferenceParams {
+            language: None,
+            beam_size: 5,
+            n_threads: 4,
+        };
+        let (_, d) = build_params(&inference, None, false);
+        assert_eq!(d.language, "auto");
+    }
+
+    #[test]
+    fn inference_params_default_es_es_beam_5_threads_4() {
+        // Defaults alineados con la conducta previa (idioma es, beam 5,
+        // threads 4). Si cambian, revisar compat hacia atrás en Config.
+        let p = InferenceParams::default();
+        assert_eq!(p.language.as_deref(), Some("es"));
+        assert_eq!(p.beam_size, 5);
+        assert_eq!(p.n_threads, 4);
     }
 
     // ------------------------------------------------------------------
@@ -546,7 +617,17 @@ mod tests {
             let (old_ms, old_text) =
                 measure(&ctx, "antiguo: greedy best_of=1 + ts", lang, &mut old, &samples);
 
-            let mut novo = move || build_params(lang, None, false).0;
+            let mut novo = move || {
+                let mut p = FullParams::new(SamplingStrategy::BeamSearch {
+                    beam_size: 5,
+                    patience: -1.0,
+                });
+                p.set_language(Some(lang));
+                p.set_temperature(0.0);
+                p.set_no_timestamps(true);
+                p.set_n_threads(4);
+                p
+            };
             let (new_ms, new_text) =
                 measure(&ctx, "nuevo: beam 5 sin timestamps", lang, &mut novo, &samples);
 
