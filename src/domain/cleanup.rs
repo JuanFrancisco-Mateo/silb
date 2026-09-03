@@ -2,13 +2,88 @@
 //!
 //! Detecta y elimina muletillas del habla transcrita ("eh", "um", "o sea", ...),
 //! colapsa repeticiones y normaliza puntuación, manteniendo el resto del texto.
+//!
+//! Las muletillas son configurables desde Ajustes (`FillerWords`): tres listas
+//! por categoría de regla (inequívocas / solo antes de pausa / solo al inicio
+//! del turno). La estructura serde permite persistirlas en config.json y en
+//! ausencia de configuración los defaults replican el comportamiento original.
 
 use fancy_regex::Regex;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct CleanupResult {
     pub text: String,
     pub removed: Vec<String>,
+}
+
+/// Muletillas configurables agrupadas por categoría de regla.
+///
+/// Los defaults (`Default`) replican las listas fijas originales:
+/// - `unambiguous`: "eh", "um", "uh", "o sea", "you know" — cualquier posición.
+/// - `ambiguous`: "este", "esto", "tipo", "like", "pues" — solo antes de pausa.
+/// - `start_of_turn`: "bueno", "pues" — solo abriendo el turno.
+///
+/// Serde: cada campo cae a su default si falta en el JSON (configs antiguas
+/// sin `fillers` siguen limpiando igual que siempre).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FillerWords {
+    #[serde(default = "default_unambiguous")]
+    pub unambiguous: Vec<String>,
+    #[serde(default = "default_ambiguous")]
+    pub ambiguous: Vec<String>,
+    #[serde(default = "default_start_of_turn")]
+    pub start_of_turn: Vec<String>,
+}
+
+fn default_unambiguous() -> Vec<String> {
+    ["eh", "um", "uh", "o sea", "you know"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_ambiguous() -> Vec<String> {
+    ["este", "esto", "tipo", "like", "pues"]
+        .iter()
+        .map(|s| s.to_string())
+        .collect()
+}
+
+fn default_start_of_turn() -> Vec<String> {
+    ["bueno", "pues"].iter().map(|s| s.to_string()).collect()
+}
+
+impl Default for FillerWords {
+    fn default() -> Self {
+        Self {
+            unambiguous: default_unambiguous(),
+            ambiguous: default_ambiguous(),
+            start_of_turn: default_start_of_turn(),
+        }
+    }
+}
+
+impl FillerWords {
+    /// Reemplaza las tres listas por completo (usado por el botón
+    /// «Por defecto» de Ajustes: None en config → defaults).
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// Escapa los metacaracteres de regexp de una palabra de usuario antes de
+/// incrustarla en un patrón (una muletilla con "." o "+" no debe volverse
+/// un patrón salvaje).
+fn escape_regexp(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for c in value.chars() {
+        if matches!(c, '.' | '*' | '+' | '?' | '^' | '$' | '{' | '}' | '(' | ')' | '|' | '[' | ']' | '\\') {
+            out.push('\\');
+        }
+        out.push(c);
+    }
+    out
 }
 
 struct CleanupRule {
@@ -19,27 +94,40 @@ struct CleanupRule {
 ///   grupo 1 -> texto que se CONSERVA (la frontera anterior a la muletilla,
 ///              o la primera ocurrencia en una repetición)
 ///   grupo 2 -> texto que se ELIMINA y se reporta en `removed`
-fn rules() -> Vec<CleanupRule> {
-    let entries: &[(&str, &str)] = &[
-        // Muletillas inequívocas (ES/EN): cualquier posición, palabra completa
-        ("eh", r#"(^|[\s(«"'¡¿…])(eh)([,;:…]*)(?=$|[\s,;:.!?…])"#),
-        ("um", r#"(^|[\s(«"'¡¿…])(um)([,;:…]*)(?=$|[\s,;:.!?…])"#),
-        ("uh", r#"(^|[\s(«"'¡¿…])(uh)([,;:…]*)(?=$|[\s,;:.!?…])"#),
-        ("o sea", r#"(^|[\s(«"'¡¿…])(o sea)([,;:…]*)(?=$|[\s,;:.!?…])"#),
-        ("you know", r#"(^|[\s(«"'¡¿…])(you know)([,;:…]*)(?=$|[\s,;:.!?…])"#),
-        // Muletillas ambiguas: solo seguidas de pausa (no romper usos legítimos)
-        ("este", r#"(^|[\s(«"'¡¿…])(este)([,;:…]+)"#),
-        ("esto", r#"(^|[\s(«"'¡¿…])(esto)([,;:…]+)"#),
-        ("tipo", r#"(^|[\s(«"'¡¿…])(tipo)([,;:…]+)"#),
-        ("like", r#"(^|[\s(«"'¡¿…])(like)([,;:…]+)"#),
-        // Muletillas solo al inicio del turno
-        ("bueno", r"(^)(bueno)([,;:.!?…]*)"),
-        ("pues (inicio)", r"(^)(pues)([,;:.!?…]*)"),
-        ("pues (pausa)", r"([\s])(pues)([,;:…]+)"),
+fn rules(fillers: &FillerWords) -> Vec<CleanupRule> {
+    let entries: Vec<(String, String)> = {
+        let mut out: Vec<(String, String)> = vec![];
+        // Muletillas inequívocas (ES/EN): cualquier posición, palabra completa.
+        for w in &fillers.unambiguous {
+            let e = escape_regexp(w);
+            out.push((
+                w.clone(),
+                format!(r#"(^|[\s(«"'¡¿…])({e})([,;:…]*)(?=$|[\s,;:.!?…])"#),
+            ));
+        }
+        // Muletillas ambiguas: solo seguidas de pausa (no romper usos legítimos).
+        for w in &fillers.ambiguous {
+            let e = escape_regexp(w);
+            out.push((w.clone(), format!(r#"(^|[\s(«"'¡¿…])({e})([,;:…]+)"#)));
+        }
+        // Muletillas solo al inicio del turno.
+        for w in &fillers.start_of_turn {
+            let e = escape_regexp(w);
+            out.push((w.clone(), format!(r"(^)({e})([,;:.!?…]*)")));
+        }
         // Repeticiones de palabra y de bigrama -> una sola ocurrencia
-        ("repetición de palabra", r"\b(\p{L}+)(\s+\1)\b"),
-        ("repetición de bigrama", r"\b((?:\p{L}+\s+)\p{L}+)(\s+\1)\b"),
-    ];
+        // (reglas fijas, no configurable: no son muletillas).
+        out.push((
+            "repetición de palabra".to_string(),
+            r"\b(\p{L}+)(\s+\1)\b".to_string(),
+        ));
+        out.push((
+            "repetición de bigrama".to_string(),
+            r"\b((?:\p{L}+\s+)\p{L}+)(\s+\1)\b".to_string(),
+        ));
+        out
+    };
+
     entries
         .iter()
         .map(|(_, pattern)| CleanupRule {
@@ -66,13 +154,15 @@ fn normalize_punctuation(value: &str) -> String {
 /// limpiar: se devuelve intacto para no destruir respuestas como "Bueno.".
 fn is_filler_only(value: &str) -> bool {
     value.is_empty()
-        || Regex::new(r#"^[\s,;:.!?…()«"»'¡¿\-]+$"#)
+        || Regex::new(r#"^[\s,;:.!?…()«"'»¡¿\-]+$"#)
             .expect("regex válida")
             .is_match(value)
             .unwrap_or(false)
 }
 
-pub fn clean_transcript(input: &str) -> CleanupResult {
+/// Limpieza con las muletillas indicadas (las de Ajustes; `Config::fillers()`
+/// resuelve los defaults si el usuario no personalizó nada).
+pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResult {
     let original = normalize_spaces(input);
     if original.is_empty() {
         return CleanupResult { text: String::new(), removed: vec![] };
@@ -82,7 +172,7 @@ pub fn clean_transcript(input: &str) -> CleanupResult {
     let mut removed: Vec<String> = vec![];
     let mut removed_at_start = false;
 
-    for rule in rules() {
+    for rule in rules(fillers) {
         let mut iterations = 0;
         while iterations < 10 {
             iterations += 1;
@@ -144,6 +234,11 @@ pub fn clean_transcript(input: &str) -> CleanupResult {
     removed.retain(|r| seen.insert(r.clone()));
 
     CleanupResult { text, removed }
+}
+
+/// Limpieza con las muletillas por defecto (API original, sin configuración).
+pub fn clean_transcript(input: &str) -> CleanupResult {
+    clean_transcript_with(input, &FillerWords::default())
 }
 
 #[cfg(test)]
@@ -226,6 +321,13 @@ mod tests {
     }
 
     #[test]
+    fn removes_pues_at_start_and_before_pause() {
+        // "pues" vive en dos categorías por defecto: inicio de turno y pausa.
+        assert_eq!(cleaned("Pues, vamos"), ("Vamos".into(), vec!["Pues".into()]));
+        assert_eq!(cleaned("Vamos, pues, ya"), ("Vamos, ya".into(), vec!["pues".into()]));
+    }
+
+    #[test]
     fn collapses_word_repetition() {
         // La repetición abre el turno -> la primera palabra se capitaliza.
         assert_eq!(cleaned("el el proyecto"), ("El proyecto".into(), vec!["el".into()]));
@@ -245,5 +347,57 @@ mod tests {
     fn removes_english_fillers() {
         // "you know" es muletilla inequívoca: se elimina aunque no haya pausa.
         assert_eq!(cleaned("I mean, like, you know"), ("I mean,".into(), vec!["you know".into(), "like".into()]));
+    }
+
+    // ── Muletillas configuradas ─────────────────────────────────────────────
+
+    #[test]
+    fn defaults_replican_las_listas_originales() {
+        let d = FillerWords::default();
+        assert_eq!(d.unambiguous, vec!["eh", "um", "uh", "o sea", "you know"]);
+        assert_eq!(d.ambiguous, vec!["este", "esto", "tipo", "like", "pues"]);
+        assert_eq!(d.start_of_turn, vec!["bueno", "pues"]);
+        assert!(d.is_default());
+    }
+
+    #[test]
+    fn quitar_muletilla_desactiva_su_regla() {
+        let mut f = FillerWords::default();
+        f.ambiguous.retain(|w| w != "este");
+        let r = clean_transcript_with("Este, el informe del jueves", &f);
+        // Sin "este" en la lista ambigua, la regla ya no existe: se conserva.
+        assert_eq!(r.text, "Este, el informe del jueves");
+        assert!(r.removed.is_empty());
+    }
+
+    #[test]
+    fn anadir_muletilla_activa_su_regla() {
+        let mut f = FillerWords::default();
+        f.ambiguous.push("vale".to_string());
+        let r = clean_transcript_with("Vamos, vale, ya", &f);
+        assert_eq!(r.text, "Vamos, ya");
+        assert_eq!(r.removed, vec!["vale"]);
+    }
+
+    #[test]
+    fn palabras_con_metacaracteres_se_escapan() {
+        let mut f = FillerWords::default();
+        f.unambiguous.push("a+b".to_string());
+        // El "+" no debe volverse repetidor de "a": solo casa "a+b" literal.
+        let r = clean_transcript_with("dijo, a+b, algo", &f);
+        assert_eq!(r.text, "dijo, algo");
+        let r2 = clean_transcript_with("dijo, aaab, algo", &f);
+        assert_eq!(r2.text, "dijo, aaab, algo");
+    }
+
+    #[test]
+    fn config_serde_sin_fillers_cae_a_defaults() {
+        let parsed: FillerWords = serde_json::from_str("{}").unwrap();
+        assert_eq!(parsed, FillerWords::default());
+        // Una lista parcial solo sustituye su campo (backward compatible).
+        let parcial: FillerWords =
+            serde_json::from_str(r#"{"unambiguous":["vale"]}"#).unwrap();
+        assert_eq!(parcial.unambiguous, vec!["vale"]);
+        assert_eq!(parcial.ambiguous, FillerWords::default().ambiguous);
     }
 }

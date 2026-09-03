@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
 use crate::transcribe::Model;
 
@@ -310,11 +311,24 @@ pub struct Config {
     /// limpian: la esquina vuelve a mandar en el siguiente arranque.
     pub bubble_x: Option<i32>,
     pub bubble_y: Option<i32>,
+    /// Muletillas personalizadas (Ajustes → Muletillas). `None` = las
+    /// listas por defecto de `cleanup.rs` (eh/um/uh/o sea/you know ·
+    /// este/esto/tipo/like/pues · bueno/pues). Se persiste solo cuando el
+    /// usuario toca las listas; el botón «Por defecto» lo vuelve a None.
+    pub fillers: Option<FillerWords>,
 }
 
 pub fn config_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("config.json")
+}
+
+/// Ruta del diccionario personal exportable/importable (JSON).
+/// Mismo directorio base que `config_path`; el fichero vive junto a la
+/// config para que un backup de `%APPDATA%/whispr-open/` lo incluya todo.
+pub fn dictionary_path() -> PathBuf {
+    let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
+    base.join("whispr-open").join("dictionary.json")
 }
 
 impl Config {
@@ -534,6 +548,12 @@ impl Config {
             (Some(x), Some(y)) => Some((x, y)),
             _ => None,
         }
+    }
+
+    /// Muletillas efectivas: las personalizadas de Ajustes o, si no hay
+    /// (`None`), los defaults de `cleanup.rs` (las listas originales).
+    pub fn fillers(&self) -> FillerWords {
+        self.fillers.clone().unwrap_or_default()
     }
 }
 
@@ -895,5 +915,33 @@ mod tests {
         assert_eq!(cfg.bubble_corner(), BubbleCorner::TopRight);
         assert_eq!(cfg.bubble_opacity(), 100);
         assert_eq!(cfg.bubble_hide_timeout(), BubbleHideTimeout::Never);
+    }
+
+    #[test]
+    fn fillers_defaults_y_personalizados() {
+        // Sin configuración: los defaults de cleanup.rs (listas originales).
+        let cfg = Config::default();
+        assert_eq!(cfg.fillers(), FillerWords::default());
+
+        // Personalizado: se persiste en config.json y se relee.
+        let mut f = FillerWords::default();
+        f.ambiguous.push("vale".to_string());
+        let cfg = Config { fillers: Some(f.clone()), ..Default::default() };
+        let raw = serde_json::to_string(&cfg).expect("serializa");
+        let leida: Config = serde_json::from_str(&raw).expect("deserializa");
+        assert_eq!(leida.fillers(), f);
+
+        // Backward compat: config.json viejo sin `fillers` → defaults.
+        let viejo = r#"{"dictionary":[]}"#;
+        let cfg: Config = serde_json::from_str(viejo).expect("json viejo");
+        assert_eq!(cfg.fillers(), FillerWords::default());
+    }
+
+    #[test]
+    fn dictionary_path_apunta_a_appdata() {
+        let p = dictionary_path();
+        let s = p.to_string_lossy();
+        assert!(s.contains("whispr-open"), "{s}");
+        assert!(s.ends_with("dictionary.json"), "{s}");
     }
 }
