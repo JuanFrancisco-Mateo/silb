@@ -245,7 +245,9 @@ impl WhisprApp {
         let recording = matches!(self.bubble_status(), Status::Recording);
         let fill = match self.bubble_status() {
             Status::Recording | Status::Error(_) => crate::theme::ERR,
-            Status::Transcribing | Status::Downloading { .. } => crate::theme::WARN,
+            Status::Transcribing | Status::Correcting | Status::Downloading { .. } => {
+                crate::theme::WARN
+            }
             Status::Idle => crate::theme::ACCENT,
         };
 
@@ -673,6 +675,10 @@ mod tests {
         // La suscripción no reacciona a eventos de otras ventanas (no hay forma
         // de inspeccionarla directamente, así que aquí solo se valida el API
         // público: la función acepta None y una Id cualquiera sin pánico).
+        // Bajo el mismo FILTER_LOCK que los tests: `Some(id)` pisa
+        // BUBBLE_WINDOW_ID (static compartido) y, sin serializar, rompería
+        // los otros tests del filtro al correr en paralelo.
+        let _guard = FILTER_LOCK.lock().unwrap();
         let _ = bubble_events_subscription(None);
         let _ = bubble_events_subscription(Some(window::Id::unique()));
     }
