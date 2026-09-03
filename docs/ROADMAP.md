@@ -20,8 +20,8 @@ etapa.
 | UI 2026, tema **dark** | `src/theme.rs` (tokens) + `src/config.rs` (`is_dark` → dark por defecto) | commit `962342c`. Grafito `#17181C`, acento violeta único `#7C6CFF`, grid de 8 px, radios 8–10 px, dark mode default con toggle persistido. |
 | Burbuja flotante | `src/bubble.rs` | commit `be73930`. Segunda ventana Iced (multi-window `iced_winit::Program`), always-on-top, transparente, 56 px, `WS_EX_NOACTIVATE` (no roba el foco). |
 | System tray | `src/tray.rs` | commit `e3e0f3b`. `tray-icon` 0.24, menú Mostrar/Ocultar/Salir, icono RGBA 32×32 generado en código (círculo violeta). |
-| Atajo global | `src/hotkey.rs` | `Ctrl+Shift+D` (global-hotkey 0.6), canal crossbeam drenado en el Poll de 100 ms. |
-| Inyección en app activa | `src/inject.rs` | `arboard` (portapapeles) + `enigo` (Ctrl+V). Solo Windows. |
+| Atajo global | `src/hotkey.rs` | configurable `shortcut` en `config.json` (default `Ctrl+Shift+D`; global-hotkey 0.6), canal crossbeam drenado en el Poll de 100 ms, eventos filtrados por id del atajo. |
+| Inyección en app activa | `src/inject.rs` | `arboard` (portapapeles) + `enigo` (Ctrl+V o tecleo directo). Formato, retardo y filtro por título de ventana configurables (`inject_*` en `config.json`). Solo Windows. |
 | Post-procesado | `src/domain/{cleanup,dictionary,correction}.rs` | Muletillas + repeticiones, diccionario personal, rectificaciones habladas por regex multi-turno. |
 | Build release | `target/release/whispr-open.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
 
