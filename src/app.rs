@@ -14,7 +14,9 @@ use iced::{window, Background, Color, Element, Font, Length, Point, Subscription
 use global_hotkey::GlobalHotKeyEvent;
 
 use crate::audio::AudioCapture;
-use crate::config::Config;
+use crate::config::{
+    BubbleCorner, BubbleHideTimeout, BubbleSize, Config, FontSize, ThemeMode,
+};
 use crate::domain::cleanup::clean_transcript;
 use crate::domain::correction::CorrectionSession;
 use crate::domain::dictionary::{apply_dictionary, DictionaryEntry};
@@ -115,6 +117,18 @@ pub enum Message {
     ThreadsChanged(u32),
     /// Toggle «Remuestrear automáticamente a 16 kHz» desde Ajustes.
     ToggleAutoResample(bool),
+    /// Modo de tema elegido en Ajustes (el header cicla el mismo estado).
+    ThemeModeChanged(ThemeMode),
+    /// Tamaño de fuente global elegido en Ajustes (se aplica a toda la vista).
+    FontSizeChanged(FontSize),
+    /// Tamaño del círculo de la burbuja (resize EN CALIENTE vía window::resize).
+    BubbleSizeChanged(BubbleSize),
+    /// Esquina de anclaje de la burbuja (mover en caliente vía winapi).
+    BubbleCornerChanged(BubbleCorner),
+    /// Opacidad de la burbuja en % (slider 20–100, alpha por-pixel).
+    BubbleOpacityChanged(u32),
+    /// Auto-ocultar la burbuja tras N segundos sin dictar (Nunca = desactivado).
+    BubbleHideTimeoutChanged(BubbleHideTimeout),
     ToggleTheme,
     ToggleSettings,
     Poll,
@@ -194,6 +208,19 @@ pub struct WhisprApp {
     main_window_id: Option<window::Id>,
     /// Si la ventana principal está visible (controla el texto del menú).
     main_visible: bool,
+    // ── Apariencia (tema auto + auto-ocultar de la burbuja) ──────────────
+    /// Último estado conocido del tema del SISTEMA (AppsUseLightTheme). Se
+    /// cachea aquí porque el view se redibuja ~10×/s y leer el registro en
+    /// cada redibujo sería derrochador; el Poll lo refresca cada 5 s.
+    system_dark: bool,
+    /// Última vez que se refrescó `system_dark` (tema auto, cada 5 s).
+    last_theme_check: std::time::Instant,
+    /// Cuándo auto-ocultar la burbuja (Some = timer armado tras un turno).
+    /// `None` = visible sin plazo (Nunca o turno sin terminar).
+    bubble_hide_deadline: Option<std::time::Instant>,
+    /// La burbuja está oculta por el auto-ocultar (evita re-enviar
+    /// change_mode(Windowed) a una ventana que ya está visible).
+    bubble_hidden: bool,
 }
 
 impl WhisprApp {
@@ -215,9 +242,9 @@ impl WhisprApp {
 
         // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando la
         // ventana exista llegará `Message::BubbleOpened` y se le aplicará
-        // WS_EX_NOACTIVATE (no robar el foco de la app donde se dicta).
+        // WS_EX_NOACTIVATE + posición/esquina + tamaño (apply_bubble_extras).
         let (bubble_id, bubble_task) = {
-            let (id, task) = window::open(crate::bubble::bubble_settings());
+            let (id, task) = window::open(crate::bubble::bubble_settings(&config));
             (Some(id), task.map(Message::BubbleOpened))
         };
 
@@ -272,6 +299,13 @@ impl WhisprApp {
             tray,
             main_window_id: None,
             main_visible: true,
+            // Arranque: el tema del sistema se lee una vez (el Poll lo
+            // refresca cada 5 s si el modo es Auto) y la burbuja nace visible
+            // (sin timer de auto-ocultar armado).
+            system_dark: theme::system_dark_mode(),
+            last_theme_check: std::time::Instant::now(),
+            bubble_hide_deadline: None,
+            bubble_hidden: false,
         };
         (app, Task::batch([bubble_task, font_task]))
     }
@@ -379,6 +413,8 @@ impl WhisprApp {
             }
         }
         self.status = Status::Idle;
+        // El turno (con su corrección IA) terminó: armar el auto-ocultar.
+        self.arm_bubble_hide_timeout();
         self.save_config();
         Task::none()
     }
@@ -501,7 +537,20 @@ impl WhisprApp {
     }
 
     pub(crate) fn config_is_dark(&self) -> bool {
-        self.config.is_dark()
+        // Modo resuelto: Auto → estado cacheado del sistema (AppsUseLightTheme,
+        // refrescado en el Poll cada 5 s); Claro/Oscuro → forzado por config.
+        self.config.resolved_dark(self.system_dark)
+    }
+
+    /// Tamaño del círculo de la burbuja (px lógicos) — accesor para bubble.rs
+    /// (el campo `config` es privado de este módulo).
+    pub(crate) fn bubble_size_px(&self) -> f32 {
+        self.config.bubble_size().px()
+    }
+
+    /// Opacidad de la burbuja en % (20..=100) — accesor para bubble.rs.
+    pub(crate) fn bubble_opacity_percent(&self) -> u8 {
+        self.config.bubble_opacity()
     }
 
     fn dictionary_snapshot(&self) -> Vec<DictionaryEntry> {
@@ -613,6 +662,9 @@ impl WhisprApp {
                 }
                 // Una grabación nueva descarta cualquier inyección pendiente.
                 self.pending_inject = false;
+                // Re-mostrar la burbuja si el auto-ocultar la escondió (dictar
+                // es la actividad principal: la burbuja debe estar visible).
+                let show = self.show_bubble();
                 let device = self.config.input_device.clone();
                 let auto_resample = self.config.auto_resample_16k();
                 match AudioCapture::start(device.as_deref(), auto_resample) {
@@ -621,12 +673,13 @@ impl WhisprApp {
                         self.status = Status::Recording;
                         self.session.reset();
                         self.last_turn.clear();
+                        show
                     }
                     Err(e) => {
                         self.status = Status::Error(e);
+                        Task::none()
                     }
                 }
-                Task::none()
             }
             Message::StopRecording => {
                 let Some(mut capture) = self.audio.take() else {
@@ -673,6 +726,9 @@ impl WhisprApp {
                         let (processed, rule_corrected) = self.apply_pipeline(&raw);
                         if processed.is_empty() && raw.trim().is_empty() {
                             self.status = Status::Idle;
+                            // Turno vacío: igualmente «terminado» → armar el
+                            // auto-ocultar si está configurado.
+                            self.arm_bubble_hide_timeout();
                             return Task::none();
                         }
 
@@ -735,6 +791,9 @@ impl WhisprApp {
                     }
                     Err(e) => self.status = Status::Error(e),
                 }
+                // Turno terminado (o error): armar el auto-ocultar. El camino
+                // del LLM sale antes (return) y arma al resolver la corrección.
+                self.arm_bubble_hide_timeout();
                 self.save_config();
                 Task::none()
             }
@@ -949,8 +1008,65 @@ impl WhisprApp {
                 Task::none()
             }
             Message::ToggleTheme => {
-                self.config.dark_mode = Some(!self.config.is_dark());
+                // El botón del header cicla Auto → Claro → Oscuro (partiendo
+                // del modo EFECTIVO actual, incluido el legacy derivado de
+                // dark_mode). `dark_mode` legacy queda intacto como fallback
+                // para configs sin el campo nuevo.
+                self.config.theme_mode = Some(self.config.theme_mode().next());
                 self.save_config();
+                Task::none()
+            }
+            Message::ThemeModeChanged(mode) => {
+                self.config.theme_mode = Some(mode);
+                self.save_config();
+                Task::none()
+            }
+            Message::FontSizeChanged(size) => {
+                self.config.font_size = Some(size);
+                self.save_config();
+                Task::none()
+            }
+            Message::BubbleSizeChanged(size) => {
+                self.config.bubble_size = Some(size);
+                self.save_config();
+                // Resize EN CALIENTE. La ventana se creó con min/max = rango
+                // completo 48–72 (bubble::bubble_settings), así que el resize
+                // no se topa con el clamp de WM_GETMINMAXINFO.
+                match self.bubble_id {
+                    Some(id) => window::resize(id, iced::Size::new(size.px(), size.px())),
+                    None => Task::none(),
+                }
+            }
+            Message::BubbleCornerChanged(corner) => {
+                self.config.bubble_corner = Some(corner);
+                // Re-elegir esquina invalida la posición persistida del último
+                // arrastre: la esquina vuelve a mandar (también al arrancar).
+                self.config.bubble_x = None;
+                self.config.bubble_y = None;
+                self.save_config();
+                // Mover en caliente a la nueva esquina (winapi SetWindowPos).
+                let px = self.config.bubble_size().px();
+                crate::bubble::move_to_corner(corner, px);
+                Task::none()
+            }
+            Message::BubbleOpacityChanged(percent) => {
+                // Slider 20–100; clamp defensivo (config.json podría traer
+                // otro rango). La burbuja lee el getter en bubble_view.
+                self.config.bubble_opacity = Some(percent.clamp(20, 100) as u8);
+                self.save_config();
+                Task::none()
+            }
+            Message::BubbleHideTimeoutChanged(timeout) => {
+                self.config.bubble_hide_timeout = Some(timeout);
+                self.save_config();
+                // Si ya había un timer armado (turno terminado, burbuja
+                // visible), re-armarlo con el nuevo plazo elegido; si el
+                // usuario eligió «Nunca», cancelarlo.
+                if self.bubble_hide_deadline.is_some() {
+                    self.bubble_hide_deadline = timeout
+                        .secs()
+                        .map(|s| std::time::Instant::now() + Duration::from_secs(s));
+                }
                 Task::none()
             }
             Message::ToggleSettings => {
@@ -958,6 +1074,31 @@ impl WhisprApp {
                 Task::none()
             }
             Message::Poll => {
+                // ── Tema auto: refresco periódico del estado del sistema ──
+                // Cada 5 s se relee AppsUseLightTheme (registro). El view se
+                // redibuja con cada tick del Poll (100 ms), así que el cambio
+                // de tema se propaga solo, sin tareas extra.
+                if self.last_theme_check.elapsed() >= Duration::from_secs(5) {
+                    self.last_theme_check = std::time::Instant::now();
+                    if self.config.theme_mode() == ThemeMode::Auto {
+                        self.system_dark = theme::system_dark_mode();
+                    }
+                }
+
+                // ── Auto-ocultar la burbuja ────────────────────────────────
+                // Timer armado al terminar un turno (arm_bubble_hide_timeout):
+                // al expirar, la burbuja se oculta. Se re-muestra al pulsar el
+                // micrófono o al abrirla.
+                if let Some(deadline) = self.bubble_hide_deadline {
+                    if std::time::Instant::now() >= deadline {
+                        self.bubble_hide_deadline = None;
+                        if let Some(id) = self.bubble_id {
+                            self.bubble_hidden = true;
+                            return window::change_mode(id, window::Mode::Hidden);
+                        }
+                    }
+                }
+
                 // Atajo global: toggle al detectar press de NUESTRO atajo (se filtra
                 // por id: el canal es global y podría traer eventos ajenos).
                 let mut toggled = false;
@@ -1082,10 +1223,11 @@ impl WhisprApp {
                 Task::none()
             }
             Message::BubbleOpened(_id) => {
-                // La ventana ya existe: quitarle la activación para que el
-                // Ctrl+V simulado caiga en la app del usuario, no en la burbuja.
-                crate::bubble::apply_noactivate_async();
-                Task::none()
+                // La ventana ya existe: aplicar lo que dicta el Config —
+                // WS_EX_NOACTIVATE (para que el Ctrl+V simulado caiga en la
+                // app del usuario), posición persistida o esquina, y tamaño.
+                crate::bubble::apply_bubble_extras(&self.config);
+                self.show_bubble()
             }
             Message::BubblePress => {
                 // Clic izquierdo: siempre graba (comportamiento original,
@@ -1140,6 +1282,14 @@ impl WhisprApp {
             }
             Message::BubbleCursorMoved(pos) => {
                 self.bubble_last_pos = pos;
+                // Actividad del usuario sobre la burbuja: pospone el
+                // auto-ocultar (no esconderla mientras el cursor está encima).
+                if self.bubble_hide_deadline.is_some() {
+                    if let Some(secs) = self.config.bubble_hide_timeout().secs() {
+                        self.bubble_hide_deadline =
+                            Some(std::time::Instant::now() + Duration::from_secs(secs));
+                    }
+                }
                 // Arrastre con botón derecho: al superar el umbral la burbuja
                 // empieza a seguir al cursor (la captura ya está activa desde
                 // el pulsado, así que los movimientos llegan aunque el cursor
@@ -1218,13 +1368,51 @@ impl WhisprApp {
     }
 
     /// Libera la captura del ratón y cierra el arrastre con botón derecho
-    /// (la máquina de estados ya quedó limpia en el llamador). Log con el
-    /// motivo: clave para diagnosticar arrastres que terminen raro.
+    /// (la máquina de estados ya quedó limpia en el llamador). Persiste la
+    /// posición física final de la burbuja en el Config: el usuario la dejó
+    /// ahí, y `apply_bubble_extras` la re-aplica en el siguiente arranque.
+    /// Log con el motivo: clave para diagnosticar arrastres que terminen raro.
     fn end_bubble_drag(&mut self, reason: &str) {
         if let Some(drag) = self.bubble_drag.take() {
             drag.end();
         }
+        // Posición física (px de pantalla) leída por winapi: manda sobre la
+        // esquina configurada hasta que el usuario re-elija esquina en
+        // Ajustes (BubbleCornerChanged la limpia).
+        if let Some((x, y)) = crate::bubble::bubble_window_position() {
+            self.config.bubble_x = Some(x);
+            self.config.bubble_y = Some(y);
+            self.save_config();
+            crate::log!("bubble", "posición del arrastre persistida: ({x},{y})");
+        }
         crate::log!("bubble", "fin de arrastre con botón derecho ({reason})");
+    }
+
+    /// Re-muestra la burbuja si el auto-ocultar la escondió, y cancela
+    /// cualquier timer pendiente (dictar la mantiene visible). No-op si la
+    /// burbuja ya está visible.
+    fn show_bubble(&mut self) -> Task<Message> {
+        self.bubble_hide_deadline = None;
+        if !self.bubble_hidden {
+            return Task::none();
+        }
+        self.bubble_hidden = false;
+        if let Some(id) = self.bubble_id {
+            return window::change_mode(id, window::Mode::Windowed);
+        }
+        Task::none()
+    }
+
+    /// Arma el temporizador de auto-ocultar de la burbuja (o lo cancela si el
+    /// timeout es «Nunca»). Se llama al terminar un turno: cuando expira, el
+    /// Poll oculta la burbuja. La actividad del usuario (hover, grabar) lo
+    /// pospone o cancela.
+    fn arm_bubble_hide_timeout(&mut self) {
+        self.bubble_hide_deadline = self
+            .config
+            .bubble_hide_timeout()
+            .secs()
+            .map(|secs| std::time::Instant::now() + Duration::from_secs(secs));
     }
 
     /// Oculta la ventana principal (se queda en la bandeja) y actualiza el
@@ -1273,12 +1461,21 @@ impl WhisprApp {
 
     pub fn view(&self) -> Element<'_, Message> {
         let t = theme::tokens(&self.theme());
+        // Tamaño de fuente global resuelto (Ajustes → Apariencia): TODOS los
+        // textos de la vista lo usan (fs.*) en vez de los literales FONT_*.
+        let fs = theme::font_sizes(self.config.font_size().factor());
 
         // ── Cabecera: wordmark + controles globales ──────────────────────────
-        let theme_toggle = if self.config.is_dark() { "☀ Claro" } else { "☾ Oscuro" };
+        // El botón de tema muestra el modo EFECTIVO (Auto incluido) y cicla
+        // Auto → Claro → Oscuro al pulsarlo.
+        let theme_toggle = match self.config.theme_mode() {
+            ThemeMode::Auto => "◐ Auto",
+            ThemeMode::Claro => "☀ Claro",
+            ThemeMode::Oscuro => "☾ Oscuro",
+        };
         let settings_label = if self.settings_open { "Ajustes ▾" } else { "Ajustes ▸" };
         let header = row![
-            text("Whispr Open").size(theme::FONT_XL).font(Font::MONOSPACE).color(t.text),
+            text("Whispr Open").size(fs.xl).font(Font::MONOSPACE).color(t.text),
             Space::with_width(Length::Fill),
             button(ui_text(theme_toggle)).on_press(Message::ToggleTheme).style(theme::secondary),
             button(ui_text(settings_label)).on_press(Message::ToggleSettings).style(theme::secondary),
@@ -1294,10 +1491,10 @@ impl WhisprApp {
         let mic = self.mic_ui(t);
         let mut hero_content = column![
             row![
-                text("●").size(theme::FONT_XL).color(mic.color),
+                text("●").size(fs.xl).color(mic.color),
                 column![
-                    text(mic.label).size(theme::FONT_HERO).color(t.text),
-                    text(mic.hint).size(theme::FONT_SM).color(mic.hint_color),
+                    text(mic.label).size(fs.hero).color(t.text),
+                    text(mic.hint).size(fs.sm).color(mic.hint_color),
                 ]
                 .width(Length::Fill)
                 .spacing(theme::SPACE_1),
@@ -1349,7 +1546,7 @@ impl WhisprApp {
                                     } else {
                                         self.transcript.as_str().to_string()
                                     })
-                    .size(theme::FONT_MD)
+                    .size(fs.md)
                     .color(if transcript_empty { t.dim } else { t.text }),
                 )
                 .width(Length::Fill)
@@ -1396,7 +1593,7 @@ impl WhisprApp {
                 .unwrap_or("Corrección IA pendiente de confirmación");
             row![
                 text(label)
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(t.warn)
                     .shaping(Shaping::Advanced),
                 button(ui_text("Aplicar"))
@@ -1420,7 +1617,7 @@ impl WhisprApp {
             };
             let mut row_el = row![
                 text(corr.as_str())
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(color)
                     // El texto puede traer glifos de UI (↩ de «deshecha ↩»):
                     // Advanced activa el fallback de fuente.
@@ -1438,7 +1635,7 @@ impl WhisprApp {
             row_el.into()
         } else if !self.removed_fillers.is_empty() {
             text(format!("Muletillas eliminadas: {}", self.removed_fillers.join(", ")))
-                .size(theme::FONT_SM)
+                .size(fs.sm)
                 .color(t.dim)
                 .into()
         } else {
@@ -1479,6 +1676,7 @@ impl WhisprApp {
 
     /// Panel de configuración (oculto tras el botón Ajustes).
     fn settings_view(&self, t: &UiPalette) -> Element<'_, Message> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
         let model_pick = pick_list(
             Model::all().to_vec(),
             Some(self.config.selected_model()),
@@ -1489,7 +1687,7 @@ impl WhisprApp {
         // sobrante de la fila en vez de desbordar la ventana.
         .width(Length::Fill)
         .style(theme::pick_list);
-        let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref());
+        let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref(), fs);
 
         // ── Ajustes avanzados de transcripción ────────────────────────────
         // Selector de idioma: el item "Auto" representa autodetección
@@ -1515,7 +1713,7 @@ impl WhisprApp {
         let threads = self.config.n_threads();
         let beam_row = row![
             text(format!("Beam size: {beam}"))
-                .size(theme::FONT_SM)
+                .size(fs.sm)
                 .color(t.text)
                 .width(Length::Fixed(120.0)),
             slider(1..=8, beam, Message::BeamSizeChanged)
@@ -1526,7 +1724,7 @@ impl WhisprApp {
         .align_y(iced::Alignment::Center);
         let threads_row = row![
             text(format!("Hilos: {threads}"))
-                .size(theme::FONT_SM)
+                .size(fs.sm)
                 .color(t.text)
                 .width(Length::Fixed(120.0)),
             slider(1..=16, threads, Message::ThreadsChanged)
@@ -1538,30 +1736,30 @@ impl WhisprApp {
 
         let panel = column![
             row![
-                text("Modelo").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
+                text("Modelo").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
                 model_pick,
                 text(format!("(~{} MB)", self.config.selected_model().approx_mb()))
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(t.dim),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             row![
-                text("Micrófono").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
+                text("Micrófono").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
                 mic_pick,
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             // Subtítulo de la sección «Transcripción».
             text("Transcripción")
-                .size(theme::FONT_LG)
+                .size(fs.lg)
                 .font(Font::MONOSPACE)
                 .color(t.text),
             row![
-                text("Idioma").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
+                text("Idioma").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
                 lang_pick,
                 text(language_hint(&self.config.language))
-                    .size(theme::FONT_XS)
+                    .size(fs.xxs)
                     .color(t.dim),
             ]
             .spacing(theme::SPACE_2)
@@ -1574,6 +1772,126 @@ impl WhisprApp {
             )
             .on_toggle(Message::ToggleAutoResample)
             .style(theme::checkbox),
+            // ── Apariencia: tema, fuente y burbuja configurable ──────────────
+            text("Apariencia")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+            row![
+                text("Tema").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                pick_list(
+                    [ThemeMode::Auto, ThemeMode::Claro, ThemeMode::Oscuro].to_vec(),
+                    Some(self.config.theme_mode()),
+                    Message::ThemeModeChanged,
+                )
+                .placeholder("Tema")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+                // Hint: Auto sigue el modo de Windows (se refresca solo).
+                if self.config.theme_mode() == ThemeMode::Auto {
+                    text("sigue a Windows").size(fs.xxs).color(t.dim)
+                } else {
+                    text("").size(fs.xxs).color(t.dim)
+                },
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("Fuente").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        FontSize::Small,
+                        FontSize::Normal,
+                        FontSize::Large,
+                        FontSize::XLarge,
+                    ]
+                    .to_vec(),
+                    Some(self.config.font_size()),
+                    Message::FontSizeChanged,
+                )
+                .placeholder("Tamaño de fuente")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+                text(format!("{}×", self.config.font_size().factor()))
+                    .size(fs.xxs)
+                    .color(t.dim),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            text("Burbuja flotante")
+                .size(fs.sm)
+                .color(t.dim),
+            row![
+                text("Tamaño").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                pick_list(
+                    [BubbleSize::Small, BubbleSize::Mid, BubbleSize::Large].to_vec(),
+                    Some(self.config.bubble_size()),
+                    Message::BubbleSizeChanged,
+                )
+                .placeholder("Tamaño")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("Esquina").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        BubbleCorner::TopRight,
+                        BubbleCorner::TopLeft,
+                        BubbleCorner::BottomRight,
+                        BubbleCorner::BottomLeft,
+                    ]
+                    .to_vec(),
+                    Some(self.config.bubble_corner()),
+                    Message::BubbleCornerChanged,
+                )
+                .placeholder("Esquina")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            // Opacidad: slider 20–100 %; el getter clampea aunque el slider
+            // nunca emita fuera de rango.
+            {
+                let op = u32::from(self.config.bubble_opacity());
+                row![
+                    text(format!("Opacidad: {op}%"))
+                        .size(fs.sm)
+                        .color(t.text)
+                        .width(Length::Fixed(120.0)),
+                    slider(20..=100, op, Message::BubbleOpacityChanged)
+                        .step(1u32)
+                        .width(Length::Fill),
+                ]
+                .spacing(theme::SPACE_2)
+                .align_y(iced::Alignment::Center)
+            },
+            row![
+                text("Auto-ocultar")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        BubbleHideTimeout::Never,
+                        BubbleHideTimeout::S5,
+                        BubbleHideTimeout::S10,
+                        BubbleHideTimeout::S30,
+                        BubbleHideTimeout::S60,
+                    ]
+                    .to_vec(),
+                    Some(self.config.bubble_hide_timeout()),
+                    Message::BubbleHideTimeoutChanged,
+                )
+                .placeholder("Auto-ocultar")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
             checkbox(
                 "Limpiar muletillas",
                 self.config.cleanup_enabled.unwrap_or(true),
@@ -1601,11 +1919,11 @@ impl WhisprApp {
             // (informativos; el clasificador y la llamada al LLM no se
             // usan porque el gate `ai_correction_enabled()` corta antes).
             text("  Detalles")
-                .size(theme::FONT_SM)
+                .size(fs.sm)
                 .color(t.dim),
             row![
                 text("Endpoint LLM")
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 text_input(
@@ -1620,7 +1938,7 @@ impl WhisprApp {
             .align_y(iced::Alignment::Center),
             row![
                 text("Modelo")
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 text_input(
@@ -1637,7 +1955,7 @@ impl WhisprApp {
             // getter: ≤0 cae al default; el slider nunca emite 0.
             row![
                 text("Timeout (s)")
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 slider(
@@ -1655,7 +1973,7 @@ impl WhisprApp {
             // conservador.
             row![
                 text("Umbral clasif.")
-                    .size(theme::FONT_SM)
+                    .size(fs.sm)
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 slider(
@@ -1676,7 +1994,7 @@ impl WhisprApp {
             .style(theme::checkbox),
 
             text(format!("Atajo global: {}", self.hotkey_label))
-                .size(theme::FONT_XS)
+                .size(fs.xxs)
                 .color(t.dim),
             text({
                 let inj = self.config.inject_settings();
@@ -1691,11 +2009,11 @@ impl WhisprApp {
                     destino,
                 )
             })
-            .size(theme::FONT_XS)
+            .size(fs.xxs)
             .color(t.dim),
             horizontal_rule(1).style(theme::rule),
             text("Diccionario personal")
-                .size(theme::FONT_LG)
+                .size(fs.lg)
                 .font(Font::MONOSPACE)
                 .color(t.text),
             row![
@@ -1708,7 +2026,7 @@ impl WhisprApp {
                 button("Añadir").on_press(Message::AddEntry).style(theme::primary),
             ]
             .spacing(theme::SPACE_2),
-            dictionary_list(&self.config.dictionary),
+            dictionary_list(&self.config.dictionary, fs),
         ]
         .spacing(theme::SPACE_2)
         .width(Length::Fill);
@@ -1756,9 +2074,13 @@ fn language_hint(value: &Option<String>) -> String {
     }
 }
 
-fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static, Message> {
+fn mic_pick_list(
+    devices: &[String],
+    selected: Option<&str>,
+    fs: theme::FontSizes,
+) -> Element<'static, Message> {
     if devices.is_empty() {
-        return text("(sin micrófonos detectados)").size(theme::FONT_SM).into();
+        return text("(sin micrófonos detectados)").size(fs.sm).into();
     }
     pick_list(devices.to_vec(), selected.map(|s| s.to_string()), Message::InputDeviceSelected)
         .placeholder("(por defecto)")
@@ -1769,17 +2091,17 @@ fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static,
         .into()
 }
 
-fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
+fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes) -> Element<'static, Message> {
     if entries.is_empty() {
         return text("Sin entradas todavía. Añade jerga, nombres o siglas.")
-            .size(theme::FONT_SM)
+            .size(fs.sm)
             .into();
     }
     let mut col = Column::new().spacing(theme::SPACE_1);
     for (idx, entry) in entries.iter().enumerate() {
         col = col.push(
             row![
-                text(format!("{} → {}", entry.from, entry.to)).size(theme::FONT_MD),
+                text(format!("{} → {}", entry.from, entry.to)).size(fs.md),
                 button(ui_text("✕")).on_press(Message::RemoveEntry(idx)).style(theme::secondary),
             ]
             .spacing(theme::SPACE_2)

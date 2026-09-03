@@ -112,6 +112,73 @@ pub const FONT_XL: u16 = 20;
 pub const FONT_HERO: u16 = 24; // label del estado del micrófono
 // (FONT_DOT se eliminó: el punto de estado del hero ahora usa FONT_XL)
 
+/// Tamaños de fuente resueltos por el tamaño seleccionado en Ajustes
+/// (`Config::font_size()`). Factor 1.0 = los `FONT_*` de baseline.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct FontSizes {
+    pub xxs: u16,
+    pub sm: u16,
+    pub md: u16,
+    pub lg: u16,
+    pub xl: u16,
+    pub hero: u16,
+}
+
+/// Escala los tamaños base (`FONT_XS..FONT_HERO`) por un factor. Clamp final
+/// 8..=64 px: un factor extremo (p. ej. 1.3 con hero=24 → 31) nunca produce
+/// tamaños absurdos. Redondeo al entero más cercano (la UI pide u16).
+pub fn font_sizes(factor: f32) -> FontSizes {
+    let scale = |base: u16| ((base as f32 * factor).round() as u16).clamp(8, 64);
+    FontSizes {
+        xxs: scale(FONT_XS),
+        sm: scale(FONT_SM),
+        md: scale(FONT_MD),
+        lg: scale(FONT_LG),
+        xl: scale(FONT_XL),
+        hero: scale(FONT_HERO),
+    }
+}
+
+/// Auto-tema: ¿el sistema operativo está en modo oscuro? Lee
+/// `AppsUseLightTheme` (REG_DWORD) de
+/// `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
+/// que Windows mantiene en caliente al cambiar el tema (claro/dark toggle).
+/// `true` = oscuro. Cualquier fallo de lectura cae a `true` (oscuro, el
+/// default de la app) — la configuración nunca rompe el arranque.
+#[cfg(target_os = "windows")]
+pub fn system_dark_mode() -> bool {
+    use winapi::um::winreg::{
+        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD,
+    };
+
+    fn wide(s: &str) -> Vec<u16> {
+        s.encode_utf16().chain(std::iter::once(0)).collect()
+    }
+
+    unsafe {
+        let subkey = wide("Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize");
+        let name = wide("AppsUseLightTheme");
+        let mut data: u32 = 0;
+        let mut size: u32 = std::mem::size_of::<u32>() as u32;
+        let mut ty: u32 = 0;
+        let r = RegGetValueW(
+            HKEY_CURRENT_USER,
+            subkey.as_ptr(),
+            name.as_ptr(),
+            RRF_RT_REG_DWORD,
+            &mut ty,
+            &mut data as *mut u32 as *mut _,
+            &mut size,
+        );
+        if r == 0 { data == 0 } else { true }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn system_dark_mode() -> bool {
+    true
+}
+
 // ─────────────────────────────── Temas iced ───────────────────────────────
 
 /// Tema custom para la app según el modo del `Config` (dark por defecto).
@@ -159,8 +226,9 @@ fn border(color: Color, width: f32, radius: f32) -> Border {
     }
 }
 
-/// Alpha absoluta (la API de iced 0.13 solo ofrece scale_alpha).
-fn alpha(c: Color, a: f32) -> Color {
+/// Alpha absoluta (la API de iced 0.13 solo ofrece scale_alpha). Pública:
+/// la burbuja la usa para la opacidad configurable (slider 20–100 %).
+pub fn with_alpha(c: Color, a: f32) -> Color {
     Color {
         r: c.r,
         g: c.g,
@@ -260,7 +328,7 @@ pub fn text_input(theme: &Theme, status: input::Status) -> input::Style {
         icon: t.dim,
         placeholder: t.dim,
         value: t.text,
-        selection: alpha(t.accent, 0.35),
+        selection: with_alpha(t.accent, 0.35),
     }
 }
 
@@ -290,7 +358,7 @@ pub fn checkbox(theme: &Theme, status: check::Status) -> check::Style {
     };
     check::Style {
         background: Background::Color(if is_checked {
-            alpha(t.accent, 0.18)
+            with_alpha(t.accent, 0.18)
         } else {
             t.surface_alt
         }),
@@ -311,7 +379,7 @@ pub fn scrollable(theme: &Theme, _status: scroll::Status) -> scroll::Style {
         background: None,
         border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
         scroller: scroll::Scroller {
-            color: alpha(t.dim, 0.4),
+            color: with_alpha(t.dim, 0.4),
             border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
         },
     };
@@ -385,5 +453,52 @@ mod tests {
         let light_theme = custom(false);
         assert!(!is_dark(&light_theme));
         assert_eq!(tokens(&light_theme), &LIGHT);
+    }
+
+    #[test]
+    fn font_sizes_factor_1_es_el_baseline() {
+        let fs = font_sizes(1.0);
+        assert_eq!(fs.xxs, FONT_XS);
+        assert_eq!(fs.sm, FONT_SM);
+        assert_eq!(fs.md, FONT_MD);
+        assert_eq!(fs.lg, FONT_LG);
+        assert_eq!(fs.xl, FONT_XL);
+        assert_eq!(fs.hero, FONT_HERO);
+    }
+
+    #[test]
+    fn font_sizes_escala_y_mantiene_jerarquia() {
+        // 0.85 (pequeña): todo más pequeño pero el orden se conserva.
+        let small = font_sizes(0.85);
+        assert!(small.sm < FONT_SM);
+        assert!(small.md < FONT_MD);
+        // 1.3 (muy grande): todo más grande.
+        let large = font_sizes(1.3);
+        assert!(large.md > FONT_MD);
+        assert!(large.hero > FONT_HERO);
+        // Jerarquía: cada nivel supera al anterior en cualquier factor.
+        for f in [0.85, 1.0, 1.15, 1.3] {
+            let fs = font_sizes(f);
+            assert!(fs.xxs < fs.sm && fs.sm < fs.md && fs.md < fs.lg && fs.lg < fs.xl && fs.xl < fs.hero,
+                "jerarquía rota con factor {f}: {fs:?}");
+        }
+    }
+
+    #[test]
+    fn font_sizes_clamp_evita_absurdos() {
+        // Factores extremos nunca salen del rango 8..=64 px.
+        for f in [0.0, 0.5, 2.0, 10.0] {
+            let fs = font_sizes(f);
+            for v in [fs.xxs, fs.sm, fs.md, fs.lg, fs.xl, fs.hero] {
+                assert!((8..=64).contains(&v), "fuera de rango con factor {f}: {v}");
+            }
+        }
+    }
+
+    #[test]
+    fn with_alpha_cambia_solo_el_canal_alpha() {
+        assert_eq!(with_alpha(Color::WHITE, 0.5), Color { r: 1.0, g: 1.0, b: 1.0, a: 0.5 });
+        assert_eq!(with_alpha(BG, 0.2).a, 0.2);
+        assert_eq!(with_alpha(BG, 0.2).r, BG.r, "RGB intacto");
     }
 }

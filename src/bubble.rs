@@ -33,14 +33,28 @@ use winapi::shared::windef::{HWND, POINT, RECT};
 #[cfg(target_os = "windows")]
 use winapi::um::winuser::{
     GetAsyncKeyState, GetCapture, GetCursorPos, GetMonitorInfoW, GetWindowRect, MonitorFromPoint,
-    ReleaseCapture, SetCapture, SetWindowPos, VK_RBUTTON, MONITORINFO, MONITOR_DEFAULTTONEAREST,
-    SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    MonitorFromWindow, ReleaseCapture, SetCapture, SetWindowPos, VK_RBUTTON, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
 };
 
 use crate::app::{Message, Status, WhisprApp};
+use crate::config::{BubbleCorner, Config};
 
 /// Tamaño de la ventana de la burbuja (y del círculo), en px lógicos.
 pub const BUBBLE_SIZE: f32 = 56.0;
+
+/// Rango completo de tamaños de la burbuja (48–72): la ventana se crea con
+/// min/max = rango entero para que el resize EN CALIENTE (`window::resize` a
+/// cualquier `BubbleSize`) no se tope con el clamp de WM_GETMINMAXINFO.
+pub const BUBBLE_SIZE_MIN: f32 = 48.0;
+pub const BUBBLE_SIZE_MAX: f32 = 72.0;
+
+/// Margen de las esquinas (px lógicos): separación de los bordes del monitor.
+pub const BUBBLE_MARGIN: f32 = 24.0;
+
+/// Offset vertical de las esquinas SUPERIORES (px lógicos): deja espacio
+/// para la barra de tareas/menús flotantes sin pegar la burbuja al borde.
+pub const BUBBLE_TOP_OFFSET: f32 = 48.0;
 
 /// Título único de la ventana de la burbuja: sirve para localizarla por HWND
 /// (FindWindowW) y aplicarle WS_EX_NOACTIVATE tras crearse.
@@ -137,19 +151,65 @@ impl RightDragState {
     }
 }
 
+/// Posición inicial de la burbuja para una esquina dada, en px LÓGICOS.
+/// Función pura (sin winapi, testeable en cualquier target): `win` es el
+/// tamaño de la ventana y `monitor` el del monitor donde cae. Margen
+/// `BUBBLE_MARGIN` en los bordes laterales/inferiores y `BUBBLE_TOP_OFFSET`
+/// en los superiores.
+pub fn initial_position(corner: BubbleCorner, win: Size, monitor: Size) -> Point {
+    let x = match corner {
+        BubbleCorner::TopRight | BubbleCorner::BottomRight => {
+            monitor.width - win.width - BUBBLE_MARGIN
+        }
+        BubbleCorner::TopLeft | BubbleCorner::BottomLeft => BUBBLE_MARGIN,
+    };
+    let y = match corner {
+        BubbleCorner::TopRight | BubbleCorner::TopLeft => BUBBLE_TOP_OFFSET,
+        BubbleCorner::BottomRight | BubbleCorner::BottomLeft => {
+            monitor.height - win.height - BUBBLE_MARGIN
+        }
+    };
+    Point::new(x, y)
+}
+
+// `window::Position::SpecificWith` exige una `fn` sin capturas; cada esquina
+// tiene su wrapper (const-fn pointer) para poder seleccionarla en
+// `bubble_settings` sin clausuras que capturen.
+fn corner_top_right(win: Size, monitor: Size) -> Point {
+    initial_position(BubbleCorner::TopRight, win, monitor)
+}
+fn corner_top_left(win: Size, monitor: Size) -> Point {
+    initial_position(BubbleCorner::TopLeft, win, monitor)
+}
+fn corner_bottom_right(win: Size, monitor: Size) -> Point {
+    initial_position(BubbleCorner::BottomRight, win, monitor)
+}
+fn corner_bottom_left(win: Size, monitor: Size) -> Point {
+    initial_position(BubbleCorner::BottomLeft, win, monitor)
+}
+
 /// Configuración de la ventana de la burbuja. Verificado en iced 0.13.1
 /// (`iced_core::window::Settings`): `decorations`, `transparent`, `level`
 /// (`AlwaysOnTop`) y `platform_specific.skip_taskbar` están soportados y se
 /// mapean a winit (`WindowAttributesExtWindows`, `with_window_level`,
 /// `with_transparent`).
-pub fn bubble_settings() -> window::Settings {
+///
+/// Parámetros del Config (Ajustes → Apariencia): tamaño del círculo
+/// (`bubble_size`) y esquina de anclaje (`bubble_corner`). El min/max de la
+/// ventana es el rango COMPLETO 48–72: si fuese el tamaño fijo, el resize en
+/// caliente a otro tamaño chocaría con el clamp de WM_GETMINMAXINFO.
+pub fn bubble_settings(cfg: &Config) -> window::Settings {
+    let size = cfg.bubble_size().px();
+    let corner = cfg.bubble_corner();
     let mut s = window::Settings::default();
-    s.size = Size::new(BUBBLE_SIZE, BUBBLE_SIZE);
-    s.min_size = Some(Size::new(BUBBLE_SIZE, BUBBLE_SIZE));
-    s.max_size = Some(Size::new(BUBBLE_SIZE, BUBBLE_SIZE));
-    // Esquina superior derecha del monitor principal, con un margen.
-    s.position = window::Position::SpecificWith(|win, monitor| {
-        Point::new(monitor.width - win.width - 24.0, 48.0)
+    s.size = Size::new(size, size);
+    s.min_size = Some(Size::new(BUBBLE_SIZE_MIN, BUBBLE_SIZE_MIN));
+    s.max_size = Some(Size::new(BUBBLE_SIZE_MAX, BUBBLE_SIZE_MAX));
+    s.position = window::Position::SpecificWith(match corner {
+        BubbleCorner::TopRight => corner_top_right,
+        BubbleCorner::TopLeft => corner_top_left,
+        BubbleCorner::BottomRight => corner_bottom_right,
+        BubbleCorner::BottomLeft => corner_bottom_left,
     });
     s.resizable = false;
     s.decorations = false;
@@ -243,6 +303,11 @@ fn bubble_event_filter(
 impl WhisprApp {
     pub fn bubble_view(&self) -> Element<'static, Message> {
         let recording = matches!(self.bubble_status(), Status::Recording);
+        let size = self.bubble_size_px();
+        // Opacidad configurable (Ajustes → Apariencia, slider 20–100 %):
+        // alpha por-pixel aplicada al círculo y al borde. El punto «REC»
+        // central queda opaco (indicador de estado: debe leerse siempre).
+        let opacity = self.bubble_opacity_percent() as f32 / 100.0;
         let fill = match self.bubble_status() {
             Status::Recording | Status::Error(_) => crate::theme::ERR,
             Status::Transcribing | Status::Correcting | Status::Downloading { .. } => {
@@ -250,6 +315,7 @@ impl WhisprApp {
             }
             Status::Idle => crate::theme::ACCENT,
         };
+        let fill = crate::theme::with_alpha(fill, opacity);
 
         // Indicador "REC": punto blanco centrado mientras se graba.
         let center: Element<'static, Message> = if recording {
@@ -276,9 +342,9 @@ impl WhisprApp {
             .style(move |_| container::Style {
                 background: Some(Background::Color(fill)),
                 border: Border {
-                    color: Color::WHITE,
+                    color: crate::theme::with_alpha(Color::WHITE, opacity),
                     width: 2.0,
-                    radius: (BUBBLE_SIZE / 2.0).into(),
+                    radius: (size / 2.0).into(),
                 },
                 ..Default::default()
             })
@@ -338,27 +404,140 @@ impl iced_winit::Program for WhisprApp {
 // WS_EX_NOACTIVATE: la burbuja nunca roba el foco
 // ---------------------------------------------------------------------------
 
-/// Aplica WS_EX_NOACTIVATE (+TOOLWINDOW) a la ventana de la burbuja en cuanto
-/// existe. Sin esto, el clic activaría la burbuja y el Ctrl+V simulado caería
-/// en ella en vez de en el campo de texto de la otra app.
-pub fn apply_noactivate_async() {
-    std::thread::spawn(|| {
-        let deadline = std::time::Instant::now() + Duration::from_secs(3);
-        loop {
-            if let Some(hwnd) = find_bubble_hwnd() {
-                apply_noactivate(hwnd);
-                return;
+/// Aplica a la burbuja lo que dicta el `Config`, en cuanto la ventana existe:
+/// WS_EX_NOACTIVATE (+TOOLWINDOW, para que los clics no roben el foco),
+/// posición —la persistida del último arrastre si existe, si no la esquina
+/// configurada— y tamaño. Se lanza en un hilo porque la ventana puede tardar
+/// unas decenas de ms en crearse (el llamador es `Message::BubbleOpened`).
+pub fn apply_bubble_extras(cfg: &Config) {
+    #[cfg(target_os = "windows")]
+    {
+        let corner = cfg.bubble_corner();
+        let size = cfg.bubble_size().px();
+        let pos = cfg.bubble_position();
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Some(hwnd) = find_bubble_hwnd() {
+                    apply_noactivate(hwnd);
+                    let (x, y) = match pos {
+                        Some((x, y)) => (x, y),
+                        None => corner_position(corner, hwnd, size),
+                    };
+                    let s = size as i32;
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            std::ptr::null_mut(),
+                            x,
+                            y,
+                            s,
+                            s,
+                            SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                    crate::log!("bubble", "burbuja aplicada: noact+pos ({x},{y})+tamaño {s}");
+                    return;
+                }
+                if std::time::Instant::now() >= deadline {
+                    crate::log!(
+                        "bubble",
+                        "no se encontró la ventana de la burbuja para aplicar los extras"
+                    );
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
             }
-            if std::time::Instant::now() >= deadline {
-                crate::log!(
-                    "bubble",
-                    "no se encontró la ventana de la burbuja para WS_EX_NOACTIVATE"
-                );
-                return;
+        });
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = cfg;
+    }
+}
+
+/// Mueve la burbuja EN CALIENTE a la esquina seleccionada en Ajustes.
+/// Reposiciona sin cambiar el tamaño (el resize es competencia de
+/// `BubbleSizeChanged` / `window::resize`). Se usa un hilo porque la ventana
+/// puede no existir todavía (mismo patrón que `apply_bubble_extras`).
+pub fn move_to_corner(corner: BubbleCorner, size: f32) {
+    #[cfg(target_os = "windows")]
+    {
+        std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(3);
+            loop {
+                if let Some(hwnd) = find_bubble_hwnd() {
+                    let (x, y) = corner_position(corner, hwnd, size);
+                    unsafe {
+                        SetWindowPos(
+                            hwnd,
+                            std::ptr::null_mut(),
+                            x,
+                            y,
+                            0,
+                            0,
+                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
+                        );
+                    }
+                    crate::log!("bubble", "burbuja movida a {} en ({x},{y})", corner.label());
+                    return;
+                }
+                if std::time::Instant::now() >= deadline {
+                    crate::log!("bubble", "no se encontró la ventana para mover a la esquina");
+                    return;
+                }
+                std::thread::sleep(Duration::from_millis(100));
             }
-            std::thread::sleep(Duration::from_millis(100));
+        });
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (corner, size);
+    }
+}
+
+/// Posición FÍSICA actual de la ventana de la burbuja (px de pantalla, la
+/// esquina superior izquierda). `None` si la ventana aún no existe. La usa
+/// `end_bubble_drag` para persistir la posición del último arrastre en el
+/// Config (se re-aplica al arrancar vía `apply_bubble_extras`).
+#[cfg(target_os = "windows")]
+pub fn bubble_window_position() -> Option<(i32, i32)> {
+    unsafe {
+        let hwnd = find_bubble_hwnd()?;
+        let mut rect: RECT = std::mem::zeroed();
+        if GetWindowRect(hwnd, &mut rect) == 0 {
+            return None;
         }
-    });
+        Some((rect.left, rect.top))
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn bubble_window_position() -> Option<(i32, i32)> {
+    None
+}
+
+/// Esquina configurada → posición FÍSICA de la ventana de la burbuja: el
+/// área de trabajo (`rcWork`) del monitor que la contiene, más los márgenes.
+/// `size` en px físicos (la ventana es cuadrada; el borde superior usa
+/// `BUBBLE_TOP_OFFSET` para no tapar menús de la barra de tareas).
+#[cfg(target_os = "windows")]
+fn corner_position(corner: BubbleCorner, hwnd: BubbleHwnd, size: f32) -> (i32, i32) {
+    unsafe {
+        let monitor = MonitorFromWindow(hwnd, MONITOR_DEFAULTTONEAREST);
+        let mut info: MONITORINFO = std::mem::zeroed();
+        info.cbSize = std::mem::size_of::<MONITORINFO>() as u32;
+        if GetMonitorInfoW(monitor, &mut info) == 0 {
+            return (0, 0);
+        }
+        let work = info.rcWork;
+        let w = (work.right - work.left) as f32;
+        let h = (work.bottom - work.top) as f32;
+        // `initial_position` trabaja en coordenadas relativas al monitor; el
+        // rcWork puede no empezar en (0,0) (multi-monitor): se suma el origen.
+        let p = initial_position(corner, Size::new(size, size), Size::new(w, h));
+        (work.left + p.x as i32, work.top + p.y as i32)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -643,7 +822,7 @@ mod tests {
 
     #[test]
     fn burbuja_cuadrada() {
-        let s = bubble_settings();
+        let s = bubble_settings(&Config::default());
         assert_eq!(s.size.width, BUBBLE_SIZE);
         assert_eq!(s.size.height, BUBBLE_SIZE);
         assert!(!s.decorations);
@@ -652,7 +831,7 @@ mod tests {
 
     #[test]
     fn burbuja_siempre_encima_y_transparente() {
-        let s = bubble_settings();
+        let s = bubble_settings(&Config::default());
         assert!(s.transparent);
         assert_eq!(s.level, window::Level::AlwaysOnTop);
         assert_eq!(s.platform_specific.skip_taskbar, true);
@@ -660,7 +839,7 @@ mod tests {
 
     #[test]
     fn posicion_inicial_esquina_superior_derecha() {
-        let s = bubble_settings();
+        let s = bubble_settings(&Config::default());
         if let window::Position::SpecificWith(f) = s.position {
             let p = f(Size::new(56.0, 56.0), Size::new(1920.0, 1080.0));
             assert!(p.x > 1700.0, "x={} debe quedar cerca del borde derecho", p.x);
@@ -668,6 +847,89 @@ mod tests {
         } else {
             panic!("la burbuja debe usar Position::SpecificWith");
         }
+    }
+
+    // ── initial_position: esquinas puras y dentro del monitor ──
+
+    #[test]
+    fn initial_position_mata_a_la_esquina_top_right_historica() {
+        // La esquina por defecto reproduce la posición histórica
+        // (monitor.width - win.width - 24, 48).
+        let p = initial_position(BubbleCorner::TopRight, Size::new(56.0, 56.0), Size::new(1920.0, 1080.0));
+        assert_eq!(p, Point::new(1920.0 - 56.0 - BUBBLE_MARGIN, BUBBLE_TOP_OFFSET));
+    }
+
+    #[test]
+    fn initial_position_cubre_las_cuatro_esquinas() {
+        let win = Size::new(56.0, 56.0);
+        let mon = Size::new(1920.0, 1080.0);
+        assert_eq!(
+            initial_position(BubbleCorner::TopLeft, win, mon),
+            Point::new(BUBBLE_MARGIN, BUBBLE_TOP_OFFSET)
+        );
+        assert_eq!(
+            initial_position(BubbleCorner::TopRight, win, mon),
+            Point::new(1920.0 - 56.0 - BUBBLE_MARGIN, BUBBLE_TOP_OFFSET)
+        );
+        assert_eq!(
+            initial_position(BubbleCorner::BottomLeft, win, mon),
+            Point::new(BUBBLE_MARGIN, 1080.0 - 56.0 - BUBBLE_MARGIN)
+        );
+        assert_eq!(
+            initial_position(BubbleCorner::BottomRight, win, mon),
+            Point::new(1920.0 - 56.0 - BUBBLE_MARGIN, 1080.0 - 56.0 - BUBBLE_MARGIN)
+        );
+    }
+
+    #[test]
+    fn initial_position_siempre_cabe_en_el_monitor() {
+        // Propiedad: en cualquier esquina y con cualquier tamaño de la burbuja
+        // (48/56/72), la burbuja queda íntegra dentro del monitor de 1080p.
+        for corner in [
+            BubbleCorner::TopRight,
+            BubbleCorner::TopLeft,
+            BubbleCorner::BottomRight,
+            BubbleCorner::BottomLeft,
+        ] {
+            for size in [48.0, 56.0, 72.0] {
+                let win = Size::new(size, size);
+                let p = initial_position(corner, win, Size::new(1920.0, 1080.0));
+                assert!(p.x >= 0.0 && p.y >= 0.0, "{corner:?}@{size}: {p:?} fuera por arriba/izquierda");
+                assert!(
+                    p.x + size <= 1920.0 && p.y + size <= 1080.0,
+                    "{corner:?}@{size}: {p:?} desborda el monitor"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn bubble_settings_usa_tamano_y_esquina_del_config() {
+        // Tamaño grande (72 px) + esquina inferior izquierda.
+        let cfg = Config {
+            bubble_size: Some(crate::config::BubbleSize::Large),
+            bubble_corner: Some(BubbleCorner::BottomLeft),
+            ..Default::default()
+        };
+        let s = bubble_settings(&cfg);
+        assert_eq!(s.size.width, 72.0);
+        assert_eq!(s.size.height, 72.0);
+        if let window::Position::SpecificWith(f) = s.position {
+            let p = f(Size::new(72.0, 72.0), Size::new(1920.0, 1080.0));
+            assert_eq!(p, Point::new(BUBBLE_MARGIN, 1080.0 - 72.0 - BUBBLE_MARGIN));
+        } else {
+            panic!("la burbuja debe usar Position::SpecificWith");
+        }
+    }
+
+    #[test]
+    fn bubble_settings_rango_completo_48_72() {
+        // El min/max de la ventana es TODO el rango de BubbleSize: el resize
+        // en caliente (window::resize) no se topa con WM_GETMINMAXINFO.
+        let s = bubble_settings(&Config::default());
+        let (min, max) = (s.min_size.unwrap(), s.max_size.unwrap());
+        assert_eq!(min, Size::new(BUBBLE_SIZE_MIN, BUBBLE_SIZE_MIN));
+        assert_eq!(max, Size::new(BUBBLE_SIZE_MAX, BUBBLE_SIZE_MAX));
     }
 
     #[test]
