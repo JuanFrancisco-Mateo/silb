@@ -176,6 +176,8 @@ mod tests {
             "☾ Oscuro",
             "Ajustes ▾",
             "Ajustes ▸",
+            "↩ Deshacer",
+            "Corrección IA deshecha ↩",
             "hablar → dictar",
         ];
         for s in phrases {
