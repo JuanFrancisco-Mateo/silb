@@ -122,7 +122,10 @@ pub struct WhisprApp {
     input_devices: Vec<String>,
     transcribe_rx: Option<Receiver<Result<String, String>>>,
     hotkey_rx: crossbeam_channel::Receiver<GlobalHotKeyEvent>,
-    _hotkey: HotkeyManager,
+    hotkey: HotkeyManager,
+    /// Etiqueta canónica del atajo global registrado («Ctrl+Shift+D» o el
+    /// `shortcut` de config.json) para los textos de la UI.
+    hotkey_label: String,
     entry_from: String,
     entry_to: String,
     settings_open: bool,
@@ -154,18 +157,19 @@ pub struct WhisprApp {
 impl WhisprApp {
     pub fn new() -> (Self, Task<Message>) {
         let config = Config::load();
-        let (_hotkey, hotkey_rx) = match HotkeyManager::register() {
+        let (hotkey, hotkey_rx) = match HotkeyManager::register(&config.shortcut()) {
             Ok(m) => {
                 let rx = m.listen();
                 (m, rx)
             }
             Err(e) => {
                 crate::log!("hotkey", "{e}");
-                let stub = HotkeyManager::stub();
+                let stub = HotkeyManager::stub(&config.shortcut());
                 let rx = stub.listen();
                 (stub, rx)
             }
         };
+        let hotkey_label = hotkey.label();
 
         // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando la
         // ventana exista llegará `Message::BubbleOpened` y se le aplicará
@@ -208,7 +212,8 @@ impl WhisprApp {
             input_devices: crate::audio::input_devices(),
             transcribe_rx: None,
             hotkey_rx,
-            _hotkey,
+            hotkey,
+            hotkey_label,
             entry_from: String::new(),
             entry_to: String::new(),
             settings_open: false,
@@ -354,7 +359,7 @@ impl WhisprApp {
                 color: t.dim,
                 hint_color: t.dim,
                 label: "Listo".to_string(),
-                hint: "Pulsa el círculo o Ctrl+Shift+D y empieza a hablar".to_string(),
+                hint: format!("Pulsa el círculo o {} y empieza a hablar", self.hotkey_label),
             },
             Status::Recording => MicUi {
                 color: t.accent,
@@ -680,12 +685,17 @@ impl WhisprApp {
                 Task::none()
             }
             Message::Poll => {
-                // Atajo global: toggle al detectar press.
+                // Atajo global: toggle al detectar press de NUESTRO atajo (se filtra
+                // por id: el canal es global y podría traer eventos ajenos).
                 let mut toggled = false;
+                let hotkey_id = self.hotkey.id();
                 for _ in 0..4 {
                     match self.hotkey_rx.try_recv() {
                         Ok(ev) => {
-                            if ev.state() == global_hotkey::HotKeyState::Pressed && !toggled {
+                            if ev.id() == hotkey_id
+                                && ev.state() == global_hotkey::HotKeyState::Pressed
+                                && !toggled
+                            {
                                 toggled = true;
                             }
                         }
@@ -1059,10 +1069,13 @@ impl WhisprApp {
             scrollable(
                 container(
                     text(if transcript_empty {
-                        "Pulsa Ctrl+Shift+D o el botón del micrófono y empieza a hablar."
-                    } else {
-                        self.transcript.as_str()
-                    })
+                                        format!(
+                                            "Pulsa {} o el botón del micrófono y empieza a hablar.",
+                                            self.hotkey_label
+                                        )
+                                    } else {
+                                        self.transcript.as_str().to_string()
+                                    })
                     .size(theme::FONT_MD)
                     .color(if transcript_empty { t.dim } else { t.text }),
                 )
@@ -1215,7 +1228,7 @@ impl WhisprApp {
             )
             .on_toggle(Message::ToggleAiCorrection)
             .style(theme::checkbox),
-            text(format!("Atajo global: {}", crate::hotkey::DICTATION_SHORTCUT_LABEL))
+            text(format!("Atajo global: {}", self.hotkey_label))
                 .size(theme::FONT_XS)
                 .color(t.dim),
             horizontal_rule(1).style(theme::rule),
