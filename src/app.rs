@@ -5,9 +5,10 @@
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
+use iced::widget::text::Shaping;
 use iced::widget::{
     button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row,
-    scrollable, text, text_input, Column, Space,
+    scrollable, text, text_input, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
 use global_hotkey::GlobalHotKeyEvent;
@@ -996,8 +997,8 @@ impl WhisprApp {
         let header = row![
             text("Whispr Open").size(theme::FONT_XL).font(Font::MONOSPACE).color(t.text),
             Space::with_width(Length::Fill),
-            button(theme_toggle).on_press(Message::ToggleTheme).style(theme::secondary),
-            button(settings_label).on_press(Message::ToggleSettings).style(theme::secondary),
+            button(ui_text(theme_toggle)).on_press(Message::ToggleTheme).style(theme::secondary),
+            button(ui_text(settings_label)).on_press(Message::ToggleSettings).style(theme::secondary),
         ]
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
@@ -1107,12 +1108,19 @@ impl WhisprApp {
             } else {
                 t.ok
             };
-            let mut row_el = row![text(corr.as_str()).size(theme::FONT_SM).color(color)]
+            let mut row_el = row![
+                text(corr.as_str())
+                    .size(theme::FONT_SM)
+                    .color(color)
+                    // El texto puede traer glifos de UI (↩ de «deshecha ↩»):
+                    // Advanced activa el fallback de fuente.
+                    .shaping(Shaping::Advanced)
+            ]
                 .spacing(theme::SPACE_2)
                 .align_y(iced::Alignment::Center);
             if self.undo_state.is_some() {
                 row_el = row_el.push(
-                    button("↩ Deshacer")
+                    button(ui_text("↩ Deshacer"))
                         .on_press(Message::UndoLastCorrection)
                         .style(theme::secondary),
                 );
@@ -1238,6 +1246,16 @@ impl WhisprApp {
     }
 }
 
+/// Texto de UI con [`Shaping::Advanced`]: los glifos de la interfaz
+/// (☀ ☾ ▸ ▾ ✕ ↩) NO existen en Segoe UI (la SansSerif default de Windows)
+/// y `Shaping::Basic` (el default de iced) no hace fallback de fuente →
+/// cosmic-text devuelve glyph_id=0 (caja vacía `.notdef`). `Advanced`
+/// activa el fallback por codepoint contra Segoe UI Emoji, cargada al
+/// arranque en `fonts.rs`.
+fn ui_text<'a>(content: impl Into<String>) -> Text<'a> {
+    text(content.into()).shaping(Shaping::Advanced)
+}
+
 fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static, Message> {
     if devices.is_empty() {
         return text("(sin micrófonos detectados)").size(theme::FONT_SM).into();
@@ -1262,7 +1280,7 @@ fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
         col = col.push(
             row![
                 text(format!("{} → {}", entry.from, entry.to)).size(theme::FONT_MD),
-                button("✕").on_press(Message::RemoveEntry(idx)).style(theme::secondary),
+                button(ui_text("✕")).on_press(Message::RemoveEntry(idx)).style(theme::secondary),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
