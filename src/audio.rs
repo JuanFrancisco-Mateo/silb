@@ -23,12 +23,23 @@ pub struct AudioCapture {
     level: Arc<AtomicU32>, // pico reciente en 0..=1000, para el medidor de la UI
     rate: u32,             // sample rate nativo del dispositivo (p. ej. 48 kHz)
     handle: Option<std::thread::JoinHandle<()>>,
+    /// Preferencia del usuario: ¿remuestrear a 16 kHz al cerrar el turno?
+    auto_resample_16k: bool,
 }
 
 impl AudioCapture {
     /// Abre el dispositivo por nombre (si `device_name` es Some y existe);
     /// si no, usa el dispositivo de entrada por defecto.
-    pub fn start(device_name: Option<&str>) -> Result<Self, String> {
+    ///
+    /// `auto_resample_16k` (default true): si true, `stop()` remuestrea a
+    /// 16 kHz cuando el dispositivo no está a esa frecuencia. Si false,
+    /// `stop()` devuelve las muestras al rate nativo y registra un aviso;
+    /// el caller (la app) detecta el problema y vuelve a forzar el
+    /// remuestreo si lo necesita (whisper.cpp exige 16 kHz, no es bypass).
+    pub fn start(
+        device_name: Option<&str>,
+        auto_resample_16k: bool,
+    ) -> Result<Self, String> {
         let host = cpal::default_host();
 
         let device: cpal::Device = match device_name {
@@ -84,11 +95,17 @@ impl AudioCapture {
             drop(stream);
         });
 
-        Ok(Self { samples, stop, level, rate, handle: Some(handle) })
+        Ok(Self { samples, stop, level, rate, handle: Some(handle), auto_resample_16k })
     }
 
     /// Detiene la captura y devuelve las muestras f32 mono, con ganancia
     /// normalizada si el audio fue demasiado bajo (micrófono silencioso).
+    ///
+    /// Si `auto_resample_16k` está activo y el dispositivo NO está a 16 kHz,
+    /// remuestrea a 16 kHz (lo que whisper.cpp exige). Si está apagado, se
+    /// registra un aviso y se devuelven las muestras al rate nativo — el
+    /// caller debe detectar el problema y forzar el remuestreo si va a
+    /// pasarle las muestras a whisper.
     pub fn stop(&mut self) -> Vec<f32> {
         self.stop.store(true, Ordering::Relaxed);
         if let Some(h) = self.handle.take() {
@@ -97,7 +114,17 @@ impl AudioCapture {
         let mut samples = std::mem::take(&mut *self.samples.lock().unwrap_or_else(|e| e.into_inner()));
         normalize_gain(&mut samples);
         if self.rate != 16_000 {
-            samples = resample_to_16k(&samples, self.rate);
+            if self.auto_resample_16k {
+                samples = resample_to_16k(&samples, self.rate);
+            } else {
+                crate::log!(
+                    "audio",
+                    "auto_resample_16k=false pero el dispositivo está a {} Hz; \
+                     se devuelve al rate nativo y el caller debería forzar el remuestreo \
+                     (whisper.cpp exige 16 kHz)",
+                    self.rate
+                );
+            }
         }
         samples
     }
@@ -124,7 +151,12 @@ fn normalize_gain(samples: &mut [f32]) {
 /// Remuestrea a 16 kHz por interpolación lineal (whisper.cpp espera 16 kHz;
 /// el micrófono suele dar 44.1/48 kHz). Suficiente para dictado; si la
 /// calidad auditiva lo exige, cambiar a un sinc (rubato).
-fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
+///
+/// `pub(crate)` porque la app también puede forzar el remuestreo cuando el
+/// usuario desactivó `auto_resample_16k` en Ajustes y el dispositivo NO
+/// está a 16 kHz (la app registra el aviso y remuestrea igual, porque
+/// whisper.cpp no acepta otra frecuencia).
+pub(crate) fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
     if samples.is_empty() || from_rate == 16_000 {
         return samples.to_vec();
     }

@@ -8,7 +8,7 @@ use std::time::Duration;
 use iced::widget::text::Shaping;
 use iced::widget::{
     button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row,
-    scrollable, text, text_input, Column, Space, Text,
+    scrollable, slider, text, text_input, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
 use global_hotkey::GlobalHotKeyEvent;
@@ -79,6 +79,19 @@ pub enum Message {
     EntryToChanged(String),
     RemoveEntry(usize),
     InputDeviceSelected(String),
+    /// Idioma de transcripción seleccionado en Ajustes. Valor crudo:
+    /// `"auto"` → autodetección; cualquier otro → BCP-47 (`"es"`, `"en"`,
+    /// …). Se persiste tal cual en `config.language`; el getter decide
+    /// cómo traducirlo a `whisper_full_params`.
+    LanguageSelected(String),
+    /// Beam size elegido por el usuario (1..=8). Se persiste en
+    /// `config.beam_size`; el getter clampea al rango válido.
+    BeamSizeChanged(u32),
+    /// Hilos del decoder elegidos por el usuario (1..=32). Persistido
+    /// en `config.n_threads`; el getter clampea.
+    ThreadsChanged(u32),
+    /// Toggle «Remuestrear automáticamente a 16 kHz» desde Ajustes.
+    ToggleAutoResample(bool),
     ToggleTheme,
     ToggleSettings,
     Poll,
@@ -470,7 +483,8 @@ impl WhisprApp {
                 // Una grabación nueva descarta cualquier inyección pendiente.
                 self.pending_inject = false;
                 let device = self.config.input_device.clone();
-                match AudioCapture::start(device.as_deref()) {
+                let auto_resample = self.config.auto_resample_16k();
+                match AudioCapture::start(device.as_deref(), auto_resample) {
                     Ok(capture) => {
                         self.audio = Some(capture);
                         self.status = Status::Recording;
@@ -498,12 +512,20 @@ impl WhisprApp {
                 // El diccionario viaja como initial_prompt: sesga el
                 // reconocedor hacia jerga/nombres/siglas ANTES de transcribir.
                 let dictionary = self.config.dictionary.clone();
+                // Parámetros de inferencia ajustados en Ajustes. Se clonan
+                // aquí para mover al hilo de transcripción sin necesidad de
+                // un Arc.
+                let inference = crate::transcribe::InferenceParams {
+                    language: self.config.language().map(str::to_string),
+                    beam_size: self.config.beam_size() as i32,
+                    n_threads: self.config.n_threads() as i32,
+                };
                 let (tx, rx) = mpsc::channel();
                 self.transcribe_rx = Some(rx);
                 self.status = Status::Transcribing;
 
                 std::thread::spawn(move || {
-                    let result = transcribe_samples(samples, model, dictionary);
+                    let result = transcribe_samples(samples, model, dictionary, inference);
                     let _ = tx.send(result);
                 });
 
@@ -684,6 +706,41 @@ impl WhisprApp {
                 if self.audio.is_none() {
                     self.status = Status::Idle;
                 }
+                self.save_config();
+                Task::none()
+            }
+            // ── Ajustes avanzados de transcripción ─────────────────────────
+            // Idioma crudo: "auto" → autodetección; "es"/"en"/… → BCP-47.
+            // Se guarda tal cual en config (el getter decide cómo pasarlo
+            // a whisper); no se valida aquí: whisper acepta códigos
+            // desconocidos y caerá a "en" silenciosamente si hace falta.
+            Message::LanguageSelected(value) => {
+                let trimmed = value.trim().to_string();
+                self.config.language = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed)
+                };
+                self.save_config();
+                Task::none()
+            }
+            // Beam size: clamp 1..=8 (lo hace el getter; aquí solo
+            // persistimos lo que el usuario tecleó y el getter decide).
+            Message::BeamSizeChanged(n) => {
+                self.config.beam_size = Some(n);
+                self.save_config();
+                Task::none()
+            }
+            // Hilos: clamp 1..=32 (idem).
+            Message::ThreadsChanged(n) => {
+                self.config.n_threads = Some(n);
+                self.save_config();
+                Task::none()
+            }
+            // Remuestreo automático a 16 kHz. La app lo consulta al abrir
+            // el siguiente turno; el `audio.rs` ya respeta el flag.
+            Message::ToggleAutoResample(on) => {
+                self.config.auto_resample_to_16k = Some(on);
                 self.save_config();
                 Task::none()
             }
@@ -1206,6 +1263,51 @@ impl WhisprApp {
         .style(theme::pick_list);
         let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref());
 
+        // ── Ajustes avanzados de transcripción ────────────────────────────
+        // Selector de idioma: el item "Auto" representa autodetección
+        // (whisper decide); el resto son códigos BCP-47 ("es", "en", "fr").
+        // El getter `Config::language()` traduce "auto" a None y cualquier
+        // otro valor a Some(código) que se pasa a whisper.
+        const LANGUAGE_OPTIONS: &[&str] = &["auto", "es", "en", "fr", "de", "it", "pt"];
+        let lang_pick = pick_list(
+            LANGUAGE_OPTIONS.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            Some(language_label(&self.config.language)),
+            Message::LanguageSelected,
+        )
+        .placeholder("Idioma")
+        .width(Length::Fill)
+        .style(theme::pick_list);
+
+        // Beam size y threads: sliders numéricos 1..=8 / 1..=16.
+        // El getter clampea el rango efectivo; aquí mostramos el valor
+        // efectivo para que el slider esté alineado con el estado real
+        // (si el config traía un valor fuera de rango, mostramos el
+        // clamp, no el valor original, para no descolgar la UI).
+        let beam = self.config.beam_size();
+        let threads = self.config.n_threads();
+        let beam_row = row![
+            text(format!("Beam size: {beam}"))
+                .size(theme::FONT_SM)
+                .color(t.text)
+                .width(Length::Fixed(120.0)),
+            slider(1..=8, beam, Message::BeamSizeChanged)
+                .step(1u32)
+                .width(Length::Fill),
+        ]
+        .spacing(theme::SPACE_2)
+        .align_y(iced::Alignment::Center);
+        let threads_row = row![
+            text(format!("Hilos: {threads}"))
+                .size(theme::FONT_SM)
+                .color(t.text)
+                .width(Length::Fixed(120.0)),
+            slider(1..=16, threads, Message::ThreadsChanged)
+                .step(1u32)
+                .width(Length::Fill),
+        ]
+        .spacing(theme::SPACE_2)
+        .align_y(iced::Alignment::Center);
+
         let panel = column![
             row![
                 text("Modelo").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
@@ -1222,6 +1324,28 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
+            // Subtítulo de la sección «Transcripción».
+            text("Transcripción")
+                .size(theme::FONT_LG)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+            row![
+                text("Idioma").size(theme::FONT_SM).color(t.dim).width(Length::Fixed(96.0)),
+                lang_pick,
+                text(language_hint(&self.config.language))
+                    .size(theme::FONT_XS)
+                    .color(t.dim),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            beam_row,
+            threads_row,
+            checkbox(
+                "Remuestrear audio a 16 kHz (lo que exige whisper)",
+                self.config.auto_resample_16k(),
+            )
+            .on_toggle(Message::ToggleAutoResample)
+            .style(theme::checkbox),
             checkbox(
                 "Limpiar muletillas",
                 self.config.cleanup_enabled.unwrap_or(true),
@@ -1296,6 +1420,31 @@ fn ui_text<'a>(content: impl Into<String>) -> Text<'a> {
     text(content.into()).shaping(Shaping::Advanced)
 }
 
+/// Etiqueta legible del idioma para el `pick_list`. La opción "auto"
+/// representa autodetección; cualquier valor en `Option<String>` (incluido
+/// None → default "es") se mapea a la cadena que el `pick_list` espera.
+/// Si el usuario metió un idioma raro (p. ej. "klingon") no presente en
+/// `LANGUAGE_OPTIONS`, lo mostramos igualmente para que no se "pierda".
+fn language_label(value: &Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        None => "es".to_string(),
+        Some(s) if s.is_empty() => "es".to_string(),
+        Some(s) if s.eq_ignore_ascii_case("auto") => "auto".to_string(),
+        Some(s) => s.to_string(),
+    }
+}
+
+/// Hint contextual bajo el selector de idioma: aclara lo que hace cada
+/// opción. Solo aparece cuando el idioma está en "auto" o no se reconoce.
+fn language_hint(value: &Option<String>) -> String {
+    match value.as_deref().map(str::trim) {
+        Some(s) if s.eq_ignore_ascii_case("auto") => "whisper decide".to_string(),
+        Some(s) if s.is_empty() => "default: es".to_string(),
+        None => "default: es".to_string(),
+        Some(_) => "".to_string(),
+    }
+}
+
 fn mic_pick_list(devices: &[String], selected: Option<&str>) -> Element<'static, Message> {
     if devices.is_empty() {
         return text("(sin micrófonos detectados)").size(theme::FONT_SM).into();
@@ -1332,10 +1481,15 @@ fn dictionary_list(entries: &[DictionaryEntry]) -> Element<'static, Message> {
 /// Transcribe en un hilo de trabajo: a) descarga el modelo si falta (la
 /// primera vez, silencioso), b) carga el contexto whisper.cpp, c) transcribe
 /// con el diccionario del usuario como initial_prompt (sesgo léxico).
+///
+/// `inference` agrupa los parámetros ajustados en Ajustes (idioma, beam
+/// size, threads). El idioma `None` significa autodetección: no se llama
+/// a `set_language` y whisper decide.
 fn transcribe_samples(
     samples: Vec<f32>,
     model: Model,
     dictionary: Vec<DictionaryEntry>,
+    inference: crate::transcribe::InferenceParams,
 ) -> Result<String, String> {
     if !crate::transcribe::model_exists(model) {
         crate::log!(
@@ -1347,7 +1501,7 @@ fn transcribe_samples(
     }
     let engine = WhisperEngine::load(model)?;
     let prompt = crate::transcribe::build_initial_prompt(&dictionary);
-    engine.transcribe(&samples, "es", prompt.as_deref())
+    engine.transcribe(&samples, &inference, prompt.as_deref())
 }
 
 // ponytail: el contexto whisper se carga en cada turno; si el modelo small
