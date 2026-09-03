@@ -21,7 +21,7 @@ use crate::domain::dictionary::{apply_dictionary, DictionaryEntry};
 use crate::hotkey::HotkeyManager;
 use crate::theme::{self, UiPalette};
 use crate::transcribe::{Model, WhisperEngine};
-use crate::inject::inject_text_into_active_app;
+use crate::inject::{inject_text_into_active_app, InjectOutcome};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Status {
@@ -240,6 +240,25 @@ impl WhisprApp {
         cfg.save();
     }
 
+    /// Inyección con la configuración actual (formato, retardo y filtro por
+    /// ventana de `config.json`). Feedback honesto en los tres casos: éxito →
+    /// mensaje verde; filtro que no coincide → aviso (no es error); fallo
+    /// técnico → `Status::Error`.
+    fn inject_into_active(&mut self, text: &str) {
+        match inject_text_into_active_app(text, &self.config.inject_settings()) {
+            Ok(InjectOutcome::Injected) => {
+                self.last_correction = Some("Texto escrito en la app activa ✓".to_string());
+            }
+            Ok(InjectOutcome::Skipped(_title)) => {
+                self.last_correction = Some(
+                    "Inyección omitida: la app activa no coincide con el filtro de ventana"
+                        .to_string(),
+                );
+            }
+            Err(e) => self.status = Status::Error(format!("Inyección: {e}")),
+        }
+    }
+
     /// Aplica el diff del LLM al último turno (o recupera la instrucción si
     /// la llamada falló: dictado normal, nunca perder texto del usuario).
     fn handle_llm_correction(
@@ -284,9 +303,7 @@ impl WhisprApp {
                         if (self.config.auto_inject.unwrap_or(true) || force_inject)
                             && !after.is_empty()
                         {
-                            if let Err(e) = inject_text_into_active_app(&after) {
-                                self.status = Status::Error(format!("Inyección: {e}"));
-                            }
+                            self.inject_into_active(&after);
                         }
                     }
                     None => {
@@ -325,7 +342,8 @@ impl WhisprApp {
         }
         if (self.config.auto_inject.unwrap_or(true) || p.force_inject) && !self.last_turn.is_empty()
         {
-            let _ = inject_text_into_active_app(&self.last_turn);
+            let turn = self.last_turn.clone();
+            self.inject_into_active(&turn);
         }
     }
 
@@ -549,11 +567,8 @@ impl WhisprApp {
                         if (force_inject || self.config.auto_inject.unwrap_or(true))
                             && !self.last_turn.is_empty()
                         {
-                            match inject_text_into_active_app(&self.last_turn) {
-                                Ok(()) => self.last_correction =
-                                    Some("Texto escrito en la app activa ✓".to_string()),
-                                Err(e) => self.status = Status::Error(format!("Inyección: {e}")),
-                            }
+                            let turn = self.last_turn.clone();
+                            self.inject_into_active(&turn);
                         }
                     }
                     Err(e) => self.status = Status::Error(e),
@@ -632,11 +647,8 @@ impl WhisprApp {
             }
             Message::InjectLast => {
                 if !self.last_turn.is_empty() {
-                    match inject_text_into_active_app(&self.last_turn) {
-                        Ok(()) => self.last_correction =
-                            Some("Texto escrito en la app activa ✓".to_string()),
-                        Err(e) => self.status = Status::Error(format!("Inyección: {e}")),
-                    }
+                    let turn = self.last_turn.clone();
+                    self.inject_into_active(&turn);
                 }
                 Task::none()
             }
@@ -1231,6 +1243,21 @@ impl WhisprApp {
             text(format!("Atajo global: {}", self.hotkey_label))
                 .size(theme::FONT_XS)
                 .color(t.dim),
+            text({
+                let inj = self.config.inject_settings();
+                let destino = match inj.window_filter.as_deref() {
+                    Some(f) => format!("solo «{f}»"),
+                    None => "cualquier app".to_string(),
+                };
+                format!(
+                    "Inyección: {} · retardo {} ms · {}",
+                    inj.format.label(),
+                    inj.delay.as_millis(),
+                    destino,
+                )
+            })
+            .size(theme::FONT_XS)
+            .color(t.dim),
             horizontal_rule(1).style(theme::rule),
             text("Diccionario personal")
                 .size(theme::FONT_LG)

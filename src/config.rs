@@ -3,6 +3,7 @@
 //! seleccionado y preferencias. Correcciones best-effort: nunca rompe el arranque.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +34,17 @@ pub struct Config {
     /// si el valor es inválido o el atajo ya lo usa otra app, se vuelve al
     /// default y la UI sigue funcionando (botones). Default: Ctrl+Shift+D.
     pub shortcut: Option<String>,
+    /// Formato de inyección del turno en la app activa: "paste" (default)
+    /// copia al portapapeles y pega con Ctrl+V; "type" teclea el texto
+    /// directamente (enigo, sin tocar el portapapeles del usuario).
+    pub inject_format: Option<String>,
+    /// Retardo en ms antes de pegar/teclear (la app destino asienta el foco).
+    /// Default 40; `0` = sin retardo.
+    pub inject_delay_ms: Option<u64>,
+    /// Filtro por título de la ventana activa (substring, sin distinguir
+    /// mayúsculas): si el título no lo contiene, el turno NO se inyecta.
+    /// Vacío/ausente = inyectar en cualquier app.
+    pub inject_window_filter: Option<String>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -90,6 +102,25 @@ impl Config {
         }
     }
 
+    /// Comportamiento de inyección desde config.json: formato (paste/type),
+    /// retardo en ms (default 40, 0 = sin retardo) y filtro por título de la
+    /// ventana activa. Valores inválidos/ausentes → defaults seguros.
+    pub fn inject_settings(&self) -> crate::inject::InjectSettings {
+        crate::inject::InjectSettings {
+            format: match self.inject_format.as_deref() {
+                Some("type") => crate::inject::InjectFormat::Type,
+                _ => crate::inject::InjectFormat::Paste,
+            },
+            delay: Duration::from_millis(self.inject_delay_ms.unwrap_or(40)),
+            window_filter: self
+                .inject_window_filter
+                .as_deref()
+                .map(str::trim)
+                .filter(|f| !f.is_empty())
+                .map(str::to_string),
+        }
+    }
+
     /// Configuración del LLM corrector. Defaults: llama.cpp local en WSL
     /// (Ornith 9B, puerto 8081); overridables en config.json.
     pub fn llm_settings(&self) -> crate::llm::LlmConfig {
@@ -136,6 +167,32 @@ mod tests {
         assert!(cfg.is_dark(), "2026: dark mode default");
         let claro = Config { dark_mode: Some(false), ..Default::default() };
         assert!(!claro.is_dark());
+    }
+
+    #[test]
+    fn inyeccion_defaults_y_overrides() {
+        let cfg = Config::default();
+        let s = cfg.inject_settings();
+        assert_eq!(s.format, crate::inject::InjectFormat::Paste);
+        assert_eq!(s.delay.as_millis(), 40);
+        assert_eq!(s.window_filter, None);
+
+        let c = Config {
+            inject_format: Some("type".into()),
+            inject_delay_ms: Some(0),
+            inject_window_filter: Some(" Visual Studio Code ".into()),
+            ..Default::default()
+        };
+        let s = c.inject_settings();
+        assert_eq!(s.format, crate::inject::InjectFormat::Type);
+        assert_eq!(s.delay.as_millis(), 0);
+        assert_eq!(s.window_filter.as_deref(), Some("Visual Studio Code"));
+
+        // Formato desconocido → paste (default seguro); filtro en blanco → sin filtro.
+        let c = Config { inject_format: Some("escaneo".into()), ..Default::default() };
+        assert_eq!(c.inject_settings().format, crate::inject::InjectFormat::Paste);
+        let c = Config { inject_window_filter: Some("  ".into()), ..Default::default() };
+        assert_eq!(c.inject_settings().window_filter, None);
     }
 
     #[test]

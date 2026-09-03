@@ -7,9 +7,12 @@ el texto se escribe donde esté tu cursor.
 - **UI nativa**: Iced (renderizado directo, sin webview, sin HTML/CSS/JS).
 - **Transcripción local**: whisper.cpp vía `whisper-rs` (modelos GGML,
   tiny/base/small). Nada sale de tu máquina.
-- **Atajo global** Ctrl+Shift+D: pulsa para grabar, suelta para transcribir.
+- **Atajo global** Ctrl+Shift+D (configurable en `config.json` → `shortcut`):
+  pulsa para grabar, suelta para transcribir.
 - **Inyección en la app activa**: al terminar, el texto se escribe en la
   ventana con foco (Slack, Notion, editor…) vía portapapeles + Ctrl+V.
+  Formato (pegar/teclear), retardo y filtro por título de ventana
+  configurables en `config.json`.
 - **Limpieza de muletillas** (eh, um, o sea, tipo… es/en) y colapso de
   repeticiones, con panel de "eliminadas".
 - **Diccionario personal** (jerga, siglas, nombres propios) persistente.
@@ -52,11 +55,26 @@ La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda 
 Modelo de transcripción: `es` por defecto (los modelos base de whisper.cpp son
 multilingües; el idioma se fuerza a español en `transcribe.rs`).
 
+## Configuración avanzada (`%APPDATA%\whispr-open\config.json`)
+
+Además de lo que se ajusta desde la UI (Ajustes), el archivo de configuración
+permite:
+
+| Clave | Valores | Default |
+|---|---|---|
+| `shortcut` | atajo global de dictado: `"Ctrl+Shift+D"`, `"Alt+Space"`, `"Ctrl+Alt+F12"`, `"Ctrl+Shift+K"`… | `"Ctrl+Shift+D"` |
+| `inject_format` | `"paste"` (portapapeles + Ctrl+V) o `"type"` (tecleo directo, sin tocar el portapapeles) | `"paste"` |
+| `inject_delay_ms` | retardo en ms antes de pegar/teclear (`0` = sin retardo) | `40` |
+| `inject_window_filter` | solo inyecta si el título de la ventana activa lo contiene (substring, sin distinguir mayúsculas) | (sin filtro: cualquier app) |
+
+Los valores inválidos o ausentes se ignoran con el default: la config nunca
+rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
+
 ## Tests
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 39 tests (dominio: corrección, muletillas, diccionario)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 125 tests (dominio, config, hotkey, inyección, UI)
 ```
 
 ## Estructura
