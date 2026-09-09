@@ -377,6 +377,12 @@ pub struct Config {
     /// usuario toca las listas; el botón «Por defecto» lo vuelve a None.
     /// Los configs legacy que ya traían `fillers` vuelven a usarlos.
     pub fillers: Option<FillerWords>,
+    /// Estado del panel «Ajustes avanzados» de la ventana de Ajustes
+    /// (colapsado/expandido). Decisión de diseño 09/09/2026: las opciones
+    /// técnicas (beam, hilos, LLM, inyección, fuente…) quedan ocultas tras
+    /// un panel que por defecto está colapsado. `None` = colapsado. Solo
+    /// afecta a la UI: no cambia ninguna opción de comportamiento.
+    pub advanced_settings_open: Option<bool>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -687,6 +693,12 @@ impl Config {
     /// Tamaño de fuente global. Default: Normal (factor 1.0 = baseline).
     pub fn font_size(&self) -> FontSize {
         self.font_size.unwrap_or(FontSize::Normal)
+    }
+
+    /// Panel «Ajustes avanzados» de Ajustes expandido. Default: colapsado
+    /// (las opciones técnicas quedan ocultas hasta que el usuario lo abre).
+    pub fn advanced_open(&self) -> bool {
+        self.advanced_settings_open.unwrap_or(false)
     }
 
     /// Tamaño del círculo de la burbuja. Default: 56 px (Mid).
@@ -1159,6 +1171,25 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(c.font_size(), FontSize::XLarge);
+    }
+
+    #[test]
+    fn ajustes_avanzados_colapsados_por_defecto_y_persistidos() {
+        // Default: colapsado (el usuario normal no ve opciones técnicas).
+        assert!(!Config::default().advanced_open());
+        // Config legacy (sin el campo): también colapsado al deserializar.
+        // (Los campos viejos como `dictionary` son requeridos; lo que se
+        // prueba es que el campo NUEVO es opcional.)
+        let legacy: Config = serde_json::from_str(r#"{"dictionary":[]}"#).unwrap();
+        assert!(!legacy.advanced_open());
+        // Expandido → serializado → vuelve a leerse expandido.
+        let cfg = Config {
+            advanced_settings_open: Some(true),
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&cfg).unwrap();
+        let vuelta: Config = serde_json::from_str(&raw).unwrap();
+        assert!(vuelta.advanced_open());
     }
 
     #[test]
