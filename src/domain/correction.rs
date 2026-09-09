@@ -40,24 +40,75 @@ fn rx(pattern: &str) -> Regex {
 }
 
 const CORRECTION_PATTERNS: &[(&str, &str)] = &[
-    (r"^(?:uy[,;:.!? ]*)?(?:así|asi) no (?:era|es)[,;:.!? ]*(?:era|quise decir)[,;:.!? ]+(.+)$", "Rectificación detectada en tu frase"),
-    (r"^(?:no[,;:.!? ]*)?(?:así|asi) no[,;:.!? ]*(?:dije|era)[,;:.!? ]*(?:lo que quería decir era|quise decir)[,;:.!? ]+(.+)$", "Rectificación detectada en tu frase"),
-    (r"^no era .+[,;:.!?]+[ ]*(?:era|es)[,;:.!? ]+(.+)$", "Rectificación detectada"),
-    (r"^no[,;:.!? ]+(?:era|es)[,;:.!? ]+(.+)$", "Rectificación detectada"),
-    (r"^donde dije .+[,;:.!? ]+(?:quer[ií]a|quise) decir[,;:.!? ]+(.+)$", "Reformulación detectada"),
-    (r"^(?:no[,;:.!? ]+)?(?:quer[ií]a|quise) decir[,;:.!? ]+(?:era|es)[,;:.!? ]+(.+)$", "Rectificación detectada"),
-    (r"^(?:no[,;:.!? ]+)?(?:quer[ií]a|quise) decir .+[,;:.!? ]+(?:quer[ií]a|quise) decir[,;:.!? ]+(.+)$", "Rectificación detectada"),
-    (r"^(?:no[,;:.!? ]+)?(?:quer[ií]a|quise) decir(?!\s+que\b)[,;:.!? ]+(.+)$", "Rectificación detectada"),
-    (r"^perd[oó]n(?:a|eme)?[,;:.!? ]+(?:(?:quer[ií]a|quise) decir|era|es)[,;:.!? ]+(.+)$", "Rectificación después de una disculpa"),
-    (r"^(?:bueno[,;:.!? ]+)?mejor dicho[,;:.!? ]+(.+)$", "Reformulación detectada"),
-    (r"^(?:bueno[,;:.!? ]+)?m[aá]s bien[,;:.!? ]+(.+)$", "Reformulación detectada"),
-    (r"^me refer[ií]a ((?:a la|al)\s+.+)$", "Aclaración detectada"),
+    (
+        r"^(?:uy[,;:.!? ]*)?(?:así|asi) no (?:era|es)[,;:.!? ]*(?:era|quise decir)[,;:.!? ]+(.+)$",
+        "Rectificación detectada en tu frase",
+    ),
+    (
+        r"^(?:no[,;:.!? ]*)?(?:así|asi) no[,;:.!? ]*(?:dije|era)[,;:.!? ]*(?:lo que quería decir era|quise decir)[,;:.!? ]+(.+)$",
+        "Rectificación detectada en tu frase",
+    ),
+    (
+        r"^no era .+[,;:.!?]+[ ]*(?:era|es)[,;:.!? ]+(.+)$",
+        "Rectificación detectada",
+    ),
+    (
+        r"^no[,;:.!? ]+(?:era|es)[,;:.!? ]+(.+)$",
+        "Rectificación detectada",
+    ),
+    (
+        r"^donde dije .+[,;:.!? ]+(?:quer[ií]a|quise) decir[,;:.!? ]+(.+)$",
+        "Reformulación detectada",
+    ),
+    (
+        r"^(?:no[,;:.!? ]+)?(?:quer[ií]a|quise) decir[,;:.!? ]+(?:era|es)[,;:.!? ]+(.+)$",
+        "Rectificación detectada",
+    ),
+    (
+        r"^(?:no[,;:.!? ]+)?(?:quer[ií]a|quise) decir .+[,;:.!? ]+(?:quer[ií]a|quise) decir[,;:.!? ]+(.+)$",
+        "Rectificación detectada",
+    ),
+    (
+        r"^(?:no[,;:.!? ]+)?(?:quer[ií]a|quise) decir(?!\s+que\b)[,;:.!? ]+(.+)$",
+        "Rectificación detectada",
+    ),
+    (
+        r"^perd[oó]n(?:a|eme)?[,;:.!? ]+(?:(?:quer[ií]a|quise) decir|era|es)[,;:.!? ]+(.+)$",
+        "Rectificación después de una disculpa",
+    ),
+    (
+        r"^(?:bueno[,;:.!? ]+)?mejor dicho[,;:.!? ]+(.+)$",
+        "Reformulación detectada",
+    ),
+    (
+        r"^(?:bueno[,;:.!? ]+)?m[aá]s bien[,;:.!? ]+(.+)$",
+        "Reformulación detectada",
+    ),
+    (
+        r"^me refer[ií]a ((?:a la|al)\s+.+)$",
+        "Aclaración detectada",
+    ),
     (r"^me refer[ií]a a[,;:.!? ]+(.+)$", "Aclaración detectada"),
-    (r"^(?:la palabra correcta|lo correcto)[,;:.!? ]+(?:es|ser[ií]a)[,;:.!? ]+(.+)$", "Corrección explícita detectada"),
-    (r"^lo que quería decir era[,;:.!? ]+(.+)$", "Rectificación detectada"),
-    (r"^me equivoqu[eé][,;:.!? ]+(?:(?:quer[ií]a|quise) decir|era|es)[,;:.!? ]+(.+)$", "Rectificación después de reconocer un error"),
-    (r"^(?:rectifico|corrijo)[,;:.!? ]+(.+)$", "Corrección explícita detectada"),
-    (r"^(?:digo|o mejor)[,;:.!?]+[ ]*(.+)$", "Reformulación detectada"),
+    (
+        r"^(?:la palabra correcta|lo correcto)[,;:.!? ]+(?:es|ser[ií]a)[,;:.!? ]+(.+)$",
+        "Corrección explícita detectada",
+    ),
+    (
+        r"^lo que quería decir era[,;:.!? ]+(.+)$",
+        "Rectificación detectada",
+    ),
+    (
+        r"^me equivoqu[eé][,;:.!? ]+(?:(?:quer[ií]a|quise) decir|era|es)[,;:.!? ]+(.+)$",
+        "Rectificación después de reconocer un error",
+    ),
+    (
+        r"^(?:rectifico|corrijo)[,;:.!? ]+(.+)$",
+        "Corrección explícita detectada",
+    ),
+    (
+        r"^(?:digo|o mejor)[,;:.!?]+[ ]*(.+)$",
+        "Reformulación detectada",
+    ),
     (r"^.+[,;] *no[,;:.!? ]+(.+)$", "Autocorrección detectada"),
 ];
 
@@ -110,7 +161,9 @@ fn capitalize_sentence(value: &str) -> String {
 }
 
 fn is_correction_start(value: &str) -> bool {
-    start_rules().iter().any(|r| r.is_match(value).unwrap_or(false))
+    start_rules()
+        .iter()
+        .any(|r| r.is_match(value).unwrap_or(false))
 }
 
 /// Aplica la primera regla de rectificación que casa; si ninguna casa,
@@ -123,7 +176,9 @@ pub fn apply_correction(input: &str) -> CorrectionResult {
             Ok(Some(c)) => c,
             _ => continue,
         };
-        let Some(matched) = captures.get(1) else { continue };
+        let Some(matched) = captures.get(1) else {
+            continue;
+        };
         let replacement = capitalize_sentence(matched.as_str());
         return CorrectionResult {
             correction: Some(Correction {
@@ -193,7 +248,8 @@ impl CorrectionSession {
             let combined = append_transcript(&self.pending_turn, &value);
             let candidate = format!(
                 "{}, {}",
-                self.pending_turn.trim_end_matches(|c| matches!(c, ',' | ';' | ':' | '.' | '!' | '?')),
+                self.pending_turn
+                    .trim_end_matches(|c| matches!(c, ',' | ';' | ':' | '.' | '!' | '?')),
                 value
             );
             let mut correction = apply_correction(&candidate);
@@ -294,31 +350,93 @@ mod tests {
 
     #[test]
     fn one_turn_complete_correction() {
-        let f = flat(apply_correction("Uy, así no era, era el informe del jueves"));
+        let f = flat(apply_correction(
+            "Uy, así no era, era el informe del jueves",
+        ));
         assert_eq!(f.text, "El informe del jueves");
         assert!(f.has_correction);
     }
 
     #[test]
     fn detects_all_common_markers() {
-        assert_correction("No, quería decir el jueves", "El jueves", "Rectificación detectada");
+        assert_correction(
+            "No, quería decir el jueves",
+            "El jueves",
+            "Rectificación detectada",
+        );
         assert_correction("No, era el jueves", "El jueves", "Rectificación detectada");
-        assert_correction("Perdón, era la reunión del viernes", "La reunión del viernes", "Rectificación después de una disculpa");
-        assert_correction("Perdona, quería decir la reunión del viernes", "La reunión del viernes", "Rectificación después de una disculpa");
-        assert_correction("Mejor dicho, el informe final", "El informe final", "Reformulación detectada");
-        assert_correction("Más bien, el informe final", "El informe final", "Reformulación detectada");
-        assert_correction("Me refería al informe final", "Al informe final", "Aclaración detectada");
-        assert_correction("La palabra correcta es presupuesto", "Presupuesto", "Corrección explícita detectada");
-        assert_correction("Lo correcto sería el jueves", "El jueves", "Corrección explícita detectada");
-        assert_correction("Lo que quería decir era el jueves", "El jueves", "Rectificación detectada");
-        assert_correction("Me equivoqué, quería decir el jueves", "El jueves", "Rectificación después de reconocer un error");
-        assert_correction("Rectifico: el jueves", "El jueves", "Corrección explícita detectada");
-        assert_correction("Corrijo, la reunión del viernes", "La reunión del viernes", "Corrección explícita detectada");
+        assert_correction(
+            "Perdón, era la reunión del viernes",
+            "La reunión del viernes",
+            "Rectificación después de una disculpa",
+        );
+        assert_correction(
+            "Perdona, quería decir la reunión del viernes",
+            "La reunión del viernes",
+            "Rectificación después de una disculpa",
+        );
+        assert_correction(
+            "Mejor dicho, el informe final",
+            "El informe final",
+            "Reformulación detectada",
+        );
+        assert_correction(
+            "Más bien, el informe final",
+            "El informe final",
+            "Reformulación detectada",
+        );
+        assert_correction(
+            "Me refería al informe final",
+            "Al informe final",
+            "Aclaración detectada",
+        );
+        assert_correction(
+            "La palabra correcta es presupuesto",
+            "Presupuesto",
+            "Corrección explícita detectada",
+        );
+        assert_correction(
+            "Lo correcto sería el jueves",
+            "El jueves",
+            "Corrección explícita detectada",
+        );
+        assert_correction(
+            "Lo que quería decir era el jueves",
+            "El jueves",
+            "Rectificación detectada",
+        );
+        assert_correction(
+            "Me equivoqué, quería decir el jueves",
+            "El jueves",
+            "Rectificación después de reconocer un error",
+        );
+        assert_correction(
+            "Rectifico: el jueves",
+            "El jueves",
+            "Corrección explícita detectada",
+        );
+        assert_correction(
+            "Corrijo, la reunión del viernes",
+            "La reunión del viernes",
+            "Corrección explícita detectada",
+        );
         assert_correction("Digo, el jueves", "El jueves", "Reformulación detectada");
         assert_correction("O mejor, el jueves", "El jueves", "Reformulación detectada");
-        assert_correction("El martes, no, el jueves", "El jueves", "Autocorrección detectada");
-        assert_correction("Donde dije martes, quería decir jueves", "Jueves", "Reformulación detectada");
-        assert_correction("No era martes, era jueves", "Jueves", "Rectificación detectada");
+        assert_correction(
+            "El martes, no, el jueves",
+            "El jueves",
+            "Autocorrección detectada",
+        );
+        assert_correction(
+            "Donde dije martes, quería decir jueves",
+            "Jueves",
+            "Reformulación detectada",
+        );
+        assert_correction(
+            "No era martes, era jueves",
+            "Jueves",
+            "Rectificación detectada",
+        );
     }
 
     #[test]
@@ -347,7 +465,11 @@ mod tests {
         let mut session = CorrectionSession::new();
         assert_eq!(
             session.accept("Uy, así no era"),
-            CorrectionTurn { text: String::new(), correction: None, pending: true }
+            CorrectionTurn {
+                text: String::new(),
+                correction: None,
+                pending: true
+            }
         );
         assert!(session.has_pending_correction());
 
@@ -358,7 +480,10 @@ mod tests {
             Some("Uy, así no era, era el informe del jueves")
         );
         assert_eq!(
-            completed.correction.as_ref().map(|c| c.replacement.as_str()),
+            completed
+                .correction
+                .as_ref()
+                .map(|c| c.replacement.as_str()),
             Some("El informe del jueves")
         );
         assert!(!completed.pending);
@@ -369,9 +494,17 @@ mod tests {
     fn session_completes_split_prefixes() {
         for (prefix, replacement, expected) in [
             ("No, quería decir", "el jueves", "El jueves"),
-            ("Perdón, quería decir", "la reunión del viernes", "La reunión del viernes"),
+            (
+                "Perdón, quería decir",
+                "la reunión del viernes",
+                "La reunión del viernes",
+            ),
             ("Mejor dicho", "el informe final", "El informe final"),
-            ("Me refería a", "la reunión del viernes", "La reunión del viernes"),
+            (
+                "Me refería a",
+                "la reunión del viernes",
+                "La reunión del viernes",
+            ),
             ("Digo", "el jueves", "El jueves"),
         ] {
             let mut session = CorrectionSession::new();
@@ -391,7 +524,10 @@ mod tests {
         let completed = session.accept("la reunión del viernes");
         assert_eq!(completed.text, "La reunión del viernes");
         assert_eq!(
-            completed.correction.as_ref().map(|c| c.replacement.as_str()),
+            completed
+                .correction
+                .as_ref()
+                .map(|c| c.replacement.as_str()),
             Some("La reunión del viernes")
         );
     }

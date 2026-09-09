@@ -13,8 +13,9 @@ el texto se escribe donde esté tu cursor.
   ventana con foco (Slack, Notion, editor…) vía portapapeles + Ctrl+V.
   Formato (pegar/teclear), retardo y filtro por título de ventana
   configurables en `config.json`.
-- **Limpieza de muletillas** (eh, um, o sea, tipo… es/en) y colapso de
-  repeticiones, con panel de "eliminadas".
+- **Post-procesado local**: normalización de repeticiones y expresiones de
+  relleno antes de la inyección; las reglas son fijas y ya no hay una sección
+  de configuración de muletillas en la interfaz.
 - **Diccionario personal** (jerga, siglas, nombres propios) persistente.
 - **Rectificaciones habladas**: "no, quería decir X" corrige el último turno.
 
@@ -50,10 +51,11 @@ La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda 
    transcribir.
 3. Si "Autoinyectar" está activo, el texto se escribe en la app que tenga el foco.
    Si no, lo verás en la ventana y puedes usar "Escribir en app" / "Copiar".
-4. En Configuración: modelo de Whisper, limpieza de muletillas, diccionario.
+4. En Configuración: modelo de Whisper, apariencia, corrección IA y diccionario.
 
 Modelo de transcripción: `es` por defecto (los modelos base de whisper.cpp son
-multilingües; el idioma se fuerza a español en `transcribe.rs`).
+multilingües; el idioma se puede cambiar a `auto`, `es`, `en`, `fr`, `de`, `it`
+o `pt` desde Ajustes). El audio se entrega siempre a Whisper en 16 kHz.
 
 ## Configuración avanzada (`%APPDATA%\whispr-open\config.json`)
 
@@ -66,6 +68,14 @@ permite:
 | `inject_format` | `"paste"` (portapapeles + Ctrl+V) o `"type"` (tecleo directo, sin tocar el portapapeles) | `"paste"` |
 | `inject_delay_ms` | retardo en ms antes de pegar/teclear (`0` = sin retardo) | `40` |
 | `inject_window_filter` | solo inyecta si el título de la ventana activa lo contiene (substring, sin distinguir mayúsculas) | (sin filtro: cualquier app) |
+| `correction_provider` | `default`, `cloud` o `custom` | `default` |
+| `llm_base_url` | endpoint OpenAI-compatible | local `http://127.0.0.1:8081/v1` |
+| `llm_model` | identificador del modelo corrector | `ornith-1.0-9b` |
+| `llm_timeout_secs` | timeout de la corrección HTTP | `25` |
+
+La API key no se guarda en texto plano en `config.json`: en Windows se almacena
+usando Credential Manager y se reutilizan las configuraciones antiguas durante
+la migración.
 
 Los valores inválidos o ausentes se ignoran con el default: la config nunca
 rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
@@ -74,7 +84,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 125 tests (dominio, config, hotkey, inyección, UI)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 160 tests (dominio, config, audio, burbuja, UI)
 ```
 
 ## Estructura
@@ -83,7 +93,7 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 125 tests (dominio, config, hotke
 |---|---|
 | `src/main.rs` | entrada Iced |
 | `src/app.rs` | UI + flujo de dictado |
-| `src/domain/*.rs` | lógica pura (corrección, muletillas, diccionario) |
+| `src/domain/*.rs` | lógica pura (limpieza fija, corrección, diccionario) |
 | `src/audio.rs` | captura de micrófono (cpal) |
 | `src/transcribe.rs` | modelos + whisper.cpp |
 | `src/inject.rs` | escritura en app activa |

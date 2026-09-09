@@ -66,7 +66,10 @@ impl SystemTray {
             .build()
             .map_err(|e| format!("no se pudo crear el icono de bandeja: {e}"))?;
 
-        crate::log!("tray", "icono de bandeja listo (menú: mostrar/ocultar, salir)");
+        crate::log!(
+            "tray",
+            "icono de bandeja listo (menú: mostrar/ocultar, salir)"
+        );
 
         Ok(Self {
             _tray: tray,

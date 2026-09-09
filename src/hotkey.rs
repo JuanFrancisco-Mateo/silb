@@ -33,13 +33,19 @@ impl HotkeyManager {
             .register(hotkey)
             .map_err(|e| format!("no se pudo registrar {}: {e}", hotkey_label(hotkey)))?;
 
-        Ok(Self { manager: Some(manager), hotkey })
+        Ok(Self {
+            manager: Some(manager),
+            hotkey,
+        })
     }
 
     /// Stub para cuando el registro falla: siguen funcionando los botones de
     /// la UI, simplemente no hay atajo global.
     pub fn stub(shortcut: &str) -> Self {
-        Self { manager: None, hotkey: parse_shortcut(shortcut) }
+        Self {
+            manager: None,
+            hotkey: parse_shortcut(shortcut),
+        }
     }
 
     /// Canal de eventos global. El primer `GlobalHotKeyEvent::received` de cada
@@ -135,9 +141,15 @@ mod tests {
         assert_eq!(hotkey_label(parse_shortcut("Ctrl+Alt+F12")), "Ctrl+Alt+F12");
         assert_eq!(hotkey_label(parse_shortcut("shift+KeyK")), "Shift+K");
         // Orden canónico fijo: Ctrl+Shift+Alt+Win, da igual el orden de entrada.
-        assert_eq!(hotkey_label(parse_shortcut("Ctrl+Alt+Shift+Space")), "Ctrl+Shift+Alt+Space");
+        assert_eq!(
+            hotkey_label(parse_shortcut("Ctrl+Alt+Shift+Space")),
+            "Ctrl+Shift+Alt+Space"
+        );
         // Espacios alrededor no rompen el parseo.
-        assert_eq!(hotkey_label(parse_shortcut("  Ctrl+Shift+D  ")), "Ctrl+Shift+D");
+        assert_eq!(
+            hotkey_label(parse_shortcut("  Ctrl+Shift+D  ")),
+            "Ctrl+Shift+D"
+        );
     }
 
     #[test]

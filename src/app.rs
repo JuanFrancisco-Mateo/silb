@@ -1,31 +1,32 @@
 //! UI de Whispr Open con Iced: dictado por turnos, transcript acumulado,
-//! limpieza de muletillas, diccionario personal, selector de modelo e
+//! diccionario personal, selector de modelo e
 //! inyección en la app activa.
 
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
+use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row,
-    scrollable, slider, text, text_input, Column, Space, Text,
+    button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row, scrollable,
+    slider, text, text_input, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
-use global_hotkey::GlobalHotKeyEvent;
 
 use crate::audio::AudioCapture;
 use crate::config::{
-    dictionary_path, BubbleCorner, BubbleHideTimeout, BubbleSize, Config, FontSize, ThemeMode,
+    dictionary_path, BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, Config,
+    CorrectionProvider, FontSize, ThemeMode,
 };
-use crate::domain::cleanup::{clean_transcript_with, FillerWords};
+use crate::domain::cleanup::clean_transcript;
 use crate::domain::correction::CorrectionSession;
 use crate::domain::dictionary::{
     apply_dictionary, export_dictionary_to, import_dictionary_from, DictionaryEntry,
 };
 use crate::hotkey::HotkeyManager;
-use crate::theme::{self, UiPalette};
-use crate::transcribe::{Model, WhisperEngine};
 use crate::inject::{inject_text_into_active_app, InjectOutcome};
+use crate::theme::{self, UiPalette};
+use crate::transcribe::Model;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Status {
@@ -35,7 +36,11 @@ pub enum Status {
     /// El LLM corrector está trabajando sobre el último turno dictado
     /// (docs/CORRECCION-VOZ.md §4.4: estado ámbar como Transcribing).
     Correcting,
-    Downloading { model: Model, downloaded: u64, total: u64 },
+    Downloading {
+        model: Model,
+        downloaded: u64,
+        total: u64,
+    },
     Error(String),
 }
 
@@ -60,6 +65,12 @@ struct LlmPending {
     force_inject: bool,
 }
 
+struct PendingDiff {
+    diff: crate::domain::corrective::Diff,
+    target: String,
+    force_inject: bool,
+}
+
 #[derive(Debug, Clone)]
 pub enum Message {
     Toggle,
@@ -67,16 +78,18 @@ pub enum Message {
     StopRecording,
     TranscriptionDone(Result<String, String>),
     ModelSelected(Model),
-    ToggleCleanup(bool),
     ToggleAutoInject(bool),
     /// Corrección IA (otro modelo) activada/desactivada — Ajustes.
     ToggleAiCorrection(bool),
+    /// Proveedor de corrección: local por defecto, cloud o endpoint propio.
+    CorrectionProviderChanged(CorrectionProvider),
     /// Endpoint del LLM corrector (base_url OpenAI-compatible). Vacío
     /// en la UI cae al default `http://127.0.0.1:8081/v1`.
     LlmEndpointChanged(String),
     /// Modelo del corrector. Vacío en la UI cae al default
     /// `ornith-1.0-9b`.
     LlmModelChanged(String),
+    LlmApiKeyChanged(String),
     /// Timeout HTTP en segundos (1..=120). Sale del slider; el getter
     /// lo pasa a `LlmConfig::timeout_secs` y `ureq::timeout`.
     LlmTimeoutChanged(u32),
@@ -105,18 +118,6 @@ pub enum Message {
     EntryFromChanged(String),
     EntryToChanged(String),
     RemoveEntry(usize),
-    // ── Muletillas (Ajustes) ──────────────────────────────────────────────
-    /// Añade la muletilla escrita en `filler_input` a la categoría
-    /// seleccionada (botón «Añadir» o Enter en el input).
-    AddFiller,
-    FillerInputChanged(String),
-    FillerCategorySelected(FillerCategory),
-    RemoveFiller {
-        category: FillerCategory,
-        index: usize,
-    },
-    /// Vuelve a las listas por defecto de `cleanup.rs` (config.fillers = None).
-    ResetFillers,
     // ── Diccionario: importar/exportar (backup/restore a JSON) ────────────
     /// Exporta el diccionario a `%APPDATA%/whispr-open/dictionary.json`.
     ExportDictionary,
@@ -134,8 +135,6 @@ pub enum Message {
     /// Hilos del decoder elegidos por el usuario (1..=32). Persistido
     /// en `config.n_threads`; el getter clampea.
     ThreadsChanged(u32),
-    /// Toggle «Remuestrear automáticamente a 16 kHz» desde Ajustes.
-    ToggleAutoResample(bool),
     /// Modo de tema elegido en Ajustes (el header cicla el mismo estado).
     ThemeModeChanged(ThemeMode),
     /// Tamaño de fuente global elegido en Ajustes (se aplica a toda la vista).
@@ -146,6 +145,7 @@ pub enum Message {
     BubbleCornerChanged(BubbleCorner),
     /// Opacidad de la burbuja en % (slider 20–100, alpha por-pixel).
     BubbleOpacityChanged(u32),
+    BubbleStyleChanged(BubbleStyle),
     /// Auto-ocultar la burbuja tras N segundos sin dictar (Nunca = desactivado).
     BubbleHideTimeoutChanged(BubbleHideTimeout),
     ToggleTheme,
@@ -184,7 +184,6 @@ pub struct WhisprApp {
     status: Status,
     transcript: String,
     last_turn: String,
-    removed_fillers: Vec<String>,
     last_correction: Option<String>,
     session: CorrectionSession,
     audio: Option<AudioCapture>,
@@ -197,15 +196,14 @@ pub struct WhisprApp {
     hotkey_label: String,
     entry_from: String,
     entry_to: String,
-    /// Muletilla en curso de escritura (Ajustes → Muletillas).
-    filler_input: String,
-    /// Categoría seleccionada en el `pick_list` de muletillas.
-    filler_category: FillerCategory,
     settings_open: bool,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
     bubble_id: Option<window::Id>,
     bubble_pressed: bool, // botón izquierdo pulsado (graba)
     bubble_last_pos: Point,
+    /// Escritura de configuración diferida para no bloquear la UI al teclear
+    /// endpoint/model/key ni al mover sliders.
+    config_save_deadline: Option<std::time::Instant>,
     /// Botón derecho: solo arrastra la burbuja (nunca graba ni abre nada).
     bubble_right: crate::bubble::RightDragState,
     /// Captura del ratón + seguimiento de la posición durante el arrastre.
@@ -216,12 +214,10 @@ pub struct WhisprApp {
     /// Instrucción en ruta al LLM (con el target capturado): si la llamada
     /// falla o el diff no aplica, se reinserta como dictado normal.
     llm_pending: Option<LlmPending>,
-    /// Diff pendiente de confirmación (modo `ai_correction_confirm`). Solo
-    /// se rellena cuando el LLM responde y el toggle está activo. Mientras
-    /// está Some, la UI muestra «Aplicar» / «Descartar» en el feedback.
-    /// El campo guarda solo el diff (no el pending completo) porque
-    /// `last_turn` puede haber cambiado entre la llamada y la respuesta.
-    pending_diff: Option<crate::domain::corrective::Diff>,
+    /// Diff pendiente de confirmación. Conserva también el turno objetivo y
+    /// el modo de inyección para que dictados posteriores no redirijan la
+    /// corrección a otro texto.
+    pending_diff: Option<PendingDiff>,
     /// Undo de 1 nivel: (transcript, last_turn) antes de la última corrección.
     undo_state: Option<(String, String)>,
     // ── Bandeja del sistema ───────────────────────────────────────────────
@@ -297,7 +293,6 @@ impl WhisprApp {
             status: Status::Idle,
             transcript: String::new(),
             last_turn: String::new(),
-            removed_fillers: vec![],
             last_correction: None,
             session: CorrectionSession::new(),
             audio: None,
@@ -308,12 +303,11 @@ impl WhisprApp {
             hotkey_label,
             entry_from: String::new(),
             entry_to: String::new(),
-            filler_input: String::new(),
-            filler_category: FillerCategory::Unambiguous,
             settings_open: false,
             bubble_id,
             bubble_pressed: false,
             bubble_last_pos: Point::new(0.0, 0.0),
+            config_save_deadline: None,
             bubble_right: crate::bubble::RightDragState::default(),
             bubble_drag: None,
             pending_inject: false,
@@ -335,11 +329,26 @@ impl WhisprApp {
         (app, Task::batch([bubble_task, font_task]))
     }
 
-    fn save_config(&self) {
+    fn save_config(&mut self) {
+        self.config_save_deadline = Some(std::time::Instant::now() + Duration::from_millis(300));
+    }
+
+    fn persist_config(&self) {
         let mut cfg = self.config.clone();
         cfg.dictionary = self.dictionary_snapshot();
         cfg.model = Some(self.config.selected_model().id().to_string());
         cfg.save();
+    }
+
+    fn flush_config(&mut self) {
+        let Some(deadline) = self.config_save_deadline else {
+            return;
+        };
+        if std::time::Instant::now() < deadline {
+            return;
+        }
+        self.persist_config();
+        self.config_save_deadline = None;
     }
 
     /// Inyección con la configuración actual (formato, retardo y filtro por
@@ -386,7 +395,11 @@ impl WhisprApp {
                 // El status vuelve a Idle para que el usuario pueda dictar
                 // otra cosa mientras decide (la corrección sigue armada).
                 if self.config.ai_correction_confirm() {
-                    self.pending_diff = Some(diff.clone());
+                    self.pending_diff = Some(PendingDiff {
+                        diff: diff.clone(),
+                        target,
+                        force_inject: p.force_inject,
+                    });
                     self.last_correction = Some(format!(
                         "Rectificado IA propuesto: «{}» → «{}» (Aplicar/Descartar)",
                         diff.find, diff.replace
@@ -406,6 +419,13 @@ impl WhisprApp {
                             &after,
                         ) {
                             self.transcript = t;
+                        } else {
+                            self.last_correction =
+                                Some("La corrección IA ya no aplica al último turno".to_string());
+                            self.restore_instruction_as_dictation(pending);
+                            self.status = Status::Idle;
+                            self.arm_bubble_hide_timeout();
+                            return Task::none();
                         }
                         // Solo si no intervino un turno nuevo: last_turn sigue
                         // siendo el turno corregido.
@@ -450,24 +470,24 @@ impl WhisprApp {
     /// undo, sustituir, inyectar si corresponde). Si `pending_diff` es
     /// None (carrera: el usuario toggleo off mientras decidía), no-op.
     fn apply_pending_diff(&mut self) {
-        let Some(diff) = self.pending_diff.take() else {
+        let Some(pending) = self.pending_diff.take() else {
             return;
         };
-        // El target vuelve a ser el ÚLTIMO turno en el momento de
-        // despachar, no en el de aplicar (puede haber pasado un turno
-        // intermedio). Usamos `last_turn` actual porque es lo que el
-        // usuario ve en el transcript; si el LLM corrigió «lo último»,
-        // sigue siendo ese.
-        let target = self.last_turn.clone();
+        // Aplicar siempre sobre el target capturado, nunca sobre un turno
+        // posterior que el usuario haya dictado mientras decidía.
+        let target = pending.target;
+        let diff = pending.diff;
         match crate::domain::corrective::apply_diff(&target, &diff) {
             Some(after) => {
                 self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
-                if let Some(t) = crate::domain::corrective::replace_last_turn(
-                    &self.transcript,
-                    &target,
-                    &after,
-                ) {
+                if let Some(t) =
+                    crate::domain::corrective::replace_last_turn(&self.transcript, &target, &after)
+                {
                     self.transcript = t;
+                } else {
+                    self.last_correction =
+                        Some("La corrección IA ya no aplica al último turno".to_string());
+                    return;
                 }
                 if self.last_turn == target {
                     self.last_turn = after.clone();
@@ -476,55 +496,36 @@ impl WhisprApp {
                     "Rectificado IA: “{}” → “{}”",
                     diff.find, diff.replace
                 ));
-                crate::log!("llm", "rectificado (confirmado): {} → {}", diff.find, diff.replace);
-                if self.config.auto_inject.unwrap_or(true) && !after.is_empty() {
+                crate::log!(
+                    "llm",
+                    "rectificado (confirmado): {} → {}",
+                    diff.find,
+                    diff.replace
+                );
+                if (self.config.auto_inject.unwrap_or(true) || pending.force_inject)
+                    && !after.is_empty()
+                {
                     self.inject_into_active(&after);
                 }
             }
             None => {
-                // El diff ya no aplica (el usuario siguió dictando y el
-                // target cambió): lo descartamos limpiamente. La
-                // instrucción hablada NO se reinserta en este camino
-                // porque ya pasó tiempo y podría duplicar texto.
-                self.last_correction = Some(
-                    "La corrección IA ya no aplica al último turno (sigue dictando o descártala)"
-                        .to_string(),
-                );
+                // El diff ya no aplica al target capturado: no mutamos el
+                // transcript ni inyectamos nada. La instrucción solo se
+                // recupera como dictado normal cuando el LLM falla, no cuando
+                // el usuario descarta explícitamente una propuesta.
+                self.last_correction =
+                    Some("La corrección IA ya no aplica al último turno".to_string());
             }
         }
     }
 
-    /// Descarta el diff pendiente. Se diferencia de «no aplicar a
-    /// ciegas» en que aquí el diff YA LLEGÓ del LLM y el usuario
-    /// activamente lo rechaza. Restauramos la instrucción hablada como
-    /// dictado normal (spec §3.3.1) solo si todavía aplica sobre el
-    /// último turno; si no, simplemente limpiamos.
+    /// Descarta el diff pendiente. El usuario ya vio la propuesta y la
+    /// rechaza explícitamente: no se modifica el transcript ni se inyecta la
+    /// instrucción de corrección como texto normal.
     fn discard_pending_diff(&mut self) {
-        let was_pending = self.pending_diff.take().is_some();
-        if !was_pending {
+        let Some(_pending) = self.pending_diff.take() else {
             return;
-        }
-        // Si el toggle sigue activo, conservamos la instrucción pendiente
-        // vía `llm_pending` para reinserción. Si se apagó mientras
-        // decidía, no reinserta (sorpresa); ya lo limpiamos en el
-        // handler de `LlmConfirmToggled(false)`.
-        if !self.config.ai_correction_confirm() {
-            self.last_correction = Some("Corrección IA descartada".to_string());
-            return;
-        }
-        // Reconstruimos un LlmPending mínimo a partir del estado actual
-        // para reutilizar `restore_instruction_as_dictation`. Pero ese
-        // helper mira `p.instruction` y `p.target`. Como no las
-        // guardamos en `pending_diff`, necesitamos otra estrategia:
-        // si hay un llm_pending aún (caso normal: el LLM ya respondió y
-        // estamos en confirm, así que NO lo hay), podríamos restaurar;
-        // si no hay (caso común), solo limpiamos el feedback.
-        //
-        // Decisión: el diff se mostró y el usuario lo rechaza; la
-        // instrucción hablada ya fue entendida y rechazada, no la
-        // resucitamos como dictado (podría duplicar texto si la
-        // intención del usuario era «NO quiero contar «eso»»). Solo
-        // informamos.
+        };
         self.last_correction = Some("Corrección IA descartada ✕".to_string());
     }
 
@@ -545,10 +546,12 @@ impl WhisprApp {
         } else {
             crate::log!("llm", "instrucción recuperada tras un turno intermedio");
         }
-        if (self.config.auto_inject.unwrap_or(true) || p.force_inject) && !self.last_turn.is_empty()
-        {
-            let turn = self.last_turn.clone();
-            self.inject_into_active(&turn);
+        if self.config.auto_inject.unwrap_or(true) || p.force_inject {
+            // Si hubo un turno intermedio, `last_turn` ya no es la instrucción
+            // recuperada. Inyectar el último turno aquí volvería a escribir
+            // texto ajeno; este helper debe inyectar exactamente el texto
+            // que el LLM no pudo procesar.
+            self.inject_into_active(&p.instruction);
         }
     }
 
@@ -578,13 +581,20 @@ impl WhisprApp {
         self.config.bubble_opacity()
     }
 
+    pub(crate) fn bubble_style(&self) -> crate::config::BubbleStyle {
+        self.config.bubble_style()
+    }
+
     fn dictionary_snapshot(&self) -> Vec<DictionaryEntry> {
         self.config.dictionary.clone()
     }
 
     /// Nivel del micrófono en % (0-100) mientras se graba.
     fn mic_level_percent(&self) -> u32 {
-        self.audio.as_ref().map(|a| (a.level() * 100.0) as u32).unwrap_or(0)
+        self.audio
+            .as_ref()
+            .map(|a| (a.level() * 100.0) as u32)
+            .unwrap_or(0)
     }
 
     /// Lectura del estado para el hero: color de estado + label + hint
@@ -595,7 +605,10 @@ impl WhisprApp {
                 color: t.dim,
                 hint_color: t.dim,
                 label: "Listo".to_string(),
-                hint: format!("Pulsa el círculo o {} y empieza a hablar", self.hotkey_label),
+                hint: format!(
+                    "Pulsa el círculo o {} y empieza a hablar",
+                    self.hotkey_label
+                ),
             },
             Status::Recording => MicUi {
                 color: t.accent,
@@ -615,8 +628,16 @@ impl WhisprApp {
                 label: "Corrigiendo…".to_string(),
                 hint: "El modelo de corrección ajusta lo que dictaste".to_string(),
             },
-            Status::Downloading { model, downloaded, total } => {
-                let pct = if *total > 0 { (*downloaded as f64 / *total as f64 * 100.0) as u32 } else { 0 };
+            Status::Downloading {
+                model,
+                downloaded,
+                total,
+            } => {
+                let pct = if *total > 0 {
+                    (*downloaded as f64 / *total as f64 * 100.0) as u32
+                } else {
+                    0
+                };
                 MicUi {
                     color: t.warn,
                     hint_color: t.dim,
@@ -642,14 +663,7 @@ impl WhisprApp {
     /// (en ese caso el LLM no debe intervenir — nivel A de la spec §2).
     fn apply_pipeline(&mut self, raw: &str) -> (String, bool) {
         // Orden de procesado (igual que la web): cleanup -> diccionario.
-        let mut text = raw.to_string();
-        self.removed_fillers.clear();
-
-        if self.config.cleanup_enabled.unwrap_or(true) {
-            let cleaned = clean_transcript_with(raw, &self.config.fillers());
-            text = cleaned.text;
-            self.removed_fillers = cleaned.removed;
-        }
+        let mut text = clean_transcript(raw).text;
 
         if !self.config.dictionary.is_empty() {
             let dict = apply_dictionary(&text, &self.config.dictionary);
@@ -682,7 +696,13 @@ impl WhisprApp {
                 self.update(Message::StartRecording)
             }
             Message::StartRecording => {
-                if self.audio.is_some() {
+                if self.audio.is_some()
+                    || self.transcribe_rx.is_some()
+                    || self.llm_rx.is_some()
+                    || self.llm_pending.is_some()
+                    || self.pending_diff.is_some()
+                    || matches!(self.status, Status::Downloading { .. })
+                {
                     return Task::none();
                 }
                 // Una grabación nueva descarta cualquier inyección pendiente.
@@ -691,13 +711,13 @@ impl WhisprApp {
                 // es la actividad principal: la burbuja debe estar visible).
                 let show = self.show_bubble();
                 let device = self.config.input_device.clone();
-                let auto_resample = self.config.auto_resample_16k();
-                match AudioCapture::start(device.as_deref(), auto_resample) {
+                match AudioCapture::start(device.as_deref()) {
                     Ok(capture) => {
                         self.audio = Some(capture);
                         self.status = Status::Recording;
-                        self.session.reset();
-                        self.last_turn.clear();
+                        // La sesión y `last_turn` sobreviven entre turnos:
+                        // las correcciones multi-turno y la corrección IA
+                        // necesitan ver el dictado anterior.
                         show
                     }
                     Err(e) => {
@@ -793,17 +813,29 @@ impl WhisprApp {
                             self.status = Status::Correcting;
                             crate::log!("llm", "corrección IA en camino…");
                             std::thread::spawn(move || {
-                                let result =
-                                    crate::llm::correct(&target, &instruction, &llm_cfg);
+                                let result = crate::llm::correct(&target, &instruction, &llm_cfg);
                                 let _ = tx.send(result);
                             });
                             return Task::none();
                         }
 
-                        self.last_turn = processed.clone();
-                        if !self.last_turn.is_empty() {
-                            self.transcript =
-                                crate::domain::correction::append_transcript(&self.transcript, &processed);
+                        if !processed.is_empty() {
+                            if rule_corrected && !self.last_turn.is_empty() {
+                                let target = self.last_turn.clone();
+                                if let Some(updated) = crate::domain::corrective::replace_last_turn(
+                                    &self.transcript,
+                                    &target,
+                                    &processed,
+                                ) {
+                                    self.transcript = updated;
+                                }
+                            } else {
+                                self.transcript = crate::domain::correction::append_transcript(
+                                    &self.transcript,
+                                    &processed,
+                                );
+                            }
+                            self.last_turn = processed.clone();
                         }
                         self.status = Status::Idle;
 
@@ -823,7 +855,13 @@ impl WhisprApp {
                 Task::none()
             }
             Message::ModelSelected(model) => {
-                if self.status == Status::Recording {
+                if self.audio.is_some()
+                    || self.transcribe_rx.is_some()
+                    || self.llm_rx.is_some()
+                    || self.llm_pending.is_some()
+                    || self.pending_diff.is_some()
+                    || matches!(self.status, Status::Downloading { .. })
+                {
                     return Task::none();
                 }
                 if model != self.config.selected_model() {
@@ -832,16 +870,17 @@ impl WhisprApp {
                     self.save_config();
                     // Aviso de descarga la primera vez que se use el modelo.
                     if !crate::transcribe::model_exists(model) {
-                        self.status = Status::Downloading { model, downloaded: 0, total: 0 };
+                        self.status = Status::Downloading {
+                            model,
+                            downloaded: 0,
+                            total: 0,
+                        };
                         let (tx, rx) = mpsc::channel();
                         self.transcribe_rx = Some(rx);
                         std::thread::spawn(move || {
-                            let result = crate::transcribe::ensure_model(
-                                model,
-                                |d, t| {
-                                    let _ = tx.send(Ok(format!("__PROGRESS__{d}:{t}")));
-                                },
-                            )
+                            let result = crate::transcribe::ensure_model(model, |d, t| {
+                                let _ = tx.send(Ok(format!("__PROGRESS__{d}:{t}")));
+                            })
                             .map(|_| "__DOWNLOAD_OK__".to_string())
                             .map_err(|e| e);
                             let _ = tx.send(result);
@@ -850,13 +889,13 @@ impl WhisprApp {
                 }
                 Task::none()
             }
-            Message::ToggleCleanup(on) => {
-                self.config.cleanup_enabled = Some(on);
+            Message::ToggleAutoInject(on) => {
+                self.config.auto_inject = Some(on);
                 self.save_config();
                 Task::none()
             }
-            Message::ToggleAutoInject(on) => {
-                self.config.auto_inject = Some(on);
+            Message::CorrectionProviderChanged(provider) => {
+                self.config.correction_provider = Some(provider);
                 self.save_config();
                 Task::none()
             }
@@ -883,6 +922,16 @@ impl WhisprApp {
             Message::LlmModelChanged(s) => {
                 let trimmed = s.trim();
                 self.config.llm_model = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.save_config();
+                Task::none()
+            }
+            Message::LlmApiKeyChanged(s) => {
+                let trimmed = s.trim();
+                self.config.llm_api_key = if trimmed.is_empty() {
                     None
                 } else {
                     Some(trimmed.to_string())
@@ -988,50 +1037,6 @@ impl WhisprApp {
                 }
                 Task::none()
             }
-            // ── Muletillas (Ajustes: listas editables) ────────────────────
-            Message::AddFiller => {
-                let word = self.filler_input.trim().to_string();
-                if !word.is_empty() {
-                    let mut fillers = self.config.fillers();
-                    let list = self.filler_category.list_mut(&mut fillers);
-                    if !list.iter().any(|w| w == &word) {
-                        list.push(word);
-                        self.config.fillers = Some(fillers);
-                        self.save_config();
-                    }
-                }
-                self.filler_input.clear();
-                Task::none()
-            }
-            Message::FillerInputChanged(v) => {
-                self.filler_input = v;
-                Task::none()
-            }
-            Message::FillerCategorySelected(category) => {
-                self.filler_category = category;
-                Task::none()
-            }
-            Message::RemoveFiller { category, index } => {
-                let mut fillers = self.config.fillers();
-                let list = category.list_mut(&mut fillers);
-                if index < list.len() {
-                    list.remove(index);
-                    // Si tras quitar quedan las listas de serie, se guarda
-                    // None (el getter resuelve los defaults sin JSON extra).
-                    self.config.fillers = if fillers.is_default() {
-                        None
-                    } else {
-                        Some(fillers)
-                    };
-                    self.save_config();
-                }
-                Task::none()
-            }
-            Message::ResetFillers => {
-                self.config.fillers = None;
-                self.save_config();
-                Task::none()
-            }
             // ── Diccionario: importar/exportar (backup/restore) ───────────
             Message::ExportDictionary => {
                 let path = dictionary_path();
@@ -1094,13 +1099,6 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
-            // Remuestreo automático a 16 kHz. La app lo consulta al abrir
-            // el siguiente turno; el `audio.rs` ya respeta el flag.
-            Message::ToggleAutoResample(on) => {
-                self.config.auto_resample_to_16k = Some(on);
-                self.save_config();
-                Task::none()
-            }
             Message::ToggleTheme => {
                 // El botón del header cicla Auto → Claro → Oscuro (partiendo
                 // del modo EFECTIVO actual, incluido el legacy derivado de
@@ -1141,6 +1139,11 @@ impl WhisprApp {
                 // Mover en caliente a la nueva esquina (winapi SetWindowPos).
                 let px = self.config.bubble_size().px();
                 crate::bubble::move_to_corner(corner, px);
+                Task::none()
+            }
+            Message::BubbleStyleChanged(style) => {
+                self.config.bubble_style = Some(style);
+                self.save_config();
                 Task::none()
             }
             Message::BubbleOpacityChanged(percent) => {
@@ -1224,6 +1227,8 @@ impl WhisprApp {
                             }
                             Ok(ev) if ev.id == crate::tray::MENU_QUIT_ID => {
                                 crate::log!("tray", "«Salir» desde la bandeja");
+                                self.persist_config();
+                                self.config_save_deadline = None;
                                 return iced::exit();
                             }
                             Ok(_) => continue,
@@ -1232,6 +1237,8 @@ impl WhisprApp {
                     }
                 }
 
+                self.flush_config();
+
                 // Auto-recuperación del arrastre con botón derecho: si el
                 // sistema roba la captura (alt-tab, menú del sistema, doble
                 // clic en otra ventana) o el evento de soltado se pierde, se
@@ -1239,6 +1246,9 @@ impl WhisprApp {
                 // acumular saltos. `GetCapture` es el detector fiable de robo
                 // de captura (equivale a WM_CAPTURECHANGED); el botón ya
                 // liberado es la red de seguridad del evento perdido.
+                if self.bubble_pressed && !crate::bubble::left_button_down() {
+                    let _ = self.update(Message::BubbleRelease);
+                }
                 if self.bubble_right.pressed || self.bubble_right.dragging {
                     let stolen = match &self.bubble_drag {
                         Some(drag) => !drag.is_captured(),
@@ -1295,6 +1305,11 @@ impl WhisprApp {
                         Err(mpsc::TryRecvError::Empty) => Task::none(),
                         Err(mpsc::TryRecvError::Disconnected) => {
                             self.transcribe_rx = None;
+                            self.pending_inject = false;
+                            self.status = Status::Error(
+                                "El hilo de transcripción terminó inesperadamente".to_string(),
+                            );
+                            self.arm_bubble_hide_timeout();
                             Task::none()
                         }
                     }
@@ -1310,6 +1325,15 @@ impl WhisprApp {
                         Err(mpsc::TryRecvError::Empty) => Task::none(),
                         Err(mpsc::TryRecvError::Disconnected) => {
                             self.llm_rx = None;
+                            let pending = self.llm_pending.take();
+                            self.last_correction = Some(
+                                "Corrección IA no disponible: el hilo terminó inesperadamente"
+                                    .to_string(),
+                            );
+                            self.restore_instruction_as_dictation(pending);
+                            self.status = Status::Idle;
+                            self.arm_bubble_hide_timeout();
+                            self.save_config();
                             Task::none()
                         }
                     };
@@ -1324,9 +1348,10 @@ impl WhisprApp {
                 self.show_bubble()
             }
             Message::BubblePress => {
-                // Clic izquierdo: siempre graba (comportamiento original,
-                // no se toca). El arrastre ya NO se dispara con el izquierdo.
+                // Clic izquierdo: siempre graba. Capturamos el ratón para que
+                // salir de la burbuja no finalice prematuramente el turno.
                 self.bubble_pressed = true;
+                crate::bubble::capture_left_mouse();
                 if self.audio.is_none() {
                     return self.update(Message::StartRecording);
                 }
@@ -1337,6 +1362,7 @@ impl WhisprApp {
             Message::BubbleRelease => {
                 let was_pressed = self.bubble_pressed;
                 self.bubble_pressed = false;
+                crate::bubble::release_mouse_capture();
                 if !was_pressed {
                     return Task::none();
                 }
@@ -1357,7 +1383,10 @@ impl WhisprApp {
                 if self.bubble_drag.is_none() {
                     match crate::bubble::BubbleDrag::start() {
                         Some(drag) => {
-                            crate::log!("bubble", "botón derecho pulsado: captura del ratón activa");
+                            crate::log!(
+                                "bubble",
+                                "botón derecho pulsado: captura del ratón activa"
+                            );
                             self.bubble_drag = Some(drag);
                         }
                         None => crate::log!("bubble", "no se pudo iniciar la captura del ratón"),
@@ -1399,9 +1428,11 @@ impl WhisprApp {
                 Task::none()
             }
             Message::BubbleCursorLeft => {
-                // El izquierdo dicta igualmente aunque el cursor se haya ido
-                // (mismo comportamiento que antes, no se toca).
-                let task = self.update(Message::BubbleRelease);
+                // Con captura activa, CursorLeft no significa que el usuario
+                // haya soltado el botón: puede seguir dictando fuera de la
+                // ventana. El watchdog del Poll finaliza solo al detectar
+                // físicamente liberado el botón.
+                let task = Task::none();
                 if self.bubble_right.pressed || self.bubble_right.dragging {
                     // El botón derecho sigue pulsado con captura activa: el
                     // cursor salir de la ventana de 56 px es NORMAL durante
@@ -1456,6 +1487,8 @@ impl WhisprApp {
             // aún no se haya registrado (cierre antes de WindowOpened).
             Message::WindowCloseRequested(id) => {
                 crate::log!("tray", "cierre de ventana {id} → salir");
+                self.persist_config();
+                self.config_save_deadline = None;
                 iced::exit()
             }
         }
@@ -1550,7 +1583,7 @@ impl WhisprApp {
     }
 
     pub fn theme(&self) -> Theme {
-        theme::custom(self.config.is_dark())
+        theme::custom(self.config.resolved_dark(self.system_dark))
     }
 
     pub fn view(&self) -> Element<'_, Message> {
@@ -1567,12 +1600,23 @@ impl WhisprApp {
             ThemeMode::Claro => "☀ Claro",
             ThemeMode::Oscuro => "☾ Oscuro",
         };
-        let settings_label = if self.settings_open { "Ajustes ▾" } else { "Ajustes ▸" };
+        let settings_label = if self.settings_open {
+            "Ajustes ▾"
+        } else {
+            "Ajustes ▸"
+        };
         let header = row![
-            text("Whispr Open").size(fs.xl).font(Font::MONOSPACE).color(t.text),
+            text("Whispr Open")
+                .size(fs.xl)
+                .font(Font::MONOSPACE)
+                .color(t.text),
             Space::with_width(Length::Fill),
-            button(ui_text(theme_toggle)).on_press(Message::ToggleTheme).style(theme::secondary),
-            button(ui_text(settings_label)).on_press(Message::ToggleSettings).style(theme::secondary),
+            button(ui_text(theme_toggle))
+                .on_press(Message::ToggleTheme)
+                .style(theme::secondary),
+            button(ui_text(settings_label))
+                .on_press(Message::ToggleSettings)
+                .style(theme::secondary),
         ]
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
@@ -1583,19 +1627,17 @@ impl WhisprApp {
         // nivel/progreso va debajo, a todo el ancho de la tarjeta.
         // Feedback doble intacto: color de estado (punto + borde) y label.
         let mic = self.mic_ui(t);
-        let mut hero_content = column![
-            row![
-                text("●").size(fs.xl).color(mic.color),
-                column![
-                    text(mic.label).size(fs.hero).color(t.text),
-                    text(mic.hint).size(fs.sm).color(mic.hint_color),
-                ]
-                .width(Length::Fill)
-                .spacing(theme::SPACE_1),
+        let mut hero_content = column![row![
+            text("●").size(fs.xl).color(mic.color),
+            column![
+                text(mic.label).size(fs.hero).color(t.text),
+                text(mic.hint).size(fs.sm).color(mic.hint_color),
             ]
-            .spacing(theme::SPACE_3)
-            .align_y(iced::Alignment::Center),
+            .width(Length::Fill)
+            .spacing(theme::SPACE_1),
         ]
+        .spacing(theme::SPACE_3)
+        .align_y(iced::Alignment::Center),]
         .spacing(theme::SPACE_2);
 
         // Micro-feedback (>= 200 ms) no decorativo: nivel del mic / progreso.
@@ -1607,7 +1649,9 @@ impl WhisprApp {
                         .style(move |th| theme::progress(th, t.accent)),
                 );
             }
-            Status::Downloading { downloaded, total, .. } if *total > 0 => {
+            Status::Downloading {
+                downloaded, total, ..
+            } if *total > 0 => {
                 let pct = (*downloaded as f32 / *total as f32 * 100.0).min(100.0);
                 hero_content = hero_content.push(
                     progress_bar(0.0..=100.0, pct)
@@ -1633,13 +1677,13 @@ impl WhisprApp {
             scrollable(
                 container(
                     text(if transcript_empty {
-                                        format!(
-                                            "Pulsa {} o el botón del micrófono y empieza a hablar.",
-                                            self.hotkey_label
-                                        )
-                                    } else {
-                                        self.transcript.as_str().to_string()
-                                    })
+                        format!(
+                            "Pulsa {} o el botón del micrófono y empieza a hablar.",
+                            self.hotkey_label
+                        )
+                    } else {
+                        self.transcript.as_str().to_string()
+                    })
                     .size(fs.md)
                     .color(if transcript_empty { t.dim } else { t.text }),
                 )
@@ -1663,17 +1707,23 @@ impl WhisprApp {
             "Escribir en app"
         };
         let actions = row![
-            button("Copiar").on_press(Message::CopyTranscript).style(theme::secondary),
-            button("Limpiar").on_press(Message::ClearTranscript).style(theme::secondary),
+            button("Copiar")
+                .on_press(Message::CopyTranscript)
+                .style(theme::secondary),
+            button("Limpiar")
+                .on_press(Message::ClearTranscript)
+                .style(theme::secondary),
             if self.last_turn.is_empty() {
                 button(inject_label).style(theme::secondary)
             } else {
-                button(inject_label).on_press(Message::InjectLast).style(theme::secondary)
+                button(inject_label)
+                    .on_press(Message::InjectLast)
+                    .style(theme::secondary)
             },
         ]
         .spacing(theme::SPACE_2);
 
-        // ── Feedback textual (éxitos / espera / muletillas) ──────────────────
+        // ── Feedback textual ────────────────────────────────────────────────
         // Con undo disponible, el feedback lleva el botón «Deshacer» (spec
         // §4.3: AI transparente y overrideable — un nivel de undo basta).
         // Con diff pendiente (modo confirmar), lleva «Aplicar» / «Descartar».
@@ -1709,16 +1759,14 @@ impl WhisprApp {
             } else {
                 t.ok
             };
-            let mut row_el = row![
-                text(corr.as_str())
-                    .size(fs.sm)
-                    .color(color)
-                    // El texto puede traer glifos de UI (↩ de «deshecha ↩»):
-                    // Advanced activa el fallback de fuente.
-                    .shaping(Shaping::Advanced)
-            ]
-                .spacing(theme::SPACE_2)
-                .align_y(iced::Alignment::Center);
+            let mut row_el = row![text(corr.as_str())
+                .size(fs.sm)
+                .color(color)
+                // El texto puede traer glifos de UI (↩ de «deshecha ↩»):
+                // Advanced activa el fallback de fuente.
+                .shaping(Shaping::Advanced)]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center);
             if self.undo_state.is_some() {
                 row_el = row_el.push(
                     button(ui_text("↩ Deshacer"))
@@ -1727,11 +1775,6 @@ impl WhisprApp {
                 );
             }
             row_el.into()
-        } else if !self.removed_fillers.is_empty() {
-            text(format!("Muletillas eliminadas: {}", self.removed_fillers.join(", ")))
-                .size(fs.sm)
-                .color(t.dim)
-                .into()
         } else {
             text("").into()
         };
@@ -1790,7 +1833,10 @@ impl WhisprApp {
         // otro valor a Some(código) que se pasa a whisper.
         const LANGUAGE_OPTIONS: &[&str] = &["auto", "es", "en", "fr", "de", "it", "pt"];
         let lang_pick = pick_list(
-            LANGUAGE_OPTIONS.iter().map(|s| s.to_string()).collect::<Vec<_>>(),
+            LANGUAGE_OPTIONS
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>(),
             Some(language_label(&self.config.language)),
             Message::LanguageSelected,
         )
@@ -1828,30 +1874,27 @@ impl WhisprApp {
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
 
-        // «Por defecto» solo tiene sentido cuando hay muletillas
-        // personalizadas (config.fillers = Some); si ya son las de serie, la
-        // fila se deja vacía para no mostrar un botón que no haría nada.
-        let reset_button: Element<'_, Message> = if self.config.fillers.is_some() {
-            button("Por defecto")
-                .on_press(Message::ResetFillers)
-                .style(theme::secondary)
-                .into()
-        } else {
-            Space::new(Length::Shrink, 0).into()
-        };
-
         let panel = column![
             row![
-                text("Modelo").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
-                model_pick,
-                text(format!("(~{} MB)", self.config.selected_model().approx_mb()))
+                text("Modelo")
                     .size(fs.sm)
-                    .color(t.dim),
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                model_pick,
+                text(format!(
+                    "(~{} MB)",
+                    self.config.selected_model().approx_mb()
+                ))
+                .size(fs.sm)
+                .color(t.dim),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             row![
-                text("Micrófono").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                text("Micrófono")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
                 mic_pick,
             ]
             .spacing(theme::SPACE_2)
@@ -1862,7 +1905,10 @@ impl WhisprApp {
                 .font(Font::MONOSPACE)
                 .color(t.text),
             row![
-                text("Idioma").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                text("Idioma")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
                 lang_pick,
                 text(language_hint(&self.config.language))
                     .size(fs.xxs)
@@ -1872,19 +1918,19 @@ impl WhisprApp {
             .align_y(iced::Alignment::Center),
             beam_row,
             threads_row,
-            checkbox(
-                "Remuestrear audio a 16 kHz (lo que exige whisper)",
-                self.config.auto_resample_16k(),
-            )
-            .on_toggle(Message::ToggleAutoResample)
-            .style(theme::checkbox),
+            text("Audio: normalizado automáticamente a 16 kHz")
+                .size(fs.sm)
+                .color(t.dim),
             // ── Apariencia: tema, fuente y burbuja configurable ──────────────
             text("Apariencia")
                 .size(fs.lg)
                 .font(Font::MONOSPACE)
                 .color(t.text),
             row![
-                text("Tema").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                text("Tema")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
                 pick_list(
                     [ThemeMode::Auto, ThemeMode::Claro, ThemeMode::Oscuro].to_vec(),
                     Some(self.config.theme_mode()),
@@ -1903,7 +1949,10 @@ impl WhisprApp {
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             row![
-                text("Fuente").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                text("Fuente")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
                 pick_list(
                     [
                         FontSize::Small,
@@ -1924,11 +1973,28 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
-            text("Burbuja flotante")
-                .size(fs.sm)
-                .color(t.dim),
+            text("Burbuja flotante").size(fs.sm).color(t.dim),
             row![
-                text("Tamaño").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                text("Estilo")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [BubbleStyle::Solid, BubbleStyle::Ring, BubbleStyle::Minimal].to_vec(),
+                    Some(self.config.bubble_style()),
+                    Message::BubbleStyleChanged,
+                )
+                .placeholder("Estilo")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("Tamaño")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
                 pick_list(
                     [BubbleSize::Small, BubbleSize::Mid, BubbleSize::Large].to_vec(),
                     Some(self.config.bubble_size()),
@@ -1941,7 +2007,10 @@ impl WhisprApp {
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             row![
-                text("Esquina").size(fs.sm).color(t.dim).width(Length::Fixed(96.0)),
+                text("Esquina")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
                 pick_list(
                     [
                         BubbleCorner::TopRight,
@@ -1999,12 +2068,6 @@ impl WhisprApp {
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             checkbox(
-                "Limpiar muletillas",
-                self.config.cleanup_enabled.unwrap_or(true),
-            )
-            .on_toggle(Message::ToggleCleanup)
-            .style(theme::checkbox),
-            checkbox(
                 "Autoinyectar al terminar",
                 self.config.auto_inject.unwrap_or(true),
             )
@@ -2016,17 +2079,34 @@ impl WhisprApp {
             )
             .on_toggle(Message::ToggleAiCorrection)
             .style(theme::checkbox),
-
             // ── Detalles de Corrección IA (spec CORRECCION-VOZ.md §3, §4) ────
             // Subsección dentro de Ajustes: aparece bajo el toggle maestro.
-            // Muestra los 4 parámetros que el toggle no expone: endpoint,
-            // modelo, timeout HTTP, umbral del clasificador y modo confirmar.
+            // Permite elegir el proveedor y sus parámetros de conexión.
             // Si el toggle está off, los detalles se muestran igualmente
             // (informativos; el clasificador y la llamada al LLM no se
             // usan porque el gate `ai_correction_enabled()` corta antes).
-            text("  Detalles")
-                .size(fs.sm)
-                .color(t.dim),
+            text("  Detalles").size(fs.sm).color(t.dim),
+            row![
+                text("Proveedor")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        CorrectionProvider::Default,
+                        CorrectionProvider::Cloud,
+                        CorrectionProvider::Custom,
+                    ]
+                    .to_vec(),
+                    Some(self.config.correction_provider()),
+                    Message::CorrectionProviderChanged,
+                )
+                .placeholder("Proveedor")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
             row![
                 text("Endpoint LLM")
                     .size(fs.sm)
@@ -2048,10 +2128,26 @@ impl WhisprApp {
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 text_input(
-                    "ornith-1.0-9b",
+                    "ornith-1.0-9b / gpt-4o-mini",
                     self.config.llm_model.as_deref().unwrap_or(""),
                 )
                 .on_input(Message::LlmModelChanged)
+                .style(theme::text_input)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            row![
+                text("API key")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                text_input(
+                    "solo para cloud",
+                    self.config.llm_api_key.as_deref().unwrap_or("")
+                )
+                .on_input(Message::LlmApiKeyChanged)
+                .secure(true)
                 .style(theme::text_input)
                 .width(Length::Fill),
             ]
@@ -2098,7 +2194,6 @@ impl WhisprApp {
             )
             .on_toggle(Message::LlmConfirmToggled)
             .style(theme::checkbox),
-
             text(format!("Atajo global: {}", self.hotkey_label))
                 .size(fs.xxs)
                 .color(t.dim),
@@ -2131,7 +2226,9 @@ impl WhisprApp {
                     .on_input(Message::EntryToChanged)
                     .on_submit(Message::AddEntry)
                     .style(theme::text_input),
-                button("Añadir").on_press(Message::AddEntry).style(theme::primary),
+                button("Añadir")
+                    .on_press(Message::AddEntry)
+                    .style(theme::primary),
             ]
             .spacing(theme::SPACE_2),
             dictionary_list(&self.config.dictionary, fs),
@@ -2158,31 +2255,6 @@ impl WhisprApp {
                 text("").size(fs.sm).color(t.ok)
             },
             horizontal_rule(1).style(theme::rule),
-            // ── Muletillas: las listas de cleanup.rs, editables ────────────
-            // El toggle «Limpiar muletillas» sigue arriba; aquí se añaden y
-            // quitan palabras por categoría (Enter en el input añade).
-            text("Muletillas")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-            row![
-                text_input("muletilla (ej. «vale»)", &self.filler_input)
-                    .on_input(Message::FillerInputChanged)
-                    .on_submit(Message::AddFiller)
-                    .style(theme::text_input),
-                pick_list(
-                    FillerCategory::ALL.to_vec(),
-                    Some(self.filler_category),
-                    Message::FillerCategorySelected,
-                )
-                .placeholder("Categoría")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-                button("Añadir").on_press(Message::AddFiller).style(theme::primary),
-            ]
-            .spacing(theme::SPACE_2),
-            filler_lists(&self.config.fillers(), fs),
-            reset_button,
         ]
         .spacing(theme::SPACE_2)
         .width(Length::Fill);
@@ -2192,57 +2264,6 @@ impl WhisprApp {
             .padding(theme::SPACE_3)
             .style(|th| theme::card(th))
             .into()
-    }
-}
-
-/// Categoría de una muletilla en Ajustes. Cada variante corresponde a una
-/// regla distinta de `cleanup.rs`: inequívoca (cualquier posición), solo
-/// antes de pausa, o solo abriendo el turno. Se usa en el `pick_list` de
-/// Ajustes y en los mensajes de añadir/quitar.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FillerCategory {
-    Unambiguous,
-    Ambiguous,
-    StartOfTurn,
-}
-
-impl FillerCategory {
-    const ALL: [FillerCategory; 3] = [
-        FillerCategory::Unambiguous,
-        FillerCategory::Ambiguous,
-        FillerCategory::StartOfTurn,
-    ];
-
-    fn label(self) -> &'static str {
-        match self {
-            FillerCategory::Unambiguous => "En cualquier posición",
-            FillerCategory::Ambiguous => "Solo antes de pausa",
-            FillerCategory::StartOfTurn => "Solo al inicio",
-        }
-    }
-
-    /// Lista de palabras de esta categoría (solo lectura).
-    fn list<'a>(self, fillers: &'a FillerWords) -> &'a [String] {
-        match self {
-            FillerCategory::Unambiguous => &fillers.unambiguous,
-            FillerCategory::Ambiguous => &fillers.ambiguous,
-            FillerCategory::StartOfTurn => &fillers.start_of_turn,
-        }
-    }
-
-    /// Lista de palabras de esta categoría (para mutar).
-    fn list_mut<'a>(self, fillers: &'a mut FillerWords) -> &'a mut Vec<String> {
-        match self {
-            FillerCategory::Unambiguous => &mut fillers.unambiguous,
-            FillerCategory::Ambiguous => &mut fillers.ambiguous,
-            FillerCategory::StartOfTurn => &mut fillers.start_of_turn,
-        }
-    }
-}
-
-impl std::fmt::Display for FillerCategory {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.label())
     }
 }
 
@@ -2289,13 +2310,17 @@ fn mic_pick_list(
     if devices.is_empty() {
         return text("(sin micrófonos detectados)").size(fs.sm).into();
     }
-    pick_list(devices.to_vec(), selected.map(|s| s.to_string()), Message::InputDeviceSelected)
-        .placeholder("(por defecto)")
-        // Los nombres de dispositivos son largos: el selector se ajusta al
-        // ancho disponible (critical en portrait).
-        .width(Length::Fill)
-        .style(theme::pick_list)
-        .into()
+    pick_list(
+        devices.to_vec(),
+        selected.map(|s| s.to_string()),
+        Message::InputDeviceSelected,
+    )
+    .placeholder("(por defecto)")
+    // Los nombres de dispositivos son largos: el selector se ajusta al
+    // ancho disponible (critical en portrait).
+    .width(Length::Fill)
+    .style(theme::pick_list)
+    .into()
 }
 
 fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes) -> Element<'static, Message> {
@@ -2309,47 +2334,13 @@ fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes) -> Element
         col = col.push(
             row![
                 text(format!("{} → {}", entry.from, entry.to)).size(fs.md),
-                button(ui_text("✕")).on_press(Message::RemoveEntry(idx)).style(theme::secondary),
+                button(ui_text("✕"))
+                    .on_press(Message::RemoveEntry(idx))
+                    .style(theme::secondary),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
         );
-    }
-    col.into()
-}
-
-/// Listas de muletillas por categoría con botón ✕ para quitar (idéntico en
-/// estilo a `dictionary_list`). Solo muestra las categorías con palabras;
-/// si todas están vacías (el usuario quitó todo) avisa de que no se limpia
-/// nada y que «Por defecto» restaura las listas de serie.
-fn filler_lists(fillers: &FillerWords, fs: theme::FontSizes) -> Element<'static, Message> {
-    if FillerCategory::ALL
-        .iter()
-        .all(|category| category.list(fillers).is_empty())
-    {
-        return text("Sin muletillas: no se limpiará nada. «Por defecto» restaura las de serie.")
-            .size(fs.sm)
-            .into();
-    }
-    let mut col = Column::new().spacing(theme::SPACE_2);
-    for category in FillerCategory::ALL {
-        let words = category.list(fillers);
-        if words.is_empty() {
-            continue;
-        }
-        col = col.push(text(format!("{}:", category.label())).size(fs.xxs));
-        for (idx, word) in words.iter().enumerate() {
-            col = col.push(
-                row![
-                    text(word.clone()).size(fs.md),
-                    button(ui_text("✕"))
-                        .on_press(Message::RemoveFiller { category, index: idx })
-                        .style(theme::secondary),
-                ]
-                .spacing(theme::SPACE_2)
-                .align_y(iced::Alignment::Center),
-            );
-        }
     }
     col.into()
 }
@@ -2375,12 +2366,6 @@ fn transcribe_samples(
         );
         crate::transcribe::ensure_model(model, |_, _| {})?;
     }
-    let engine = WhisperEngine::load(model)?;
     let prompt = crate::transcribe::build_initial_prompt(&dictionary);
-    engine.transcribe(&samples, &inference, prompt.as_deref())
+    crate::transcribe::transcribe_cached(&samples, model, &inference, prompt.as_deref())
 }
-
-// ponytail: el contexto whisper se carga en cada turno; si el modelo small
-// se usa a diario, cachear el engine (Mutex<Option<WhisperEngine>> por modelo).
-#[allow(dead_code)]
-fn _engine_cache_hint() {}

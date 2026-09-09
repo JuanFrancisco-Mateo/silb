@@ -41,8 +41,7 @@ fn rx(pattern: &str) -> Regex {
 // falso positivo cuesta una llamada al LLM que devolverá `find` vacío y el
 // turno se conserva; un falso negativo solo significa no corregir.
 const NEGATION: &str = r"(?i)\b(no|mal|me equivoqu[eé]|equivocad[oa]|est[aá] mal|as[ií] no)\b";
-const CORRECTIVE_VERB: &str =
-    r"(?i)\b(corr[ií]ge|corrig[eé]|corr[ií]geme|cambia|cambie|pon|quita|qu[ií]tame|borra|elimina|sustituye|sustituir)\b";
+const CORRECTIVE_VERB: &str = r"(?i)\b(corr[ií]ge|corrig[eé]|corr[ií]geme|cambia|cambie|pon|quita|qu[ií]tame|borra|elimina|sustituye|sustituir)\b";
 const NUMERAL: &str = r"(?i)(\b\d+(?:[.,]\d+)?\b|en vez de|en lugar de|en su lugar|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|veinte|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|mil)\b";
 const REFERENCE: &str = r"(?i)\b(lo [úu]ltimo|la [úu]ltima palabra|la [úu]ltima frase|eso|esto|lo otro|esta palabra|esta frase|esa palabra|ese n[uú]mero|el n[uú]mero ese|lo que acabo de decir|aquello)\b";
 
@@ -147,7 +146,11 @@ mod tests {
             "esto es importante para mañana",
             "quiero comprar una mesa de cuatro patas",
         ] {
-            assert_eq!(classify(turn), CorrectiveDecision::Plain, "debe ser Plain: {turn:?}");
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::Plain,
+                "debe ser Plain: {turn:?}"
+            );
         }
     }
 
@@ -162,7 +165,11 @@ mod tests {
     #[test]
     fn negacion_sin_objetivo_es_dictado_normal() {
         // «no» idiomático en dictado cotidiano, sin numeral ni referencia.
-        for turn in ["no me gusta el café", "no sé si vendrá mañana", "mal no está"] {
+        for turn in [
+            "no me gusta el café",
+            "no sé si vendrá mañana",
+            "mal no está",
+        ] {
             assert_eq!(classify(turn), CorrectiveDecision::Plain, "{turn:?}");
         }
     }
@@ -185,13 +192,21 @@ mod tests {
             "me equivoqué, ese número no es",
             "no era 4, era 2",
         ] {
-            assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "debe ir al LLM: {turn:?}");
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::NeedsLlm,
+                "debe ir al LLM: {turn:?}"
+            );
         }
     }
 
     #[test]
     fn verbos_correctivos_con_objetivo_se_envian_al_llm() {
-        for turn in ["borra la última frase", "sustituye eso", "quítame el número ese"] {
+        for turn in [
+            "borra la última frase",
+            "sustituye eso",
+            "quítame el número ese",
+        ] {
             assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
         }
     }
@@ -210,11 +225,7 @@ mod tests {
             "la reunión es el jueves", // Plain
             "no me gusta el café",     // Plain
         ] {
-            assert_eq!(
-                classify(turn),
-                classify_with(turn, 50),
-                "{turn:?}"
-            );
+            assert_eq!(classify(turn), classify_with(turn, 50), "{turn:?}");
         }
     }
 
@@ -258,7 +269,11 @@ mod tests {
         // Aunque el umbral sea bajo, sigue vigente la regla base: sin
         // (neg|verb) o sin (num|reference) NO se enruta (spec §2:
         // «opción más segura es tratar el turno como dictado normal»).
-        for turn in ["no me gusta el café", "tengo dos reuniones", "cambia el canal"] {
+        for turn in [
+            "no me gusta el café",
+            "tengo dos reuniones",
+            "cambia el canal",
+        ] {
             for threshold in [10, 25, 50] {
                 assert_eq!(
                     classify_with(turn, threshold),
@@ -281,7 +296,11 @@ mod tests {
             "sustituye eso",
         ] {
             assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
-            assert_eq!(classify_with(turn, 50), CorrectiveDecision::NeedsLlm, "{turn:?}");
+            assert_eq!(
+                classify_with(turn, 50),
+                CorrectiveDecision::NeedsLlm,
+                "{turn:?}"
+            );
         }
     }
 
@@ -289,7 +308,10 @@ mod tests {
 
     #[test]
     fn apply_diff_sustituye_numerales() {
-        let diff = Diff { find: "4".into(), replace: "2".into() };
+        let diff = Diff {
+            find: "4".into(),
+            replace: "2".into(),
+        };
         assert_eq!(
             apply_diff("la reunión es a las 4 en punto", &diff).as_deref(),
             Some("la reunión es a las 2 en punto")
@@ -298,7 +320,10 @@ mod tests {
 
     #[test]
     fn apply_diff_sustituye_palabras_numero() {
-        let diff = Diff { find: "cuatro".into(), replace: "dos".into() };
+        let diff = Diff {
+            find: "cuatro".into(),
+            replace: "dos".into(),
+        };
         assert_eq!(
             apply_diff("la reunión es a las cuatro en punto", &diff).as_deref(),
             Some("la reunión es a las dos en punto")
@@ -307,16 +332,26 @@ mod tests {
 
     #[test]
     fn apply_diff_sustituye_frase_corta() {
-        let diff = Diff { find: "el informe semanal".into(), replace: "el informe del jueves".into() };
+        let diff = Diff {
+            find: "el informe semanal".into(),
+            replace: "el informe del jueves".into(),
+        };
         assert_eq!(
-            apply_diff("hay que revisar el informe semanal antes del viernes", &diff).as_deref(),
+            apply_diff(
+                "hay que revisar el informe semanal antes del viernes",
+                &diff
+            )
+            .as_deref(),
             Some("hay que revisar el informe del jueves antes del viernes")
         );
     }
 
     #[test]
     fn apply_diff_quita_texto_con_replace_vacio() {
-        let diff = Diff { find: " el jueves".into(), replace: String::new() };
+        let diff = Diff {
+            find: " el jueves".into(),
+            replace: String::new(),
+        };
         assert_eq!(
             apply_diff("la reunión es el jueves a las 4", &diff).as_deref(),
             Some("la reunión es a las 4")
@@ -328,7 +363,10 @@ mod tests {
         // §3.3: primera ocurrencia; el prompt pide que find sea único para
         // numerales («lo último» suele ser la última, pero el contrato puede
         // pedir una subcadena más larga que la haga única).
-        let diff = Diff { find: "4".into(), replace: "2".into() };
+        let diff = Diff {
+            find: "4".into(),
+            replace: "2".into(),
+        };
         assert_eq!(
             apply_diff("toma 4, no 4", &diff).as_deref(),
             Some("toma 2, no 4")
@@ -339,9 +377,15 @@ mod tests {
 
     #[test]
     fn diff_invalido_no_muta_texto() {
-        let ausente = Diff { find: "no existe".into(), replace: "X".into() };
+        let ausente = Diff {
+            find: "no existe".into(),
+            replace: "X".into(),
+        };
         assert_eq!(apply_diff("la reunión es a las 4", &ausente), None);
-        let vacio = Diff { find: String::new(), replace: "X".into() };
+        let vacio = Diff {
+            find: String::new(),
+            replace: "X".into(),
+        };
         assert_eq!(apply_diff("la reunión es a las 4", &vacio), None);
         // El texto original queda intacto tras los intentos.
         assert_eq!(apply_diff("la reunión es a las 4", &ausente), None);
@@ -353,7 +397,8 @@ mod tests {
     fn replace_last_turn_actualiza_el_final_del_transcript() {
         let transcript = "Hola. La reunión es a las 4";
         assert_eq!(
-            replace_last_turn(transcript, "La reunión es a las 4", "La reunión es a las 2").as_deref(),
+            replace_last_turn(transcript, "La reunión es a las 4", "La reunión es a las 2")
+                .as_deref(),
             Some("Hola. La reunión es a las 2")
         );
     }
@@ -382,8 +427,14 @@ mod tests {
         let instruction = "no no lo último está mal es 2 en vez de 4";
 
         assert_eq!(classify(instruction), CorrectiveDecision::NeedsLlm);
-        let after = apply_diff(turn, &Diff { find: "4".into(), replace: "2".into() })
-            .expect("find debe ser subcadena literal");
+        let after = apply_diff(
+            turn,
+            &Diff {
+                find: "4".into(),
+                replace: "2".into(),
+            },
+        )
+        .expect("find debe ser subcadena literal");
         assert_eq!(after, "La reunión es a las 2");
         let fixed = replace_last_turn(transcript, turn, &after).expect("turno presente");
         assert_eq!(fixed, "La reunión es a las 2");
@@ -395,7 +446,14 @@ mod tests {
     fn undo_restaura_el_estado_anterior() {
         let transcript = "La reunión es a las 4";
         let turn = "La reunión es a las 4";
-        let after = apply_diff(turn, &Diff { find: "4".into(), replace: "2".into() }).unwrap();
+        let after = apply_diff(
+            turn,
+            &Diff {
+                find: "4".into(),
+                replace: "2".into(),
+            },
+        )
+        .unwrap();
         let fixed = replace_last_turn(transcript, turn, &after).unwrap();
 
         // Deshacer = reemplazar el turno corregido por el original.
@@ -407,10 +465,20 @@ mod tests {
     fn apply_diff_preserva_el_resto_del_texto() {
         // Solo cambia el fragmento objetivo; ni prefijo ni sufijo se tocan
         // (importante para el undo de 1 nivel en app.rs).
-        let diff = Diff { find: "4".into(), replace: "2".into() };
+        let diff = Diff {
+            find: "4".into(),
+            replace: "2".into(),
+        };
         let after = apply_diff("la reunión es a las 4 en punto", &diff).unwrap();
         assert_eq!(after, "la reunión es a las 2 en punto");
-        let restored = apply_diff(&after, &Diff { find: "2".into(), replace: "4".into() }).unwrap();
+        let restored = apply_diff(
+            &after,
+            &Diff {
+                find: "2".into(),
+                replace: "4".into(),
+            },
+        )
+        .unwrap();
         assert_eq!(restored, "la reunión es a las 4 en punto");
     }
 }
