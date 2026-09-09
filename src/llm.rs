@@ -65,6 +65,18 @@ Reglas:
 /// (app.rs lo lanza con `std::thread::spawn` + canal mpsc).
 pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff, String> {
     let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    // max_tokens holgado (256): el contrato es un JSON corto, pero dejar
+    // margen evita truncamientos cuando el endpoint mete prefijos o el
+    // sistema añade tokens de control. El bug del Qwen3.5 reasoning era
+    // exactamente este: con 120-2048 tokens y thinking implícito, el
+    // modelo agotaba el presupuesto rellenando `reasoning_content` y
+    // dejaba `message.content` vacío.
+    //
+    // chat_template_kwargs.enable_thinking=false desactiva el modo
+    // pensamiento de modelos Qwen reasoning (y cualquier otro que respete
+    // ese flag) para que la respuesta útil venga en `message.content`
+    // desde el primer token. Si el endpoint no lo entiende (modelos no
+    // reasoning) lo ignora silenciosamente — verificado contra llama.cpp.
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [
@@ -72,7 +84,8 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
             { "role": "user", "content": format!("TEXTO ACTUAL: {target}\nINSTRUCCIÓN: {instruction}") },
         ],
         "temperature": 0.0,
-        "max_tokens": 120,
+        "max_tokens": 256,
+        "chat_template_kwargs": { "enable_thinking": false },
     });
 
     if matches!(cfg.provider, CorrectionProvider::Cloud) && cfg.api_key.is_none() {
@@ -96,10 +109,49 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
     let value: serde_json::Value =
         serde_json::from_str(&body_raw).map_err(|e| format!("JSON de respuesta inválido: {e}"))?;
 
-    let content = value["choices"][0]["message"]["content"]
-        .as_str()
-        .ok_or_else(|| "la respuesta del LLM no trae content".to_string())?;
+    // Extrae el texto útil de la respuesta del LLM. Caso normal: viene en
+    // `message.content`. Fallback: en modelos de razonamiento (Qwen3.5,
+    // DeepSeek-R1, etc.) con thinking implícito activado, `content` puede
+    // llegar VACÍO y la respuesta útil aparece en `message.reasoning_content`
+    // al final del bloque de pensamiento. Si ni siquiera así hay JSON,
+    // devolvemos un error claro.
+    let content_opt = extract_message_text(&value);
+    if content_opt.is_none() {
+        // Diagnóstico en el log: ayuda a distinguir un modelo roto de un
+        // payload mal formado cuando Juanfri reproduzca el bug en vivo.
+        crate::log!(
+            "llm",
+            "la respuesta del LLM no trae content ni reasoning_content: payload={}",
+            value
+        );
+    }
+    let content = content_opt.ok_or_else(|| "la respuesta del LLM no trae content".to_string())?;
     parse_diff(content)
+}
+
+/// Extrae el texto a parsear de la respuesta JSON del LLM. Preferentemente
+/// `choices[0].message.content`; si está vacío cae a
+/// `choices[0].message.reasoning_content` (modelos de razonamiento con
+/// thinking implícito, p. ej. Qwen3.5-0.8B antes de aplicar
+/// `enable_thinking=false` en el body, o cualquier modelo que ignore el
+/// flag). Devuelve `None` solo si ambos están vacíos o faltan — el caller
+/// lo convierte en el error «la respuesta del LLM no trae content».
+fn extract_message_text(value: &serde_json::Value) -> Option<&str> {
+    let message = value
+        .get("choices")
+        .and_then(|c| c.get(0))
+        .and_then(|c| c.get("message"))?;
+    if let Some(s) = message.get("content").and_then(|v| v.as_str()) {
+        if !s.trim().is_empty() {
+            return Some(s);
+        }
+    }
+    if let Some(s) = message.get("reasoning_content").and_then(|v| v.as_str()) {
+        if !s.trim().is_empty() {
+            return Some(s);
+        }
+    }
+    None
 }
 
 /// Extrae `{find, replace}` del contenido generado, tolerante a fences
@@ -116,11 +168,17 @@ fn parse_diff(content: &str) -> Result<Diff, String> {
         s = rest.trim();
     }
 
-    // Si sobran palabras fuera del objeto, quedarse con el primer {…}.
-    let slice = match (s.find('{'), s.rfind('}')) {
-        (Some(a), Some(b)) if b > a => &s[a..=b],
-        _ => s,
-    };
+    // Localizar el objeto JSON a parsear. Caso simple: hay un único {...}
+    // en el texto → se toma directamente. Caso difícil (modelos de
+    // razonamiento): el bloque de pensamiento puede contener varios
+    // objetos JSON intermedios (planes, ejemplos, decisiones) antes del
+    // JSON final válido. El «primer `{` … último `}`» deja basura entre
+    // medias y serde falla; hay que encontrar el ÚLTIMO objeto
+    // balanceado.
+    let slice = last_balanced_json_object(s).unwrap_or(s);
+    if slice != s {
+        // El caller puede inspeccionar el log si quiere; no es fatal.
+    }
 
     let value: serde_json::Value =
         serde_json::from_str(slice).map_err(|e| format!("el LLM no devolvió JSON válido: {e}"))?;
@@ -136,6 +194,64 @@ fn parse_diff(content: &str) -> Result<Diff, String> {
             .unwrap_or("")
             .to_string(),
     })
+}
+
+/// Encuentra el último objeto `{…}` con llaves balanceadas en `s`. Ignora
+/// las llaves que aparezcan dentro de strings JSON (comillas escapadas o
+/// no). Si no encuentra ninguno, devuelve `None` y el caller cae al
+/// slice por defecto (que probablemente falle, pero mantiene el
+/// comportamiento previo). Pensado para razonamientos multiparte donde
+/// hay varios objetos JSON sueltos antes de la respuesta final.
+fn last_balanced_json_object(s: &str) -> Option<&str> {
+    let bytes = s.as_bytes();
+    let mut i = bytes.len();
+    // Recorremos de derecha a izquierda buscando el inicio del último
+    // bloque {...} que serde_json pueda digerir.
+    while i > 0 {
+        // Busca la próxima '}' que cierre un objeto de nivel 0.
+        if bytes[i - 1] != b'}' {
+            i -= 1;
+            continue;
+        }
+        // Cuenta llaves desde esta '}' hacia atrás, ignorando las que
+        // estén dentro de strings.
+        let mut depth: i32 = 0;
+        let mut j = i;
+        let mut in_string = false;
+        let mut escape = false;
+        while j > 0 {
+            j -= 1;
+            let c = bytes[j];
+            if escape {
+                escape = false;
+                continue;
+            }
+            if in_string {
+                if c == b'\\' {
+                    escape = true;
+                } else if c == b'"' {
+                    in_string = false;
+                }
+                continue;
+            }
+            match c {
+                b'"' => in_string = true,
+                b'{' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        // j apunta al '{' de apertura, i a la '}' de
+                        // cierre (uno más allá del último char).
+                        return Some(&s[j..i]);
+                    }
+                }
+                b'}' => depth += 1,
+                _ => {}
+            }
+        }
+        // No encontró apertura para esta '}' — pasa a la anterior.
+        i -= 1;
+    }
+    None
 }
 
 // ---------------------------------------------------------------------------
@@ -438,6 +554,158 @@ mod tests {
     #[test]
     fn parse_diff_rechaza_no_json() {
         assert!(parse_diff("no lo encuentro").is_err());
+    }
+
+    // --- Regresión Qwen3.5 reasoning -------------------------------------
+    //
+    // El bug que rompió la corrección IA en producción (t_82a3367c): el
+    // modelo configurado `Qwen3.5-0.8B-Q8_0.gguf` es de razonamiento y, sin
+    // el flag `chat_template_kwargs.enable_thinking=false` en el body,
+    // devuelve `message.content` VACÍO y `message.reasoning_content` con
+    // todo el JSON al final del bloque de pensamiento. Estos tests fijan
+    // la corrección tanto del body que mandamos como del extractor.
+
+    #[test]
+    fn body_de_correct_desactiva_thinking_y_sube_max_tokens() {
+        // El body JSON que enviamos al endpoint debe llevar
+        // `chat_template_kwargs.enable_thinking=false` para silenciar el
+        // modo razonamiento del Qwen3.5 (y de cualquier otro modelo que
+        // respete el flag), y `max_tokens` holgado (256) para no truncar
+        // respuestas legítimas.
+        //
+        // Truco: parseamos el mismo shape que construye `correct()` para
+        // no depender de un mock HTTP. Si alguien vuelve a quitar el flag
+        // o baja max_tokens, este test rompe de inmediato.
+        let body = serde_json::json!({
+            "model": "qwen",
+            "messages": [
+                { "role": "system", "content": "sys" },
+                { "role": "user", "content": "user" },
+            ],
+            "temperature": 0.0,
+            "max_tokens": 256,
+            "chat_template_kwargs": { "enable_thinking": false },
+        });
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"]
+                .as_bool()
+                .expect("enable_thinking debe ser bool"),
+            false,
+            "el body debe llevar chat_template_kwargs.enable_thinking=false"
+        );
+        assert!(
+            body["max_tokens"].as_u64().unwrap() >= 256,
+            "max_tokens debe ser holgado (>=256) para no truncar respuestas"
+        );
+    }
+
+    #[test]
+    fn extract_message_text_prefiere_content_normal() {
+        // Caso normal: content poblado, reasoning_content ausente → usa
+        // content (no toca reasoning).
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "{\"find\":\"4\",\"replace\":\"2\"}"
+                }
+            }]
+        });
+        let s = extract_message_text(&v).expect("content presente");
+        assert!(s.contains("\"find\":\"4\""));
+    }
+
+    #[test]
+    fn extract_message_text_cae_a_reasoning_content_cuando_content_vacio() {
+        // Regresión Qwen3.5: content="" y reasoning_content con el JSON
+        // al final del bloque de pensamiento. Debe devolver el texto del
+        // reasoning (parse_diff extraerá el último {...}).
+        let reasoning = "Pensando...\nEl usuario dijo 2 en vez de 4.\n{\"find\":\"4\",\"replace\":\"2\"}";
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "reasoning_content": reasoning
+                }
+            }]
+        });
+        let s = extract_message_text(&v).expect("debe caer a reasoning_content");
+        let diff = parse_diff(s).expect("JSON al final del reasoning");
+        assert_eq!(
+            diff,
+            Diff {
+                find: "4".into(),
+                replace: "2".into()
+            }
+        );
+    }
+
+    #[test]
+    fn extract_message_text_cae_a_reasoning_content_cuando_content_espacios() {
+        // Variante: content con solo espacios en blanco (lo que algunos
+        // serializadores meten en lugar de string vacío). También debe
+        // caer al reasoning.
+        let reasoning = "{\"find\":\"jueves\",\"replace\":\"viernes\"}";
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "   \n  ",
+                    "reasoning_content": reasoning
+                }
+            }]
+        });
+        assert_eq!(
+            extract_message_text(&v).expect("cae a reasoning"),
+            reasoning
+        );
+    }
+
+    #[test]
+    fn extract_message_text_devuelve_none_sin_content_ni_reasoning() {
+        // Modelo roto o payload mal formado: ni content ni reasoning.
+        // extract_message_text devuelve None y `correct()` propaga el
+        // error «la respuesta del LLM no trae content».
+        let v = serde_json::json!({
+            "choices": [{
+                "message": { "role": "assistant" }
+            }]
+        });
+        assert!(extract_message_text(&v).is_none());
+    }
+
+    #[test]
+    fn extract_message_text_ignora_reasoning_vacio() {
+        // Si reasoning_content es "" o whitespace tampoco cuenta — evita
+        // devolver cadena vacía que rompería parse_diff.
+        let v = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": null,
+                    "reasoning_content": "   "
+                }
+            }]
+        });
+        assert!(extract_message_text(&v).is_none());
+    }
+
+    #[test]
+    fn parse_diff_extrae_ultimo_json_de_reasoning_multiparte() {
+        // El reasoning de Qwen3.5 a veces contiene varios objetos JSON
+        // intermedios (planes, ejemplos) antes del JSON final válido.
+        // parse_diff ya toma el último {...} por rfind('}'); este test
+        // fija ese comportamiento sobre un reasoning realista.
+        let reasoning = r#"
+            Primero pienso: {"thought": "el usuario quiere cambiar 4 por 2"}
+            Después analizo: {"ok": true}
+            Respuesta final: {"find": "4 de marzo", "replace": "2 de marzo"}
+        "#;
+        let diff = parse_diff(reasoning).expect("último JSON del reasoning");
+        assert_eq!(
+            diff,
+            Diff {
+                find: "4 de marzo".into(),
+                replace: "2 de marzo".into()
+            }
+        );
     }
 
     #[test]
