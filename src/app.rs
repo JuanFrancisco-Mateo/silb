@@ -163,6 +163,10 @@ pub enum Message {
     BubbleHideTimeoutChanged(BubbleHideTimeout),
     ToggleTheme,
     ToggleSettings,
+    /// Abre/cierra el panel «Ajustes avanzados» dentro de Ajustes (las
+    /// opciones técnicas quedan ocultas por defecto; el estado expandido o
+    /// colapsado se persiste en `config.advanced_settings_open`).
+    ToggleAdvancedSettings,
     Poll,
     // ── Burbuja flotante (overlay) ────────────────────────────────────────
     /// La ventana de la burbuja ya fue creada (aplicar WS_EX_NOACTIVATE).
@@ -1318,6 +1322,11 @@ impl WhisprApp {
                 self.settings_open = !self.settings_open;
                 Task::none()
             }
+            Message::ToggleAdvancedSettings => {
+                self.config.advanced_settings_open = Some(!self.config.advanced_open());
+                self.save_config();
+                Task::none()
+            }
             Message::Poll => {
                 // ── Tema auto: refresco periódico del estado del sistema ──
                 // Cada 5 s se relee AppsUseLightTheme (registro). El view se
@@ -1982,7 +1991,7 @@ impl WhisprApp {
         .style(theme::pick_list);
         let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref(), fs);
 
-        // ── Ajustes avanzados de transcripción ────────────────────────────
+        // ── Idioma de transcripción ───────────────────────────────────────
         // Selector de idioma: el item "Auto" representa autodetección
         // (whisper decide); el resto son códigos BCP-47 ("es", "en", "fr").
         // El getter `Config::language()` traduce "auto" a None y cualquier
@@ -2042,6 +2051,23 @@ impl WhisprApp {
             Space::new(Length::Shrink, 0).into()
         };
 
+        // ── Panel «Ajustes avanzados» (colapsado por defecto) ────────────
+        // Decisión de diseño (09/09/2026): las opciones técnicas (beam,
+        // hilos, fuente, corrección IA, inyección) quedan ocultas tras
+        // este interruptor; el estado expandido/colapsado se persiste en
+        // `config.advanced_settings_open` para que reabra como el usuario
+        // lo dejó.
+        let advanced_open = self.config.advanced_open();
+        let advanced_label = if advanced_open {
+            "Ajustes avanzados ▾"
+        } else {
+            "Ajustes avanzados ▸"
+        };
+        let advanced_header = button(ui_text(advanced_label))
+            .on_press(Message::ToggleAdvancedSettings)
+            .style(theme::secondary)
+            .width(Length::Fill);
+
         let panel = column![
             row![
                 text("Modelo")
@@ -2084,8 +2110,6 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
-            beam_row,
-            threads_row,
             text("Audio: normalizado automáticamente a 16 kHz")
                 .size(fs.sm)
                 .color(t.dim),
@@ -2113,31 +2137,6 @@ impl WhisprApp {
                 } else {
                     text("").size(fs.xxs).color(t.dim)
                 },
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Fuente")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        FontSize::Small,
-                        FontSize::Normal,
-                        FontSize::Large,
-                        FontSize::XLarge,
-                    ]
-                    .to_vec(),
-                    Some(self.config.font_size()),
-                    Message::FontSizeChanged,
-                )
-                .placeholder("Tamaño de fuente")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-                text(format!("{}×", self.config.font_size().factor()))
-                    .size(fs.xxs)
-                    .color(t.dim),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
@@ -2244,145 +2243,188 @@ impl WhisprApp {
             )
             .on_toggle(Message::ToggleAutoInject)
             .style(theme::checkbox),
-            checkbox(
-                "Corrección IA: otro modelo corrige lo dictado",
-                self.config.ai_correction_enabled(),
-            )
-            .on_toggle(Message::ToggleAiCorrection)
-            .style(theme::checkbox),
-            // ── Detalles de Corrección IA (spec CORRECCION-VOZ.md §3, §4) ────
-            // Subsección dentro de Ajustes: aparece bajo el toggle maestro.
-            // Permite elegir el proveedor y sus parámetros de conexión.
-            // Si el toggle está off, los detalles se muestran igualmente
-            // (informativos; el clasificador y la llamada al LLM no se
-            // usan porque el gate `ai_correction_enabled()` corta antes).
-            text("  Detalles").size(fs.sm).color(t.dim),
-            row![
-                text("Proveedor")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        CorrectionProvider::Default,
-                        CorrectionProvider::Cloud,
-                        CorrectionProvider::Custom,
-                    ]
-                    .to_vec(),
-                    Some(self.config.correction_provider()),
-                    Message::CorrectionProviderChanged,
-                )
-                .placeholder("Proveedor")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Endpoint LLM")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                text_input(
-                    "http://127.0.0.1:8081/v1",
-                    self.config.llm_base_url.as_deref().unwrap_or(""),
-                )
-                .on_input(Message::LlmEndpointChanged)
-                .style(theme::text_input)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Modelo")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                text_input(
-                    "ornith-1.0-9b / gpt-4o-mini",
-                    self.config.llm_model.as_deref().unwrap_or(""),
-                )
-                .on_input(Message::LlmModelChanged)
-                .style(theme::text_input)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("API key")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                text_input(
-                    "solo para cloud",
-                    self.config.llm_api_key.as_deref().unwrap_or("")
-                )
-                .on_input(Message::LlmApiKeyChanged)
-                .secure(true)
-                .style(theme::text_input)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            // Timeout: slider 1..=120 s (25 por defecto). Clamp del lado del
-            // getter: ≤0 cae al default; el slider nunca emite 0.
-            row![
-                text("Timeout (s)")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                slider(
-                    1..=120,
-                    self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
-                    Message::LlmTimeoutChanged,
-                )
-                .step(1u32)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            // Umbral del clasificador: 0..=100. Default 50 (conducta
-            // previa); 0 = pasivo (atajo al toggle off); 80+ muy
-            // conservador.
-            row![
-                text("Umbral clasif.")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                slider(
-                    0..=100,
-                    u32::from(self.config.llm_classifier_threshold()),
-                    Message::LlmThresholdChanged,
-                )
-                .step(1u32)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            checkbox(
-                "Confirmar antes de aplicar",
-                self.config.ai_correction_confirm(),
-            )
-            .on_toggle(Message::LlmConfirmToggled)
-            .style(theme::checkbox),
             text(format!("Atajo global: {}", self.hotkey_label))
                 .size(fs.xxs)
                 .color(t.dim),
-            text({
-                let inj = self.config.inject_settings();
-                let destino = match inj.window_filter.as_deref() {
-                    Some(f) => format!("solo «{f}»"),
-                    None => "cualquier app".to_string(),
-                };
-                format!(
-                    "Inyección: {} · retardo {} ms · {}",
-                    inj.format.label(),
-                    inj.delay.as_millis(),
-                    destino,
-                )
-            })
-            .size(fs.xxs)
-            .color(t.dim),
+            horizontal_rule(1).style(theme::rule),
+            advanced_header,
+            // El panel solo se expande si el usuario lo pide; colapsado (el
+            // estado por defecto) solo se ve el interruptor «Ajustes
+            // avanzados». El estado se persiste en config.
+            if advanced_open {
+                column![
+                    beam_row,
+                    threads_row,
+                    // Fuente: tamaño de letra global. Opción de apariencia
+                    // avanzada (el tema sí queda a la vista).
+                    row![
+                        text("Fuente")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        pick_list(
+                            [
+                                FontSize::Small,
+                                FontSize::Normal,
+                                FontSize::Large,
+                                FontSize::XLarge,
+                            ]
+                            .to_vec(),
+                            Some(self.config.font_size()),
+                            Message::FontSizeChanged,
+                        )
+                        .placeholder("Tamaño de fuente")
+                        .width(Length::Fill)
+                        .style(theme::pick_list),
+                        text(format!("{}×", self.config.font_size().factor()))
+                            .size(fs.xxs)
+                            .color(t.dim),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    checkbox(
+                        "Corrección IA: otro modelo corrige lo dictado",
+                        self.config.ai_correction_enabled(),
+                    )
+                    .on_toggle(Message::ToggleAiCorrection)
+                    .style(theme::checkbox),
+                    // ── Detalles de Corrección IA (spec CORRECCION-VOZ.md §3, §4) ────
+                    // Subsección dentro de Ajustes: aparece bajo el toggle maestro.
+                    // Permite elegir el proveedor y sus parámetros de conexión.
+                    // Si el toggle está off, los detalles se muestran igualmente
+                    // (informativos; el clasificador y la llamada al LLM no se
+                    // usan porque el gate `ai_correction_enabled()` corta antes).
+                    text("  Detalles").size(fs.sm).color(t.dim),
+                    row![
+                        text("Proveedor")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        pick_list(
+                            [
+                                CorrectionProvider::Default,
+                                CorrectionProvider::Cloud,
+                                CorrectionProvider::Custom,
+                            ]
+                            .to_vec(),
+                            Some(self.config.correction_provider()),
+                            Message::CorrectionProviderChanged,
+                        )
+                        .placeholder("Proveedor")
+                        .width(Length::Fill)
+                        .style(theme::pick_list),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Endpoint LLM")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        text_input(
+                            "http://127.0.0.1:8081/v1",
+                            self.config.llm_base_url.as_deref().unwrap_or(""),
+                        )
+                        .on_input(Message::LlmEndpointChanged)
+                        .style(theme::text_input)
+                        .width(Length::Fill),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("Modelo")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        text_input(
+                            "ornith-1.0-9b / gpt-4o-mini",
+                            self.config.llm_model.as_deref().unwrap_or(""),
+                        )
+                        .on_input(Message::LlmModelChanged)
+                        .style(theme::text_input)
+                        .width(Length::Fill),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    row![
+                        text("API key")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        text_input(
+                            "solo para cloud",
+                            self.config.llm_api_key.as_deref().unwrap_or("")
+                        )
+                        .on_input(Message::LlmApiKeyChanged)
+                        .secure(true)
+                        .style(theme::text_input)
+                        .width(Length::Fill),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    // Timeout: slider 1..=120 s (25 por defecto). Clamp del lado del
+                    // getter: ≤0 cae al default; el slider nunca emite 0.
+                    row![
+                        text("Timeout (s)")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        slider(
+                            1..=120,
+                            self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
+                            Message::LlmTimeoutChanged,
+                        )
+                        .step(1u32)
+                        .width(Length::Fill),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    // Umbral del clasificador: 0..=100. Default 50 (conducta
+                    // previa); 0 = pasivo (atajo al toggle off); 80+ muy
+                    // conservador.
+                    row![
+                        text("Umbral clasif.")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        slider(
+                            0..=100,
+                            u32::from(self.config.llm_classifier_threshold()),
+                            Message::LlmThresholdChanged,
+                        )
+                        .step(1u32)
+                        .width(Length::Fill),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    checkbox(
+                        "Confirmar antes de aplicar",
+                        self.config.ai_correction_confirm(),
+                    )
+                    .on_toggle(Message::LlmConfirmToggled)
+                    .style(theme::checkbox),
+                    // Resumen de la inyección (formato/retardo/filtro de la
+                    // ventana activa): informativo, configurable vía config.
+                    text({
+                        let inj = self.config.inject_settings();
+                        let destino = match inj.window_filter.as_deref() {
+                            Some(f) => format!("solo «{f}»"),
+                            None => "cualquier app".to_string(),
+                        };
+                        format!(
+                            "Inyección: {} · retardo {} ms · {}",
+                            inj.format.label(),
+                            inj.delay.as_millis(),
+                            destino,
+                        )
+                    })
+                    .size(fs.xxs)
+                    .color(t.dim),
+                ]
+                .spacing(theme::SPACE_2)
+            } else {
+                Column::new()
+            },
             horizontal_rule(1).style(theme::rule),
             text("Diccionario personal")
                 .size(fs.lg)
