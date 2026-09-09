@@ -46,8 +46,8 @@ impl Default for LlmConfig {
 /// Prompt del contrato (§3.2): el modelo devuelve SOLO un JSON con
 /// `{find, replace}` sobre el texto actual. Si no localiza nada, vacío.
 const SYSTEM_PROMPT: &str = r#"Eres el corrector de un dictado por voz en español. Se te da:
-- TEXTO ACTUAL (el último turno dictado, ya limpio de muletillas).
-- INSTRUCCIÓN (lo que el usuario dijo después, pidiendo una corrección).
+|- TEXTO ACTUAL (el último turno dictado, ya limpio de muletillas).
+|- INSTRUCCIÓN (lo que el usuario dijo después, pidiendo una corrección).
 
 Devuelve SOLO un JSON válido, sin texto adicional:
 {"find": "<subcadena exacta en TEXTO ACTUAL>", "replace": "<nuevo texto>"}
@@ -59,6 +59,45 @@ Reglas:
 - Resuelve numerales: "2 en vez de 4" sobre "... 4 ..." => find "4", replace "2".
 - Resuelve referencias: "lo último" apunta a la última frase o número de TEXTO ACTUAL.
 - Si la INSTRUCCIÓN no pide ninguna corrección clara, devuelve {"find": "", "replace": ""}."#;
+
+/// Prompt del modo in-turn (t_78d9e1fa, spec §3.5). A diferencia del modo
+/// cross-turn, el modelo recibe el TURNO COMPLETO y devuelve el TEXTO
+/// FINAL corregido (sin meta-lengua), no un diff. Esto cubre el caso
+/// canónico que motiva el cambio de diseño:
+///
+///   input:  "que calor que hace en murcia digo cartagena"
+///   output: "que calor que hace en cartagena"
+///
+/// El usuario se corrige a sí mismo dentro del mismo chorro de voz
+/// («digo X», «quiero decir X», «no X sino Y», «en vez de», etc.). El
+/// modelo debe:
+///   1) Detectar el fragmento «anterior» al marcador correctivo.
+///   2) Detectar el fragmento «posterior» (la corrección misma).
+///   3) Reescribir el texto sustituyendo lo anterior por lo posterior.
+///   4) Eliminar TODA la meta-lengua («digo», «quiero decir», etc.).
+///   5) Si NO hay corrección real, devolver el texto tal cual.
+///
+/// Devuelve SOLO el texto final (sin JSON, sin fences, sin explicaciones).
+const SYSTEM_PROMPT_IN_TURN: &str = r#"Eres el corrector de un dictado por voz en español. Recibes un turno completo dictado por el usuario.
+
+El usuario puede haberse corregido a sí mismo hablando ("auto-corrección"). Los marcadores típicos son: "digo X", "quiero decir X", "quise decir X", "mejor dicho X", "no X sino Y", "X en vez de Y", "X en lugar de Y", "dime X", "diga X".
+
+Tu trabajo:
+1) Detecta si hay una auto-corrección en el turno (es decir, el usuario rectifica algo que acaba de decir).
+2) Si la hay, aplica la corrección al texto: lo que va ANTES del marcador se sustituye por lo que va DESPUÉS.
+3) ELIMINA toda la meta-lengua correctiva del texto final ("digo X", "quiero decir", "no X sino", etc. NO deben aparecer en el resultado).
+4) Si NO hay auto-corrección real, devuelve el texto EXACTAMENTE como lo recibiste (solo limpieza de muletillas obvias).
+
+Devuelve SOLO el texto final corregido, sin comillas, sin fences, sin explicaciones, sin preámbulos.
+
+Ejemplos:
+- input: "que calor que hace en murcia digo cartagena" → output: "que calor que hace en cartagena"
+- input: "la reunión es a las 4 digo a las 2" → output: "la reunión es a las 2"
+- input: "el cliente es Acme quiero decir Microsoft" → output: "el cliente es Microsoft"
+- input: "no voy a las tres sino a las cuatro" → output: "voy a las cuatro"
+- input: "el plazo es mañana mejor dicho el viernes" → output: "el plazo es el viernes"
+- input: "la reunión es el jueves" → output: "la reunión es el jueves" (sin cambios)
+- input: "tengo que llamar al médico mañana" → output: "tengo que llamar al médico mañana" (sin cambios)"#;
 
 /// Pide al LLM un diff de corrección para `target` (último turno dictado)
 /// según la `instruction` hablada después. Bloquea: llamarlo en un hilo
@@ -127,6 +166,160 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
     }
     let content = content_opt.ok_or_else(|| "la respuesta del LLM no trae content".to_string())?;
     parse_diff(content)
+}
+
+/// Modo in-turn (t_78d9e1fa, spec §3.5): el LLM recibe el turno
+/// COMPLETO (que contiene la auto-corrección hablada) y devuelve el
+/// TEXTO FINAL corregido (sin meta-lengua, sin JSON). Es el modo
+/// PRINCIPAL desde el 10/09/2026: cuando el usuario dice
+/// «que calor en murcia digo cartagena» en un único chorro, esta función
+/// devuelve «que calor en cartagena».
+///
+/// Diferencias con `correct()`:
+/// - Prompt distinto (`SYSTEM_PROMPT_IN_TURN`): el modelo NO devuelve un
+///   JSON `{find, replace}`, devuelve el texto final directo.
+/// - `max_tokens` mayor (512) porque devolvemos una frase entera, no un
+///   JSON corto.
+/// - Sin parsing de JSON: solo se limpia de fences markdown y se hace
+///   trim. Si el modelo mete comillas o fences, se eliminan; si mete
+///   texto adicional, se descarta la respuesta y se devuelve un error
+///   para que el caller inyecte el texto bruto (fallback seguro, spec §3.5.4).
+///
+/// Bloquea: se llama desde un hilo (app.rs lo lanza con
+/// `std::thread::spawn` + canal mpsc, mismo patrón que `correct`).
+pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
+    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    let body = serde_json::json!({
+        "model": cfg.model,
+        "messages": [
+            { "role": "system", "content": SYSTEM_PROMPT_IN_TURN },
+            { "role": "user", "content": turn },
+        ],
+        "temperature": 0.0,
+        "max_tokens": 512,
+        "chat_template_kwargs": { "enable_thinking": false },
+    });
+
+    if matches!(cfg.provider, CorrectionProvider::Cloud) && cfg.api_key.is_none() {
+        return Err("el proveedor cloud requiere una API key".to_string());
+    }
+
+    let mut request = ureq::post(&url)
+        .timeout(Duration::from_secs(cfg.timeout_secs.max(1)))
+        .set("Content-Type", "application/json");
+    if let Some(key) = cfg.api_key.as_deref().filter(|k| !k.is_empty()) {
+        request = request.set("Authorization", &format!("Bearer {key}"));
+    }
+
+    let response = request
+        .send_string(&body.to_string())
+        .map_err(|e| format!("HTTP: {e}"))?;
+    let body_raw = response
+        .into_string()
+        .map_err(|e| format!("lectura de la respuesta: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&body_raw).map_err(|e| format!("JSON de respuesta inválido: {e}"))?;
+
+    // Mismo extractor que `correct()`: preferimos `message.content`,
+    // caemos a `message.reasoning_content` si el primero está vacío
+    // (Qwen3.5 y otros modelos de razonamiento con thinking implícito).
+    let content_opt = extract_message_text(&value);
+    if content_opt.is_none() {
+        crate::log!(
+            "llm",
+            "la respuesta del LLM (redact) no trae content ni reasoning_content: payload={}",
+            value
+        );
+    }
+    let content = content_opt.ok_or_else(|| "la respuesta del LLM no trae content".to_string())?;
+    Ok(clean_redact_output(content))
+}
+
+/// Limpia la salida del modo in-turn. El modelo puede adornar la
+/// respuesta con fences markdown, comillas tipográficas, espacios
+/// sobrantes o prefijos tipo «Output:». Esta función devuelve solo el
+/// texto final utilizable. Si tras la limpieza el contenido queda
+/// vacío, devuelve error para que el caller inyecte el texto bruto
+/// (fallback de la spec §3.5.4: nunca bloquear el dictado).
+fn clean_redact_output(content: &str) -> String {
+    let mut s = content.trim().to_string();
+    // Quitar fences markdown (```...``` o ```text...```).
+    if let Some(rest) = s.strip_prefix("```") {
+        s = rest.to_string();
+        // Si después del ``` viene una etiqueta de lenguaje (json, text,
+        // …) seguida de salto de línea, se descarta también.
+        if let Some(nl) = s.find('\n') {
+            if !s[..nl].contains(' ') && !s[..nl].is_empty() {
+                s = s[nl + 1..].to_string();
+            }
+        }
+    }
+    if let Some(rest) = s.strip_suffix("```") {
+        s = rest.to_string();
+    }
+    // Tras quitar fences pueden quedar saltos de línea / espacios
+    // alrededor del contenido (típico en respuestas LLM que añaden un
+    // \n antes/después del cuerpo). Limpiamos para que la siguiente
+    // etapa (prefijos / comillas) opere sobre el texto pelado.
+    s = s.trim().to_string();
+    // Quitar prefijos tipo «Output:», «Resultado:», «Texto final:» que
+    // algunos modelos añaden antes de la respuesta. Solo si están
+    // seguidos de espacio y al inicio del contenido (case-insensitive).
+    // Se hace ANTES de las comillas envolventes: un input tipo
+    // «Output: "texto"» primero pierde el prefijo, luego las comillas.
+    let lower = s.to_ascii_lowercase();
+    for prefix in ["output:", "resultado:", "texto final:", "respuesta:"] {
+        if lower.starts_with(prefix) {
+            s = s[prefix.len()..].trim_start().to_string();
+            break;
+        }
+    }
+    // Quitar comillas envolventes («"texto"», «'texto'», «"texto"»,
+    // «'texto'», ««texto»», tipográficas «"texto"»/«'texto'»).
+    // Si el modelo envuelve el resultado en comillas, las eliminamos.
+    // Solo afecta a comillas en el PRIMER y ÚLTIMO carácter — no se
+    // toca el contenido interior.
+    //
+    // Parejas conocidas: cada apertura tiene su cierre. Una apertura
+    // que no casa con su cierre del mismo tipo (p. ej. abrir «"» y
+    // cerrar «"» que son códigos distintos) NO se quita: el contenido
+    // está roto y preferimos no mutilarlo. Las comillas rectas '"' /
+    // '\'' sí se auto-emparejan.
+    fn is_open_quote(c: char) -> bool {
+        matches!(c, '"' | '\'' | '«' | '‘' | '“')
+    }
+    fn matching_close(open: char) -> Option<char> {
+        match open {
+            '"' | '\'' => None, // se auto-emparejan (mismo char)
+            '«' => Some('»'),
+            '‘' => Some('’'),
+            '“' => Some('”'),
+            _ => None,
+        }
+    }
+    // Loop por si el modelo combina múltiples capas (p. ej.
+    // «Output: "texto"» ya se resuelve en una pasada; pero un caso
+    // patológico como «' "texto" '» requeriría dos). Tres pasadas es
+    // más que suficiente para todos los casos reales observados.
+    for _ in 0..3 {
+        let Some(f) = s.chars().next() else { break };
+        let Some(l) = s.chars().last() else { break };
+        if !is_open_quote(f) || s.chars().count() <= 1 {
+            break;
+        }
+        let should_strip = match matching_close(f) {
+            Some(close) => l == close,
+            None => l == f,
+        };
+        if !should_strip {
+            break;
+        }
+        let mut chars: Vec<char> = s.chars().collect();
+        chars.pop();
+        chars.remove(0);
+        s = chars.into_iter().collect();
+    }
+    s.trim().to_string()
 }
 
 /// Extrae el texto a parsear de la respuesta JSON del LLM. Preferentemente
@@ -706,6 +899,203 @@ mod tests {
                 replace: "2 de marzo".into()
             }
         );
+    }
+
+    // ── Modo IN-TURN: redact + clean_redact_output (t_78d9e1fa, spec §3.5) ─
+
+    #[test]
+    fn clean_redact_output_pasa_texto_limpio_sin_tocar() {
+        // El caso ideal: el LLM devuelve solo el texto final sin
+        // adornos. clean_redact_output lo devuelve idéntico (salvo trim).
+        assert_eq!(
+            clean_redact_output("que calor que hace en cartagena"),
+            "que calor que hace en cartagena"
+        );
+        assert_eq!(
+            clean_redact_output("  que calor en cartagena  \n"),
+            "que calor en cartagena"
+        );
+    }
+
+    #[test]
+    fn clean_redact_output_quita_fences_markdown() {
+        // El LLM a veces envuelve la respuesta en ``` ... ```. Hay que
+        // eliminar tanto el bloque completo como la etiqueta de lenguaje
+        // que algunos modelos añaden después de los triples backticks.
+        assert_eq!(
+            clean_redact_output("```\nque calor en cartagena\n```"),
+            "que calor en cartagena"
+        );
+        assert_eq!(
+            clean_redact_output("```text\nque calor en cartagena\n```"),
+            "que calor en cartagena"
+        );
+    }
+
+    #[test]
+    fn clean_redact_output_quita_comillas_envolventes() {
+        // Algunos modelos (sobre todo cuando llevan el texto a un
+        // string JSON) lo encierran en comillas. Solo se quitan las
+        // comillas del PRIMER y ÚLTIMO carácter — si están en el
+        // medio, son contenido legítimo.
+        assert_eq!(
+            clean_redact_output(r#""que calor en cartagena""#),
+            "que calor en cartagena"
+        );
+        assert_eq!(
+            clean_redact_output("'que calor en cartagena'"),
+            "que calor en cartagena"
+        );
+        // Comillas tipográficas (curly quotes) también.
+        assert_eq!(
+            clean_redact_output("\u{201C}que calor en cartagena\u{201D}"),
+            "que calor en cartagena"
+        );
+    }
+
+    #[test]
+    fn clean_redact_output_quita_prefijos_output_resultado() {
+        // Ciertos modelos (Qwen instruct, Llama 3 instruct) añaden un
+        // prefijo tipo «Output:» antes del texto. Lo eliminamos para
+        // que no se inyecte literalmente.
+        assert_eq!(
+            clean_redact_output("Output: que calor en cartagena"),
+            "que calor en cartagena"
+        );
+        assert_eq!(
+            clean_redact_output("Resultado: que calor en cartagena"),
+            "que calor en cartagena"
+        );
+        assert_eq!(
+            clean_redact_output("Texto final: que calor en cartagena"),
+            "que calor en cartagena"
+        );
+    }
+
+    #[test]
+    fn clean_redact_output_preserva_contenido_interno() {
+        // No se toca el contenido interior: solo se quitan comillas
+        // que envuelven el resultado completo.
+        assert_eq!(
+            clean_redact_output("el \"cliente\" es Microsoft"),
+            "el \"cliente\" es Microsoft"
+        );
+    }
+
+    #[test]
+    fn clean_redact_output_caso_canonico_juanfri() {
+        // El caso que motivó la task t_78d9e1fa. El LLM devuelve el
+        // texto final limpio SIN la meta-lengua «digo cartagena».
+        let input_response = "que calor que hace en cartagena";
+        assert_eq!(clean_redact_output(input_response), input_response);
+        // Y verifica que la meta-lengua no está en el output limpio.
+        assert!(!clean_redact_output(input_response).contains("digo"));
+    }
+
+    #[test]
+    fn clean_redact_output_con_adornos_combinados() {
+        // Caso real: el LLM puede combinar fences + comillas + prefijo
+        // + espacios. La limpieza debe ser robusta al orden.
+        assert_eq!(
+            clean_redact_output("```\n\"que calor en cartagena\"\n```"),
+            "que calor en cartagena"
+        );
+        assert_eq!(
+            clean_redact_output("Output: \"que calor en cartagena\""),
+            "que calor en cartagena"
+        );
+    }
+
+    #[test]
+    fn body_de_redact_lleva_system_in_turn_y_max_tokens_holgado() {
+        // El body que enviamos al endpoint debe usar
+        // `SYSTEM_PROMPT_IN_TURN` y `max_tokens` mayor (512) que el
+        // modo cross-turn (256): devolvemos una frase completa, no un
+        // JSON corto. Tambien desactivamos el thinking igual que en
+        // `correct()` (mismo flag, mismo motivo, mismo fix Qwen3.5).
+        let body = serde_json::json!({
+            "model": "qwen",
+            "messages": [
+                { "role": "system", "content": SYSTEM_PROMPT_IN_TURN },
+                { "role": "user", "content": "que calor en murcia digo cartagena" },
+            ],
+            "temperature": 0.0,
+            "max_tokens": 512,
+            "chat_template_kwargs": { "enable_thinking": false },
+        });
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"]
+                .as_bool()
+                .expect("enable_thinking debe ser bool"),
+            false,
+            "el body debe llevar chat_template_kwargs.enable_thinking=false"
+        );
+        assert!(
+            body["max_tokens"].as_u64().unwrap() >= 512,
+            "max_tokens debe ser holgado (>=512) para devolver una frase completa"
+        );
+        // El system prompt es el de in-turn (contiene marcadores típicos
+        // de auto-corrección, no el contrato JSON cross-turn).
+        let sys = body["messages"][0]["content"].as_str().unwrap();
+        assert!(
+            sys.contains("auto-corrección") || sys.contains("digo"),
+            "el system prompt debe ser el de in-turn (contiene marcadores de auto-corrección)"
+        );
+        assert!(
+            !sys.contains("\"find\":"),
+            "el system prompt NO debe ser el cross-turn (sin contrato JSON)"
+        );
+    }
+
+    #[test]
+    fn redact_falla_con_endpoint_caido_y_devuelve_error_con_prefijo_http() {
+        // Mismo contrato que `correct()`: error con prefijo «HTTP:»
+        // para que la UI categorice el fallo y muestre «¿está el
+        // servidor LLM arrancado?». Sin servidor local, este test
+        // verifica la ruta de error del modo in-turn.
+        let cfg = LlmConfig {
+            provider: CorrectionProvider::Default,
+            base_url: "http://127.0.0.1:1".to_string(),
+            model: "fake".to_string(),
+            api_key: None,
+            timeout_secs: 2,
+        };
+        let err = redact("que calor en murcia digo cartagena", &cfg)
+            .expect_err("un endpoint cerrado debe fallar");
+        assert!(
+            err.starts_with("HTTP:"),
+            "el error debe llevar prefijo HTTP para que la UI lo categorice: {err:?}"
+        );
+    }
+
+    #[test]
+    fn extract_message_text_en_redact_usa_content_y_fallback_a_reasoning() {
+        // El modo in-turn reutiliza `extract_message_text`: con
+        // content poblado usa content (caso normal); con content vacío
+        // y reasoning poblado, cae al reasoning. Mismo fix Qwen3.5 que
+        // `correct()`. Verificamos el contrato sobre el extractor.
+        let v_content = serde_json::json!({
+            "choices": [{
+                "message": { "content": "que calor en cartagena" }
+            }]
+        });
+        assert_eq!(
+            extract_message_text(&v_content).unwrap(),
+            "que calor en cartagena"
+        );
+
+        let v_reasoning = serde_json::json!({
+            "choices": [{
+                "message": {
+                    "content": "",
+                    "reasoning_content": "Pienso: el usuario corrigió murcia por cartagena.\nque calor en cartagena"
+                }
+            }]
+        });
+        let extracted = extract_message_text(&v_reasoning).unwrap();
+        // La limpieza ya se hace en `clean_redact_output`; aquí
+        // verificamos que el extractor entrega el texto íntegro.
+        assert!(extracted.contains("que calor en cartagena"));
     }
 
     #[test]

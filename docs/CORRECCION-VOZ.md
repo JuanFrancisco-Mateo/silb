@@ -165,6 +165,107 @@ frecuente; el dictado normal no la paga. Si se quiere bajar, opciones: modelo
 
 ---
 
+## 3.5 Auto-corrección IN-TURNO (modo principal desde 10/09/2026)
+
+### 3.5.1 Motivación
+
+El modo cross-turn (§3.2) cubre correcciones en las que el usuario
+dicta una frase separada apuntando a un turno anterior («no no lo último
+está mal, es 2 en vez de 4»). Pero el caso más natural al dictar
+fluidamente es **corregirse sobre la marcha**, en el mismo chorro de voz:
+
+> «que calor que hace en murcia **digo cartagena**»
+
+Sin soporte in-turn, la app escribe textualmente
+«que calor que hace en murcia digo cartagena» — incluyendo la
+meta-lengua correctiva, que NO debe aparecer en el texto final.
+
+### 3.5.2 Detección
+
+Nuevo clasificador `classify_in_turn(turn) -> bool` en
+`src/domain/corrective.rs` que reconoce los marcadores típicos de
+auto-corrección dentro del mismo turno:
+
+- `digo X` / `diga X` / `dime X`
+- `quiero decir X` / `quise decir X` / `mejor dicho X`
+- `en vez de` / `en lugar de` (en contexto, no coloquial)
+- `mejor:` / `mejor X que Y`
+
+A diferencia de `classify` (§3.2), **no exige numeral ni referencia
+anafórica**: el «antes» y el «después» viven en el mismo turno. La señal
+correctiva basta por sí sola; el LLM resuelve qué sustituir.
+
+Filtros de seguridad:
+- Turno ≥ 6 chars y ≥ 3 chars antes del marcador y ≥ 1 char después
+  (evita «digo sí», «digo», etc.).
+- Kill-switch `classify_in_turn_with(turn, enabled)` para posibles
+  toggles futuros en Ajustes.
+
+### 3.5.3 Redacción del LLM (no diff)
+
+Nuevo prompt `SYSTEM_PROMPT_IN_TURN` en `src/llm.rs`. El LLM recibe el
+**TURNO COMPLETO** y devuelve el **TEXTO FINAL corregido** (sin
+meta-lengua), NO un JSON `{find, replace}`. El modelo:
+
+1. Detecta si hay auto-corrección en el turno.
+2. Si la hay, aplica la corrección: lo anterior al marcador se
+   sustituye por lo posterior.
+3. **Elimina toda la meta-lengua** («digo X», «quiero decir», etc.).
+4. Si NO hay auto-lengua, devuelve el texto tal cual.
+
+Función: `redact(turn, cfg) -> Result<String, String>`. Mismo manejo
+de errores que `correct()` (§3.4): timeout, errores HTTP, JSON
+malformado, etc. → fallback al input bruto (spec §3.5.4).
+
+Limpieza de la respuesta (`clean_redact_output`):
+- Quita fences markdown (` ``` `).
+- Quita prefijos tipo «Output:», «Resultado:».
+- Quita comillas envolventes (rectas, tipográficas, «», etc.).
+- Trim final.
+
+### 3.5.4 Fallback seguro
+
+Si el LLM falla, devuelve vacío, o devuelve texto que aún contiene
+meta-lengua correctiva (`contains_in_turn_marker`), el flujo cae al
+**input bruto**: el turno original se inyecta como un dictado normal
+(spec §3.3.1 ampliado: nunca perder texto del usuario). El log
+`%APPDATA%\whispr-open\whispr-open.log` registra el motivo exacto del
+fallback.
+
+### 3.5.5 Routing y prioridad
+
+En `app.rs` (función `Message::TranscriptionDone`), el orden es:
+
+1. **IN-TURN** (este modo, primario): si `classify_in_turn(processed)` →
+   el LLM recibe el turno completo y devuelve el texto final.
+2. **CROSS-TURN** (modo histórico, fallback): si
+   `classify_with(processed, threshold) == NeedsLlm` y existe
+   `last_turn` previo → el LLM recibe (last_turn, instruction) y
+   devuelve `{find, replace}`.
+3. **PLAIN**: el resto → dictado normal sin intervención del LLM.
+
+Si un turno dispara AMBOS clasificadores (caso mixto, p. ej. «no no lo
+último está mal es 2 en vez de 4» que tiene referencia previa Y
+«en vez de»), gana el in-turn por prioridad.
+
+### 3.5.6 Caso canónico
+
+| Paso | Valor |
+|---|---|
+| Input (turno completo) | «que calor que hace en murcia digo cartagena» |
+| `classify_in_turn` | true |
+| LLM input | el turno completo |
+| LLM output | «que calor que hace en cartagena» |
+| Inyectado en app activa | «que calor que hace en cartagena» |
+
+### 3.5.7 Latencia esperada
+
+~4-6 s para un modelo 9B local (mismo orden que el cross-turn). El
+dictado normal no la paga: solo se invoca el LLM si `classify_in_turn`
+detecta auto-corrección.
+
+---
+
 ## 4. UX (confirmar cambio / undo)
 
 Principio del skill `app-design-2026`: **AI transparente y overrideable**. El
@@ -247,15 +348,25 @@ Lo que **no** debe pasar:
 
 ## 7. Criterios de aceptación
 
-- `cargo test` verde; nuevos tests en `corrective.rs`:
-  - Clasificador: dictado normal no se marca como corrección (≥ 5 casos).
-  - `apply_diff`: sustitución correcta de numerales y de «lo último» (≥ 5).
+- `cargo test` verde; tests en `corrective.rs` y `llm.rs`:
+  - Clasificador cross-turn: dictado normal no se marca como
+    corrección (≥ 5 casos). Modo in-turn: caso canónico de Juanfri
+    «que calor en murcia digo cartagena» + variantes.
+  - `apply_diff` (cross-turn): sustitución correcta de numerales y de
+    «lo último» (≥ 5).
   - Diff inválido (`find` no presente) → no muta el texto.
   - Undo: restaura `before` tras `after`.
-- El caso canónico «no no lo último está mal, es 2 en vez de 4» sobre
-  «la reunión es a las 4 en punto» produce «la reunión es a las 2 en punto».
+  - `clean_redact_output`: fences, comillas (rectas + tipográficas),
+    prefijos, combinaciones.
+  - `contains_in_turn_marker` / `strip_in_turn_meta`: red de seguridad.
+- Caso canónico cross-turn: «no no lo último está mal, es 2 en vez de 4»
+  sobre «la reunión es a las 4 en punto» produce «la reunión es a las
+  2 en punto».
+- Caso canónico in-turn (t_78d9e1fa): «que calor que hace en murcia
+  digo cartagena» produce «que calor que hace en cartagena» (la
+  meta-lengua desaparece; el LLM redacta, no aplica diff).
 - `cargo check` sin errores; `src/transcribe.rs` y `src/audio.rs` intactos.
-- Commit en español, por capa (v1 reglas, v2 LLM).
+- Commit en español, por capa (v1 reglas, v2 LLM, v3 in-turn).
 
 ## 8. Decisiones cerradas
 
