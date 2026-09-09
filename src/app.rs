@@ -2,7 +2,7 @@
 //! limpieza de muletillas, diccionario personal, selector de modelo e
 //! inyección en la app activa.
 
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyEvent;
@@ -42,6 +42,60 @@ pub enum Status {
         total: u64,
     },
     Error(String),
+}
+
+/// Fase de arranque de la app (requisito UX 09/09/2026: «la app levanta todo
+/// por sí misma»). Mientras no está Ready la vista principal muestra SOLO la
+/// pantalla de carga (spinner + texto) y el dictado queda bloqueado: la
+/// primera pulsación del atajo no debe encontrarse el modelo de voz aún en
+/// disco.
+#[derive(Debug, Clone, PartialEq)]
+pub enum StartupPhase {
+    /// Whisper (y luego el server LLM si procede) cargándose en background.
+    Loading,
+    /// Todo listo: dictado disponible.
+    Ready,
+    /// Fallo bloqueante de whisper (modelo ausente y descarga fallida, o
+    /// contexto que no carga): la app no puede transcribir. `error` es el
+    /// motivo legible. «Reintentar» relanza el arranque completo.
+    Failed { error: String },
+}
+
+/// Estado del corrector LLM local tras el auto-inicio (o su ausencia). La
+/// corrección IA solo se enruta cuando está `Ready`; `Disabled` muestra el
+/// motivo en la UI (nunca silencioso) pero el dictado sigue funcionando.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlmStatus {
+    /// Aún no comprobado (arranque en curso, o proveedor cloud/custom que
+    /// no necesita server local).
+    Unknown,
+    /// Server LLM respondiendo: ya corría antes de abrir la app o lo lanzó
+    /// ella misma. `launched` distingue el caso (log).
+    Ready { launched: bool },
+    /// Corrección IA desactivada en runtime con motivo visible. Razón vacía
+    /// = desactivada por el usuario en Ajustes (sin banner de error).
+    Disabled(String),
+}
+
+/// Eventos del hilo de arranque en background (prerroll whisper + server
+/// LLM). Se entregan por `startup_rx` y se procesan en el Poll (patrón
+/// transcribe_rx/llm_rx: nunca bloquear el bucle de la UI).
+#[derive(Debug, Clone)]
+pub enum StartupEvent {
+    /// Progreso de la descarga del modelo whisper (0,0 = descarga arrancada;
+    /// con `total=0` aún no se conoce el tamaño).
+    WhisperProgress { downloaded: u64, total: u64 },
+    /// El modelo whisper está descargado y cargado en el cache de contexto.
+    WhisperReady,
+    /// La carga/descarga de whisper falló: la app no puede transcribir.
+    WhisperFailed(String),
+    /// La fase LLM comienza (verificando server / lanzándolo).
+    LlmStarting,
+    /// Server LLM listo (ya corría o lo lanzó la app) — arranque terminado.
+    LlmReady { launched: bool },
+    /// Server LLM no disponible (o corrección off): arranque terminado con
+    /// la corrección IA desactivada. Razón vacía = el usuario la apagó.
+    LlmDisabled(String),
 }
 
 /// Lectura visual del estado del micrófono (feedback doble: color + texto).
@@ -194,6 +248,12 @@ pub enum Message {
     /// (resultado de `iced::font::load` al arrancar; `Error` es ininhabitable
     /// en iced 0.13, pero se loguea por si en el futuro se propaga algo).
     FontLoaded(Result<(), iced::font::Error>),
+    // ── Arranque (prerroll whisper + server LLM) ──────────────────────────
+    /// Evento del hilo de arranque en background (ver [`StartupEvent`]).
+    Startup(StartupEvent),
+    /// «Reintentar» desde la pantalla de error de arranque: relanza el
+    /// prerroll completo (whisper → LLM).
+    RetryStartup,
 }
 
 pub struct WhisprApp {
@@ -262,6 +322,21 @@ pub struct WhisprApp {
     /// La burbuja está oculta por el auto-ocultar (evita re-enviar
     /// change_mode(Windowed) a una ventana que ya está visible).
     bubble_hidden: bool,
+    // ── Arranque (prerroll whisper + server LLM) ─────────────────────────
+    /// Fase de arranque: Loading/Ready/Failed. Mientras no esté Ready la
+    /// vista principal es solo la pantalla de carga y el dictado está
+    /// bloqueado.
+    startup: StartupPhase,
+    /// Estado del corrector LLM tras el auto-inicio (gate del enrutado).
+    llm_status: LlmStatus,
+    /// Canal de eventos del hilo de arranque (se drena en el Poll; None al
+    /// terminar o si no hay arranque en curso).
+    startup_rx: Option<Receiver<StartupEvent>>,
+    /// Texto de la línea de estado de la pantalla de carga («Cargando modelo
+    /// de voz…», «Preparando corrección IA…», …).
+    startup_label: String,
+    /// Tick de animación del spinner de carga (lo avanza el Poll a 10 Hz).
+    startup_tick: u32,
 }
 
 impl WhisprApp {
@@ -310,7 +385,7 @@ impl WhisprApp {
             None => Task::none(),
         };
 
-        let app = Self {
+        let mut app = Self {
             config,
             status: Status::Idle,
             transcript: String::new(),
@@ -350,7 +425,25 @@ impl WhisprApp {
             last_theme_check: std::time::Instant::now(),
             bubble_hide_deadline: None,
             bubble_hidden: false,
+            // Arranque: la app levanta TODO por sí misma en background —
+            // pantalla de carga visible (spinner + fase) y dictado bloqueado
+            // hasta que whisper está listo (requisito UX 09/09/2026).
+            startup: StartupPhase::Loading,
+            llm_status: LlmStatus::Unknown,
+            startup_rx: None,
+            startup_label: "Preparando la app…".to_string(),
+            startup_tick: 0,
         };
+
+        // Hilo de arranque: descarga si hace falta + carga whisper en cache
+        // + verifica/lanza el server LLM. Los eventos llegan por canal y el
+        // Poll los procesa (mismo patrón que transcribe_rx/llm_rx). La
+        // pantalla de carga se ve desde el primer frame.
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let startup_config = app.config.clone();
+        std::thread::spawn(move || run_startup_thread(startup_config, startup_tx));
+        app.startup_rx = Some(startup_rx);
+
         (app, Task::batch([bubble_task, font_task]))
     }
 
@@ -621,6 +714,43 @@ impl WhisprApp {
         &self.status
     }
 
+    /// ¿El arranque aún está en curso (whisper/LLM cargándose)? Mientras sea
+    /// cierto, el dictado está bloqueado y la vista principal es la pantalla
+    /// de carga. Lo usa la burbuja para mostrar el ámbar de «cargando».
+    pub(crate) fn is_starting(&self) -> bool {
+        matches!(self.startup, StartupPhase::Loading)
+    }
+
+    /// Color de la burbuja durante el arranque: ámbar mientras carga, rojo
+    /// si el arranque falló sin modelo transcribible. None = el arranque no
+    /// pinta la burbuja (deja que `bubble_status` decida).
+    pub(crate) fn startup_bubble_color(&self) -> Option<Color> {
+        match &self.startup {
+            StartupPhase::Loading => Some(crate::theme::WARN),
+            StartupPhase::Failed { .. } => Some(crate::theme::ERR),
+            StartupPhase::Ready => None,
+        }
+    }
+
+    /// Actualiza el ítem de estado del menú de bandeja (best-effort: sin
+    /// bandeja no hay nada que actualizar).
+    fn set_tray_status(&self, label: &str) {
+        if let Some(tray) = &self.tray {
+            tray.status_item.set_text(label);
+        }
+    }
+
+    /// Relanza la fase LLM en background (toggle de corrección IA activado
+    /// en caliente tras un arranque sin server). Eventos por `startup_rx`;
+    /// el Poll los procesa igual que los del arranque inicial.
+    fn spawn_llm_startup(&mut self) -> Task<Message> {
+        let (startup_tx, startup_rx) = mpsc::channel();
+        let startup_config = self.config.clone();
+        std::thread::spawn(move || run_llm_phase(startup_config, startup_tx));
+        self.startup_rx = Some(startup_rx);
+        Task::none()
+    }
+
     pub(crate) fn config_is_dark(&self) -> bool {
         // Modo resuelto: Auto → estado cacheado del sistema (AppsUseLightTheme,
         // refrescado en el Poll cada 5 s); Claro/Oscuro → forzado por config.
@@ -760,12 +890,15 @@ impl WhisprApp {
                 self.update(Message::StartRecording)
             }
             Message::StartRecording => {
+                // Dictado bloqueado hasta que whisper esté listo (pantalla de
+                // carga) y si el arranque falló sin modelo transcribible.
                 if self.audio.is_some()
                     || self.transcribe_rx.is_some()
                     || self.llm_rx.is_some()
                     || self.llm_pending.is_some()
                     || self.pending_diff.is_some()
                     || matches!(self.status, Status::Downloading { .. })
+                    || !matches!(self.startup, StartupPhase::Ready)
                 {
                     return Task::none();
                 }
@@ -868,9 +1001,13 @@ impl WhisprApp {
                         );
                         let classifier_threshold = self.config.llm_classifier_threshold();
                         let enabled = self.config.ai_correction_enabled();
+                        let llm_ready = matches!(self.llm_status, LlmStatus::Ready { .. });
                         let llm_busy = self.llm_rx.is_some() || self.llm_pending.is_some();
-                        let can_route =
-                            !rule_corrected && enabled && !llm_busy && !self.last_turn.is_empty();
+                        let can_route = !rule_corrected
+                            && enabled
+                            && !llm_busy
+                            && llm_ready
+                            && !self.last_turn.is_empty();
                         if can_route
                             && decision == crate::domain::corrective::CorrectiveDecision::NeedsLlm
                         {
@@ -912,10 +1049,11 @@ impl WhisprApp {
                         // el usuario mira el log.
                         crate::log!(
                             "llm",
-                            "no se enruta: classifier={:?} threshold={} enabled={} rule_corrected={} llm_busy={} last_turn_empty={} instruction={:?}",
+                            "no se enruta: classifier={:?} threshold={} enabled={} llm_ready={} rule_corrected={} llm_busy={} last_turn_empty={} instruction={:?}",
                             decision,
                             classifier_threshold,
                             enabled,
+                            llm_ready,
                             rule_corrected,
                             llm_busy,
                             self.last_turn.is_empty(),
@@ -1010,6 +1148,14 @@ impl WhisprApp {
             Message::ToggleAiCorrection(on) => {
                 self.config.ai_correction_enabled = Some(on);
                 self.save_config();
+                // Activar la corrección en caliente tras un arranque sin
+                // server: relanzar la fase LLM (verificar/arrancar llama-
+                // server) para que el toggle prometa algo que funciona. Si el
+                // server no levanta, LlmDisabled muestra el motivo visible.
+                if on && !matches!(self.llm_status, LlmStatus::Ready { .. }) && !self.is_starting()
+                {
+                    return self.spawn_llm_startup();
+                }
                 Task::none()
             }
             Message::LlmEndpointChanged(s) => {
@@ -1328,6 +1474,32 @@ impl WhisprApp {
                 Task::none()
             }
             Message::Poll => {
+                // ── Arranque: eventos del hilo background + spinner ────────
+                // El prerroll de whisper y la verificación del server LLM
+                // corren en su hilo; aquí solo se drena el canal (nunca
+                // bloquea) y se anima el spinner mientras la pantalla de
+                // carga esté visible.
+                if let Some(rx) = &self.startup_rx {
+                    match rx.try_recv() {
+                        Ok(event) => return self.update(Message::Startup(event)),
+                        Err(mpsc::TryRecvError::Empty) => {
+                            if matches!(self.startup, StartupPhase::Loading) {
+                                self.startup_tick = self.startup_tick.wrapping_add(1);
+                            }
+                        }
+                        Err(mpsc::TryRecvError::Disconnected) => {
+                            // El hilo murió sin evento terminal: no dejar la
+                            // app colgada en «cargando».
+                            self.startup_rx = None;
+                            if matches!(self.startup, StartupPhase::Loading) {
+                                self.startup = StartupPhase::Failed {
+                                    error: "El arranque terminó inesperadamente".to_string(),
+                                };
+                            }
+                        }
+                    }
+                }
+
                 // ── Tema auto: refresco periódico del estado del sistema ──
                 // Cada 5 s se relee AppsUseLightTheme (registro). El view se
                 // redibuja con cada tick del Poll (100 ms), así que el cambio
@@ -1631,6 +1803,19 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            Message::Startup(event) => self.handle_startup_event(event),
+            Message::RetryStartup => {
+                crate::log!("startup", "«Reintentar»: relanzando arranque completo");
+                self.startup = StartupPhase::Loading;
+                self.startup_label = "Preparando la app…".to_string();
+                self.llm_status = LlmStatus::Unknown;
+                self.startup_tick = 0;
+                let (startup_tx, startup_rx) = mpsc::channel();
+                let startup_config = self.config.clone();
+                std::thread::spawn(move || run_startup_thread(startup_config, startup_tx));
+                self.startup_rx = Some(startup_rx);
+                Task::none()
+            }
             // Cierre de la ventana principal → se oculta a la bandeja (la app
             // sigue viva: burbuja, atajo global y bandeja). El cierre lo
             // gestionamos nosotros (`exit_on_close_request = false` en ambas
@@ -1647,6 +1832,92 @@ impl WhisprApp {
                 self.persist_config();
                 self.config_save_deadline = None;
                 iced::exit()
+            }
+        }
+    }
+
+    /// Procesa un evento del hilo de arranque (whisper + LLM). Transiciones:
+    /// Loading → (WhisperFailed) → Failed · Loading → … → Ready. Cuando el
+    /// arranque ya terminó (re-fase LLM en caliente por el toggle), solo
+    /// actualiza `llm_status` y el aviso.
+    fn handle_startup_event(&mut self, event: StartupEvent) -> Task<Message> {
+        match event {
+            StartupEvent::WhisperProgress { downloaded, total } => {
+                self.startup_label = if total > 0 {
+                    let mb = |b: u64| b / (1024 * 1024);
+                    format!(
+                        "Descargando modelo de voz… {} / {} MB (primera vez)",
+                        mb(downloaded),
+                        mb(total).max(1)
+                    )
+                } else {
+                    "Descargando modelo de voz…".to_string()
+                };
+                Task::none()
+            }
+            StartupEvent::WhisperReady => {
+                crate::log!("startup", "whisper: modelo listo en cache (prerroll)");
+                self.startup_label = "Preparando transcripción…".to_string();
+                Task::none()
+            }
+            StartupEvent::WhisperFailed(e) => {
+                crate::log!("startup", "whisper: fallo bloqueante: {e}");
+                self.startup = StartupPhase::Failed { error: e };
+                self.startup_rx = None;
+                if let Some(tray) = &self.tray {
+                    tray.status_item
+                        .set_text(crate::tray::MENU_LABEL_STARTUP_ERROR);
+                }
+                Task::none()
+            }
+            StartupEvent::LlmStarting => {
+                self.startup_label = "Preparando corrección IA…".to_string();
+                Task::none()
+            }
+            StartupEvent::LlmReady { launched } => {
+                crate::log!(
+                    "startup",
+                    "server LLM {}",
+                    if launched {
+                        "lanzado por la app"
+                    } else {
+                        "ya estaba activo (reutilizado)"
+                    }
+                );
+                self.llm_status = LlmStatus::Ready { launched };
+                self.startup_rx = None;
+                if matches!(self.startup, StartupPhase::Loading) {
+                    self.startup = StartupPhase::Ready;
+                    crate::log!("startup", "arranque completo: listo para dictar");
+                    self.set_tray_status(crate::tray::MENU_LABEL_READY);
+                } else {
+                    self.last_correction =
+                        Some("Corrección IA lista (server verificado) ✓".to_string());
+                }
+                Task::none()
+            }
+            StartupEvent::LlmDisabled(reason) => {
+                self.llm_status = LlmStatus::Disabled(reason.clone());
+                self.startup_rx = None;
+                if reason.is_empty() {
+                    crate::log!(
+                        "startup",
+                        "fase LLM omitida: corrección IA desactivada en Ajustes"
+                    );
+                } else {
+                    crate::log!("startup", "corrección IA desactivada: {reason}");
+                }
+                if matches!(self.startup, StartupPhase::Loading) {
+                    self.startup = StartupPhase::Ready;
+                    self.set_tray_status(crate::tray::MENU_LABEL_READY_NO_LLM);
+                }
+                // Aviso VISIBLE (requisito 09/09/2026: el fallo del server
+                // nunca es silencioso), salvo cuando el propio usuario apagó
+                // la corrección (razón vacía: no hay nada que avisar).
+                if !reason.is_empty() {
+                    self.last_correction = Some(format!("Corrección IA desactivada: {reason}"));
+                }
+                Task::none()
             }
         }
     }
@@ -1748,6 +2019,13 @@ impl WhisprApp {
         // Tamaño de fuente global resuelto (Ajustes → Apariencia): TODOS los
         // textos de la vista lo usan (fs.*) en vez de los literales FONT_*.
         let fs = theme::font_sizes(self.config.font_size().factor());
+
+        // Pantalla de carga (requisito UX 09/09/2026): mientras el arranque
+        // no termine se muestra SOLO spinner + fase, sin UI de dictado.
+        // Whisper y el server LLM se cargan en background (hilo propio).
+        if !matches!(self.startup, StartupPhase::Ready) {
+            return self.loading_view(t, fs);
+        }
 
         // ── Cabecera: wordmark + controles globales ──────────────────────────
         // El botón de tema muestra el modo EFECTIVO (Auto incluido) y cicla
@@ -1964,6 +2242,53 @@ impl WhisprApp {
         // muestran cuando este está visible, no dentro de los ajustes.
         if !self.settings_open {
             content = content.push(actions).push(feedback);
+        }
+
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|th| container::Style {
+                background: Some(Background::Color(theme::tokens(th).bg)),
+                ..Default::default()
+            })
+            .into()
+    }
+
+    /// Pantalla de carga sencilla (requisito UX 09/09/2026): spinner
+    /// animado + texto de la fase en curso. Cuando la fase es Failed se
+    /// muestra el motivo y «Reintentar» (que relanza el prerroll completo;
+    /// si el modelo de voz faltaba, la descarga arranca sola). El dictado
+    /// queda bloqueado hasta que `startup` sea Ready.
+    fn loading_view(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+        // Spinner de 4 fases, animado por `startup_tick` (el Poll lo avanza
+        // a 10 Hz mientras la fase sea Loading).
+        const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
+        let spin = SPINNER[(self.startup_tick % 4) as usize];
+
+        let mut content = column![
+            ui_text(spin).size(fs.hero).color(t.accent),
+            text("Cargando…").size(fs.xl).color(t.text),
+            text(self.startup_label.as_str()).size(fs.sm).color(t.dim),
+        ]
+        .spacing(theme::SPACE_3)
+        .align_x(iced::Alignment::Center)
+        .width(Length::Fill);
+
+        if let StartupPhase::Failed { error } = &self.startup {
+            content = content.push(
+                text(format!(
+                    "{error} — si falta el modelo de voz, «Reintentar» lo descarga \
+                     automáticamente en %APPDATA%\\whispr-open\\models."
+                ))
+                .size(fs.sm)
+                .color(t.err)
+                .shaping(Shaping::Advanced),
+            );
+            content = content.push(
+                button(ui_text("Reintentar"))
+                    .on_press(Message::RetryStartup)
+                    .style(theme::primary),
+            );
         }
 
         container(content)
@@ -2698,4 +3023,115 @@ fn transcribe_samples(
     }
     let prompt = crate::transcribe::build_initial_prompt(&dictionary);
     crate::transcribe::transcribe_cached(&samples, model, &inference, prompt.as_deref())
+}
+
+// ---------------------------------------------------------------------------
+// Arranque en background (requisito UX 09/09/2026: «la app levanta todo por
+// sí misma»). Estos hilos NO tocan la UI: solo emiten eventos por canal y el
+// Poll los aplica. Terminan SIEMPRE con un evento terminal (WhisperFailed,
+// LlmReady o LlmDisabled) para que la app nunca se quede colgada «cargando».
+// ---------------------------------------------------------------------------
+
+/// Fase whisper del arranque: descarga el modelo si falta (con progreso) y
+/// lo carga en el cache de contexto (prerroll: la primera pulsación del
+/// atajo no paga la carga). Luego delega en `run_llm_phase` si aplica.
+fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>) {
+    let model = cfg.selected_model();
+    if !crate::transcribe::model_exists(model) {
+        crate::log!(
+            "startup",
+            "modelo de voz {} ausente en %APPDATA% — descargando…",
+            model.id()
+        );
+    }
+    let path = match crate::transcribe::ensure_model(model, |downloaded, total| {
+        let _ = tx.send(StartupEvent::WhisperProgress { downloaded, total });
+    }) {
+        Ok(path) => path,
+        Err(e) => {
+            crate::log!("startup", "no se pudo descargar el modelo de voz: {e}");
+            let _ = tx.send(StartupEvent::WhisperFailed(format!(
+                "No se pudo descargar el modelo de voz ({}). Revisa la conexión y usa «Reintentar».",
+                model.label()
+            )));
+            return;
+        }
+    };
+    crate::log!("startup", "modelo de voz en: {}", path.display());
+    match crate::transcribe::preload(model) {
+        Ok(()) => {
+            let _ = tx.send(StartupEvent::WhisperReady);
+            run_llm_phase(cfg, tx);
+        }
+        Err(e) => {
+            crate::log!("startup", "no se pudo cargar el contexto whisper: {e}");
+            let _ = tx.send(StartupEvent::WhisperFailed(format!(
+                "No se pudo cargar el modelo de voz {}: {e}",
+                model.label()
+            )));
+        }
+    }
+}
+
+/// Fase LLM del arranque (o del toggle de corrección IA en caliente):
+/// verifica `/v1/models`; si no responde y el endpoint es local, busca y
+/// lanza llama-server con el modelo configurado y espera a que quede listo
+/// (máx. 60 s). Cualquier fallo → `LlmDisabled(motivo visible)` — el
+/// dictado sigue funcionando sin corrección.
+fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>) {
+    let llm = cfg.llm_settings();
+
+    if !cfg.ai_correction_enabled() {
+        // El usuario la apagó: fase omitida, sin aviso (razón vacía).
+        let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
+        return;
+    }
+    if !crate::llm::is_local_endpoint(&llm.base_url) {
+        // Cloud/custom remoto: no hay server local que levantar; los
+        // errores de conexión ya se muestran al dictar (hint del log).
+        let _ = tx.send(StartupEvent::LlmReady { launched: false });
+        return;
+    }
+
+    let _ = tx.send(StartupEvent::LlmStarting);
+    if crate::llm::server_alive(&llm.base_url) {
+        let _ = tx.send(StartupEvent::LlmReady { launched: false });
+        return;
+    }
+
+    let Some(model_path) = crate::llm::resolve_model_path(&llm.model) else {
+        let _ = tx.send(StartupEvent::LlmDisabled(format!(
+            "no se encontró el modelo LLM «{}» en las rutas habituales. \
+             La corrección IA se desactiva; el dictado sigue funcionando.",
+            llm.model
+        )));
+        return;
+    };
+
+    let port = crate::llm::port_from_base_url(&llm.base_url);
+    crate::log!(
+        "startup",
+        "lanzando server LLM de WSL (wsl.exe): -m {} --port {}",
+        model_path.display(),
+        port
+    );
+    match crate::llm::launch_server(&model_path, port) {
+        Ok(()) => {
+            if crate::llm::wait_for_server(&llm.base_url, Duration::from_secs(60)) {
+                crate::log!("startup", "server LLM listo (lanzado por la app)");
+                let _ = tx.send(StartupEvent::LlmReady { launched: true });
+            } else {
+                let _ = tx.send(StartupEvent::LlmDisabled(format!(
+                    "el servidor LLM ({}) no respondió a /v1/models en 60 s. \
+                     Mira whispr-open.log; el dictado sigue funcionando.",
+                    llm.base_url
+                )));
+            }
+        }
+        Err(e) => {
+            let _ = tx.send(StartupEvent::LlmDisabled(format!(
+                "no se pudo lanzar el servidor LLM: {e}. El dictado sigue funcionando."
+            )));
+        }
+    }
 }

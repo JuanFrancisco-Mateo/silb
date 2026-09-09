@@ -269,6 +269,32 @@ impl WhisperEngine {
     }
 }
 
+/// Carga el contexto del modelo en el cache SIN transcribir (prerroll de
+/// arranque, requisito UX 09/09/2026). La primera pulsación del atajo deja
+/// de pagar la carga del contexto (visible como 1-2 s de "Transcribiendo…"
+/// con el modelo aún en disco): con esto la carga ocurre en background
+/// mientras el usuario ve la pantalla de carga. Es idempotente y comparte
+/// el mismo `ENGINE_CACHE` que `transcribe_cached` (cambiar de modelo aquí
+/// o en transcripción reemplaza el contexto de forma segura).
+pub fn preload(model: Model) -> Result<(), String> {
+    let cache = ENGINE_CACHE.get_or_init(|| Mutex::new(None));
+    let mut slot = cache.lock().map_err(|e| e.to_string())?;
+    if slot
+        .as_ref()
+        .map(|(cached, _)| *cached != model)
+        .unwrap_or(true)
+    {
+        crate::log!("transcribe", "prerroll: cargando contexto {}…", model.id());
+        *slot = Some((model, Arc::new(WhisperEngine::load(model)?)));
+    }
+    crate::log!(
+        "transcribe",
+        "prerroll: modelo {} listo en cache",
+        model.id()
+    );
+    Ok(())
+}
+
 static ENGINE_CACHE: OnceLock<Mutex<Option<(Model, Arc<WhisperEngine>)>>> = OnceLock::new();
 
 /// Transcribe reutilizando el contexto cargado para el modelo activo. Solo se
