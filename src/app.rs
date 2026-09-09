@@ -389,6 +389,25 @@ impl WhisprApp {
                 };
                 let target = p.target.clone();
 
+                // LOG: el LLM devolvió algo (válido o vacío). Antes esto
+                // era invisible; ahora se ve siempre.
+                if diff.find.is_empty() {
+                    crate::log!(
+                        "llm",
+                        "corrector devolvió diff vacío: instruction={:?} target={:?} (se recupera como dictado normal)",
+                        p.instruction,
+                        target
+                    );
+                } else {
+                    crate::log!(
+                        "llm",
+                        "corrector devolvió diff: find={:?} replace={:?} target={:?}",
+                        diff.find,
+                        diff.replace,
+                        target
+                    );
+                }
+
                 // Modo confirmar (spec §4.2): si el toggle está activo,
                 // no aplicamos a ciegas. Guardamos el diff en `pending_diff`
                 // y dejamos que la UI muestre «Aplicar» / «Descartar».
@@ -453,7 +472,20 @@ impl WhisprApp {
                 }
             }
             Err(e) => {
-                self.last_correction = Some(format!("Corrección IA no disponible: {e}"));
+                // Mensaje orientado al usuario, NO al programador: el log
+                // (crate::log! arriba) ya tiene el detalle técnico. Aquí
+                // solo decimos qué ha pasado y qué hacer (el log
+                // %APPDATA%\whispr-open\whispr-open.log tiene los datos
+                // para depurar). Antes esto era un «corrección IA no
+                // disponible» que el usuario no sabía cómo actuar.
+                let hint = if e.starts_with("HTTP:") {
+                    " (¿está el servidor LLM arrancado? Mira el log en %APPDATA%\\whispr-open)"
+                } else if e.starts_with("el proveedor cloud requiere una API key") {
+                    " (configura la API key del proveedor en Ajustes)"
+                } else {
+                    ""
+                };
+                self.last_correction = Some(format!("Corrección IA no disponible: {e}{hint}"));
                 self.restore_instruction_as_dictation(pending);
             }
         }
@@ -790,15 +822,25 @@ impl WhisprApp {
                         // más conservador, spec §2). `classify_with` ya
                         // respeta la regla de los dos niveles: por debajo
                         // del umbral NUNCA enruta.
-                        if !rule_corrected
-                            && self.config.ai_correction_enabled()
-                            && self.llm_rx.is_none()
-                            && self.llm_pending.is_none()
-                            && !self.last_turn.is_empty()
-                            && crate::domain::corrective::classify_with(
-                                &processed,
-                                self.config.llm_classifier_threshold(),
-                            ) == crate::domain::corrective::CorrectiveDecision::NeedsLlm
+                        //
+                        // LOG DE DECISIÓN (bug Juanfri 09/09/2026): el
+                        // síntoma «no llama al LLM» antes era invisible
+                        // porque el `eprintln!` se perdía en Windows GUI.
+                        // Ahora el resultado del clasificador, los gates
+                        // que cortan y la decisión de enrutar van al log
+                        // del archivo `%APPDATA%\whispr-open\whispr-open.log`
+                        // (visible siempre, incluso sin consola).
+                        let decision = crate::domain::corrective::classify_with(
+                            &processed,
+                            self.config.llm_classifier_threshold(),
+                        );
+                        let classifier_threshold = self.config.llm_classifier_threshold();
+                        let enabled = self.config.ai_correction_enabled();
+                        let llm_busy = self.llm_rx.is_some() || self.llm_pending.is_some();
+                        let can_route =
+                            !rule_corrected && enabled && !llm_busy && !self.last_turn.is_empty();
+                        if can_route
+                            && decision == crate::domain::corrective::CorrectiveDecision::NeedsLlm
                         {
                             let target = self.last_turn.clone();
                             let instruction = processed.clone();
@@ -811,13 +853,42 @@ impl WhisprApp {
                                 force_inject,
                             });
                             self.status = Status::Correcting;
-                            crate::log!("llm", "corrección IA en camino…");
+                            crate::log!(
+                                "llm",
+                                "enrutando al corrector: instruction={:?} target={:?} endpoint={} modelo={} timeout={}s threshold={}",
+                                instruction,
+                                target,
+                                llm_cfg.base_url,
+                                llm_cfg.model,
+                                llm_cfg.timeout_secs,
+                                classifier_threshold
+                            );
                             std::thread::spawn(move || {
                                 let result = crate::llm::correct(&target, &instruction, &llm_cfg);
+                                if let Err(ref e) = result {
+                                    crate::log!(
+                                        "llm",
+                                        "fallo del corrector (recuperado como dictado normal): {e}"
+                                    );
+                                }
                                 let _ = tx.send(result);
                             });
                             return Task::none();
                         }
+                        // Ruta no tomada: registrar POR QUÉ para que
+                        // «no llama al LLM» deje de ser un misterio cuando
+                        // el usuario mira el log.
+                        crate::log!(
+                            "llm",
+                            "no se enruta: classifier={:?} threshold={} enabled={} rule_corrected={} llm_busy={} last_turn_empty={} instruction={:?}",
+                            decision,
+                            classifier_threshold,
+                            enabled,
+                            rule_corrected,
+                            llm_busy,
+                            self.last_turn.is_empty(),
+                            processed
+                        );
 
                         if !processed.is_empty() {
                             if rule_corrected && !self.last_turn.is_empty() {
