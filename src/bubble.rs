@@ -305,12 +305,18 @@ impl WhisprApp {
         // alpha por-pixel aplicada al círculo y al borde. El punto «REC»
         // central queda opaco (indicador de estado: debe leerse siempre).
         let opacity = self.bubble_opacity_percent() as f32 / 100.0;
-        let fill = match self.bubble_status() {
-            Status::Recording | Status::Error(_) => crate::theme::ERR,
-            Status::Transcribing | Status::Correcting | Status::Downloading { .. } => {
-                crate::theme::WARN
-            }
-            Status::Idle => crate::theme::ACCENT,
+        // Estados de arranque (requisito UX 09/09/2026): ámbar mientras la
+        // app carga whisper/LLM, rojo si el arranque falló sin modelo. Una
+        // vez Ready, el color lo decide `bubble_status` como siempre.
+        let fill = match self.startup_bubble_color() {
+            Some(color) => color,
+            None => match self.bubble_status() {
+                Status::Recording | Status::Error(_) => crate::theme::ERR,
+                Status::Transcribing | Status::Correcting | Status::Downloading { .. } => {
+                    crate::theme::WARN
+                }
+                Status::Idle => crate::theme::ACCENT,
+            },
         };
         let (fill, border_width) = match style {
             crate::config::BubbleStyle::Solid => (crate::theme::with_alpha(fill, opacity), 2.0),

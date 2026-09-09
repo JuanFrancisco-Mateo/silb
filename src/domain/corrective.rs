@@ -311,11 +311,7 @@ mod tests {
         // Variantes coloquiales que ya estaban en los tests previos pero
         // que conviene blindar con su forma exacta.
         for turn in ["no, es 3", "no es 4", "no, era 5"] {
-            assert_eq!(
-                classify(turn),
-                CorrectiveDecision::NeedsLlm,
-                "{turn:?}"
-            );
+            assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
         }
     }
 
@@ -324,11 +320,7 @@ mod tests {
         // «cambia X por Y» tiene verbo correctivo + marcador de sustitución
         // + numerales: ratio alto, va seguro al LLM.
         for turn in ["cambia 5 por 6", "cambia cuatro por cinco"] {
-            assert_eq!(
-                classify(turn),
-                CorrectiveDecision::NeedsLlm,
-                "{turn:?}"
-            );
+            assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
         }
     }
 
@@ -366,11 +358,7 @@ mod tests {
             if turn.contains("eso") || turn.contains("esto") {
                 continue;
             }
-            assert_eq!(
-                classify(turn),
-                CorrectiveDecision::Plain,
-                "{turn:?}"
-            );
+            assert_eq!(classify(turn), CorrectiveDecision::Plain, "{turn:?}");
         }
     }
 
@@ -378,11 +366,7 @@ mod tests {
     fn umbral_cero_tambien_apaga_la_correccion_por_sustitucion() {
         // Aunque la nueva señal «subst» pase la regla de los dos niveles,
         // threshold=0 sigue siendo el atajo «corrección IA off».
-        for turn in [
-            "2 en vez de 4",
-            "5 en lugar de 4",
-            "cambia 5 por 6",
-        ] {
+        for turn in ["2 en vez de 4", "5 en lugar de 4", "cambia 5 por 6"] {
             assert_eq!(
                 classify_with(turn, 0),
                 CorrectiveDecision::Plain,

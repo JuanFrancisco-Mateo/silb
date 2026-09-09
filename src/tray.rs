@@ -28,16 +28,26 @@ use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 pub const MENU_TOGGLE_ID: &str = "toggle-main";
 /// Id estable del ítem «Salir».
 pub const MENU_QUIT_ID: &str = "quit";
+/// Id del ítem de estado (solo lectura; refleja el arranque de la app).
+pub const MENU_STATUS_ID: &str = "status";
 
 /// Texto del ítem según el estado de la ventana principal.
 pub const MENU_LABEL_HIDDEN: &str = "Mostrar ventana";
 pub const MENU_LABEL_VISIBLE: &str = "Ocultar ventana";
+/// Texto del ítem de estado según la fase de arranque (requisito UX
+/// 09/09/2026: el "listo" de la app debe verse también en el tray).
+pub const MENU_LABEL_LOADING: &str = "Estado: cargando…";
+pub const MENU_LABEL_READY: &str = "Estado: listo";
+pub const MENU_LABEL_READY_NO_LLM: &str = "Estado: listo · corrección IA desactivada";
+pub const MENU_LABEL_STARTUP_ERROR: &str = "Estado: error de arranque";
 
 /// Bandeja del sistema. Se mantiene viva mientras la app viva: si se suelta,
 /// el icono desaparece del tray.
 pub struct SystemTray {
     // El icono no se usa directamente; se conserva para que no se destruya.
     _tray: TrayIcon,
+    /// Ítem de estado (deshabilitado): refleja el arranque (cargando/listo).
+    pub status_item: MenuItem,
     /// Ítem «Mostrar/Ocultar ventana», para cambiar su texto según el estado.
     pub toggle_item: MenuItem,
     /// Canal global de eventos del menú contextual (se drena en la app).
@@ -49,11 +59,18 @@ impl SystemTray {
     /// donde corre el bucle de winit): ver doc del módulo.
     pub fn new() -> Result<Self, String> {
         let menu = Menu::new();
+        let status_item = MenuItem::with_id(MENU_STATUS_ID, MENU_LABEL_LOADING, false, None);
         let toggle_item = MenuItem::with_id(MENU_TOGGLE_ID, MENU_LABEL_VISIBLE, true, None);
         let quit_item = MenuItem::with_id(MENU_QUIT_ID, "Salir", true, None);
         let separator = PredefinedMenuItem::separator();
-        menu.append_items(&[&toggle_item, &separator, &quit_item])
-            .map_err(|e| format!("no se pudo construir el menú de bandeja: {e}"))?;
+        menu.append_items(&[
+            &status_item,
+            &separator,
+            &toggle_item,
+            &separator,
+            &quit_item,
+        ])
+        .map_err(|e| format!("no se pudo construir el menú de bandeja: {e}"))?;
 
         let icon = circle_icon().map_err(|e| format!("icono de bandeja: {e}"))?;
 
@@ -68,11 +85,12 @@ impl SystemTray {
 
         crate::log!(
             "tray",
-            "icono de bandeja listo (menú: mostrar/ocultar, salir)"
+            "icono de bandeja listo (menú: estado, mostrar/ocultar, salir)"
         );
 
         Ok(Self {
             _tray: tray,
+            status_item,
             toggle_item,
             events: MenuEvent::receiver().clone(),
         })
@@ -143,6 +161,13 @@ mod tests {
     fn menu_ids_match() {
         assert_eq!(MENU_TOGGLE_ID, "toggle-main");
         assert_eq!(MENU_QUIT_ID, "quit");
+        assert_eq!(MENU_STATUS_ID, "status");
         assert_ne!(MENU_TOGGLE_ID, MENU_QUIT_ID);
+        assert_ne!(MENU_STATUS_ID, MENU_TOGGLE_ID);
+        assert_ne!(MENU_STATUS_ID, MENU_QUIT_ID);
+        // Los labels de arranque son todos distintos (el tray los conmuta).
+        assert_ne!(MENU_LABEL_LOADING, MENU_LABEL_READY);
+        assert_ne!(MENU_LABEL_READY, MENU_LABEL_READY_NO_LLM);
+        assert_ne!(MENU_LABEL_LOADING, MENU_LABEL_READY_NO_LLM);
     }
 }
