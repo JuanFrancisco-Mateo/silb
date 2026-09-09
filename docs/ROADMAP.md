@@ -1,6 +1,6 @@
 # ROADMAP — Whispr Open (rama `native-iced`)
 
-Estado verificado a 02/09/2026 contra el código y el historial de git. Este
+Estado verificado a 04/09/2026 contra el código y el historial de git. Este
 archivo documenta **qué hay hecho** y **qué viene después**, priorizado por
 impacto/riesgo. Los documentos hermanos (`CORRECCION-VOZ.md`,
 `EMPAQUETADO.md`, `UI-FUTURA.md`) son las especificaciones detalladas de cada
@@ -22,7 +22,9 @@ etapa.
 | System tray | `src/tray.rs` | commit `e3e0f3b`. `tray-icon` 0.24, menú Mostrar/Ocultar/Salir, icono RGBA 32×32 generado en código (círculo violeta). |
 | Atajo global | `src/hotkey.rs` | configurable `shortcut` en `config.json` (default `Ctrl+Shift+D`; global-hotkey 0.6), canal crossbeam drenado en el Poll de 100 ms, eventos filtrados por id del atajo. |
 | Inyección en app activa | `src/inject.rs` | `arboard` (portapapeles) + `enigo` (Ctrl+V o tecleo directo). Formato, retardo y filtro por título de ventana configurables (`inject_*` en `config.json`). Solo Windows. |
-| Post-procesado | `src/domain/{cleanup,dictionary,correction}.rs` | Muletillas + repeticiones, diccionario personal, rectificaciones habladas por regex multi-turno. |
+| Post-procesado | `src/domain/{cleanup,dictionary,correction}.rs` | Limpieza fija de repeticiones/expresiones, diccionario personal y rectificaciones habladas; la UI ya no expone configuración de muletillas. |
+| Corrección IA configurable | `src/config.rs`, `src/llm.rs`, `src/app.rs` | Proveedor local/cloud/custom OpenAI-compatible, timeout, umbral, confirmación opcional y API key fuera de `config.json`. |
+| Audio robusto | `src/audio.rs` | El stream se crea y reproduce antes de entrar en `Recording`; todo audio no-16 kHz se remuestrea a 16 kHz. |
 | Build release | `target/release/whispr-open.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
 
 Versión actual del paquete: **0.2.0** (`Cargo.toml`). Rama activa: `native-iced`
@@ -31,11 +33,11 @@ Versión actual del paquete: **0.2.0** (`Cargo.toml`). Rama activa: `native-iced
 ### Cadena de procesado actual (por turno de dictado)
 
 ```
-micrófono (cpal, f32 mono, 48k→16k)
-  → whisper.cpp (Small, idioma "es", greedy, 4 threads, CUDA)
-  → cleanup (muletillas/repeticiones)   [opcional]
-  → dictionary (reemplazos personales)  [siempre si hay entradas]
-  → correction (rectificaciones habladas por regex, multi-turno)
+micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
+  → whisper.cpp (modelo elegido, idioma configurable, beam search, CUDA)
+  → limpieza local fija (repeticiones/muletillas)
+  → dictionary (reemplazos personales)
+  → correction (reglas + LLM opcional en hilo)
   → inyección en app activa / transcript
 ```
 
@@ -45,23 +47,19 @@ micrófono (cpal, f32 mono, 48k→16k)
 
 | # | Prioridad | Etapa | Doc | Motivo |
 |---|---|---|---|---|
-| 1 | **P0** | Corrección / formateo por voz con LLM local | [`CORRECCION-VOZ.md`](CORRECCION-VOZ.md) | Es la mayor brecha de UX frente a Wispr Flow: poder decir «no, lo último está mal, es 2 en vez de 4» y que el texto se arregle solo. El motor actual (regex) no cubre numerales ni referencias a "lo último". |
+| 1 | **Hecho** | Corrección / formateo por voz con LLM | [`CORRECCION-VOZ.md`](CORRECCION-VOZ.md) | Implementado con proveedor local/cloud/custom, clasificación barata, diff validado, confirmación opcional y undo. |
 | 2 | **P1** | Empaquetado y distribución | [`EMPAQUETADO.md`](EMPAQUETADO.md) | Hoy solo hay un `.exe` de release sin instalador, sin icono de archivo, sin firma. Necesario para compartir la app. |
 | 3 | **P2** | Mejoras de UI | [`UI-FUTURA.md`](UI-FUTURA.md) | Cerrar los huecos del checklist 2026: trust signal "nada sale de tu PC", override visible de la IA, contraste AA del acento, accesibilidad. |
-| 4 | P3 (backlog) | Cache del motor Whisper | — | Nota `ponytail` en `src/app.rs:926`: el contexto whisper se recarga en cada turno. Cachear `Mutex<Option<WhisperEngine>>` por modelo ahorra ~1–2 s por turno. |
+| 4 | **Hecho** | Cache del motor Whisper | `src/transcribe.rs` | Se conserva un contexto por modelo activo y se reemplaza solo al cambiar de modelo, evitando recargarlo en cada turno. |
 | 5 | P3 (backlog) | Transcripción casi-tiempo-real | — | Ventanas solapadas + re-decodificación parcial. Riesgo alto, toca el núcleo de grabación; requiere prueba manual de micrófono. |
-| 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |
+| 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |### Orden recomendado de trabajo
 
-### Orden recomendado de trabajo
+1. **P0 completado:** validar manualmente el flujo con micrófono, cambio de
+   modelo, endpoint cloud/custom autenticado y confirmación de correcciones.
+2. **P1 siguiente:** empaquetado y distribución: instalador, icono y firma.
+3. **P2 siguiente:** revisión visual final, contraste AA y accesibilidad.
+4. **P3 backlog:** transcripción casi en tiempo real y notetaker de reuniones.
 
-1. **P0 (corrección por voz)** primero: se apoya en infraestructura ya existente
-   (post-procesado en `apply_pipeline`, hilos de trabajo) y entrega el mayor
-   salto de experiencia sin tocar el camino crítico del dictado.
-2. **P1 (empaquetado)** en paralelo: es trabajo de tooling/CI y no compite por
-   los mismos archivos que P0.
-3. **P2 (UI)** al final: varias mejoras son extensiones del sistema de tokens
-   ya creado y conviene hacerlas cuando P0 esté estable (el "override visible
-   de la IA" depende del panel de confirmación de la corrección por voz).
 
 ---
 

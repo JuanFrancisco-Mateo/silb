@@ -47,7 +47,11 @@ fn emoji_font_candidates() -> Vec<&'static str> {
 pub fn load_emoji_font() -> Option<iced::Task<Result<(), iced::font::Error>>> {
     for path in emoji_font_candidates() {
         if let Ok(bytes) = std::fs::read(path) {
-            crate::log!("fonts", "fuente emoji disponible: {path} ({} bytes)", bytes.len());
+            crate::log!(
+                "fonts",
+                "fuente emoji disponible: {path} ({} bytes)",
+                bytes.len()
+            );
             return Some(iced::font::load(bytes));
         }
         crate::log!("fonts", "fuente emoji no encontrada: {path}");
@@ -62,12 +66,12 @@ pub fn load_emoji_font() -> Option<iced::Task<Result<(), iced::font::Error>>> {
 /// Inventario de símbolos que usa la UI actual (buscar en `src/`): son los
 /// glifos que deben renderizar sí o sí. El test de shaping lo recorre.
 pub const UI_EMOJI: &[&str] = &[
-    "✓",      // confirmación: inyección / copia al portapapeles
+    "✓", // confirmación: inyección / copia al portapapeles
     "☀", "☾", // toggle de tema (claro / oscuro)
     "▾", "▸", // botón de ajustes (abierto / cerrado)
-    "●",      // punto de estado del micrófono en el hero
-    "→",      // flecha de las entradas del diccionario (reemplazo)
-    "✕",      // botón de quitar entrada del diccionario
+    "●", // punto de estado del micrófono en el hero
+    "→", // flecha de las entradas del diccionario (reemplazo)
+    "✕", // botón de quitar entrada del diccionario
 ];
 
 #[cfg(test)]
@@ -111,9 +115,11 @@ mod tests {
     fn load_emoji(font_system: &mut FontSystem) -> Option<String> {
         for path in emoji_font_candidates() {
             if let Ok(bytes) = std::fs::read(path) {
-                font_system.db_mut().load_font_source(cosmic_text::fontdb::Source::Binary(
-                    std::sync::Arc::new(bytes),
-                ));
+                font_system
+                    .db_mut()
+                    .load_font_source(cosmic_text::fontdb::Source::Binary(std::sync::Arc::new(
+                        bytes,
+                    )));
                 return Some(path.to_string());
             }
         }
@@ -147,7 +153,10 @@ mod tests {
     fn inventario_ui_renderiza_con_fuente_emoji_cargada() {
         let mut fs = system_fonts();
         let Some(path) = load_emoji(&mut fs) else {
-            eprintln!("sin fuente emoji en este equipo (buscadas: {:?}); test no aplicable", emoji_font_candidates());
+            eprintln!(
+                "sin fuente emoji en este equipo (buscadas: {:?}); test no aplicable",
+                emoji_font_candidates()
+            );
             return;
         };
         eprintln!("fuente emoji de prueba: {path}");
@@ -199,7 +208,12 @@ mod tests {
             for s in UI_EMOJI {
                 let mut buffer = Buffer::new(fs, Metrics::new(14.0, 18.0));
                 buffer.set_size(fs, Some(600.0), None);
-                buffer.set_text(fs, s, Attrs::new().family(Family::SansSerif), Shaping::Advanced);
+                buffer.set_text(
+                    fs,
+                    s,
+                    Attrs::new().family(Family::SansSerif),
+                    Shaping::Advanced,
+                );
                 buffer.shape_until_scroll(fs, true);
                 for run in buffer.layout_runs() {
                     for g in run.glyphs {
@@ -209,7 +223,15 @@ mod tests {
                             .and_then(|f| f.families.first())
                             .map(|(n, _)| n.clone())
                             .unwrap_or_default();
-                        eprintln!("  U+{:04X} {s:?} → glyph {} en '{name}'", run.text[g.start..g.end].chars().next().map(|c| c as u32).unwrap_or(0), g.glyph_id);
+                        eprintln!(
+                            "  U+{:04X} {s:?} → glyph {} en '{name}'",
+                            run.text[g.start..g.end]
+                                .chars()
+                                .next()
+                                .map(|c| c as u32)
+                                .unwrap_or(0),
+                            g.glyph_id
+                        );
                     }
                 }
             }
@@ -229,7 +251,9 @@ mod tests {
         if missing.is_empty() {
             eprintln!("fallback del sistema ya resuelve todos los símbolos de la UI");
         } else {
-            eprintln!("sin carga explícita faltan glifos: {missing:?} (el load de arranque los cubre)");
+            eprintln!(
+                "sin carga explícita faltan glifos: {missing:?} (el load de arranque los cubre)"
+            );
         }
         // No assert: es diagnóstico. El contrato lo fijan los tests de arriba.
     }

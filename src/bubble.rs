@@ -24,17 +24,15 @@ use std::time::Duration;
 
 use iced::widget::{container, text};
 use iced::window;
-use iced::{
-    Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme,
-};
+use iced::{Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme};
 
 #[cfg(target_os = "windows")]
 use winapi::shared::windef::{HWND, POINT, RECT};
 #[cfg(target_os = "windows")]
 use winapi::um::winuser::{
     GetAsyncKeyState, GetCapture, GetCursorPos, GetMonitorInfoW, GetWindowRect, MonitorFromPoint,
-    MonitorFromWindow, ReleaseCapture, SetCapture, SetWindowPos, VK_RBUTTON, MONITORINFO,
-    MONITOR_DEFAULTTONEAREST, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER,
+    MonitorFromWindow, ReleaseCapture, SetCapture, SetWindowPos, MONITORINFO,
+    MONITOR_DEFAULTTONEAREST, SWP_NOACTIVATE, SWP_NOSIZE, SWP_NOZORDER, VK_LBUTTON, VK_RBUTTON,
 };
 
 use crate::app::{Message, Status, WhisprApp};
@@ -275,9 +273,7 @@ fn bubble_event_filter(
     use iced::mouse::{self, Button};
 
     match event {
-        iced::Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) => {
-            Some(Message::BubblePress)
-        }
+        iced::Event::Mouse(mouse::Event::ButtonPressed(Button::Left)) => Some(Message::BubblePress),
         iced::Event::Mouse(mouse::Event::ButtonReleased(Button::Left)) => {
             Some(Message::BubbleRelease)
         }
@@ -302,6 +298,7 @@ fn bubble_event_filter(
 /// ámbar = transcribiendo / descargando modelo, rojo = error.
 impl WhisprApp {
     pub fn bubble_view(&self) -> Element<'static, Message> {
+        let style = self.bubble_style();
         let recording = matches!(self.bubble_status(), Status::Recording);
         let size = self.bubble_size_px();
         // Opacidad configurable (Ajustes → Apariencia, slider 20–100 %):
@@ -315,7 +312,13 @@ impl WhisprApp {
             }
             Status::Idle => crate::theme::ACCENT,
         };
-        let fill = crate::theme::with_alpha(fill, opacity);
+        let (fill, border_width) = match style {
+            crate::config::BubbleStyle::Solid => (crate::theme::with_alpha(fill, opacity), 2.0),
+            crate::config::BubbleStyle::Ring => (Color::TRANSPARENT, 3.0),
+            crate::config::BubbleStyle::Minimal => {
+                (crate::theme::with_alpha(fill, opacity * 0.82), 0.0)
+            }
+        };
 
         // Indicador "REC": punto blanco centrado mientras se graba.
         let center: Element<'static, Message> = if recording {
@@ -343,7 +346,7 @@ impl WhisprApp {
                 background: Some(Background::Color(fill)),
                 border: Border {
                     color: crate::theme::with_alpha(Color::WHITE, opacity),
-                    width: 2.0,
+                    width: border_width,
                     radius: (size / 2.0).into(),
                 },
                 ..Default::default()
@@ -376,7 +379,7 @@ impl iced_winit::Program for WhisprApp {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        self.update(message)
+        WhisprApp::update(self, message)
     }
 
     fn view(&self, id: window::Id) -> Element<'_, Message, Theme, iced::Renderer> {
@@ -396,7 +399,7 @@ impl iced_winit::Program for WhisprApp {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        self.subscription()
+        WhisprApp::subscription(self)
     }
 }
 
@@ -483,7 +486,10 @@ pub fn move_to_corner(corner: BubbleCorner, size: f32) {
                     return;
                 }
                 if std::time::Instant::now() >= deadline {
-                    crate::log!("bubble", "no se encontró la ventana para mover a la esquina");
+                    crate::log!(
+                        "bubble",
+                        "no se encontró la ventana para mover a la esquina"
+                    );
                     return;
                 }
                 std::thread::sleep(Duration::from_millis(100));
@@ -576,8 +582,9 @@ fn apply_noactivate(hwnd: BubbleHwnd) {
     };
 
     unsafe {
-        let ex = (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
-            & !WS_EX_APPWINDOW;
+        let ex =
+            (GetWindowLongPtrW(hwnd, GWL_EXSTYLE) as u32 | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW)
+                & !WS_EX_APPWINDOW;
         SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex as isize);
         // SWP_FRAMECHANGED hace efectivo el cambio de estilos extendidos.
         SetWindowPos(
@@ -589,7 +596,10 @@ fn apply_noactivate(hwnd: BubbleHwnd) {
             0,
             SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED,
         );
-        crate::log!("bubble", "burbuja configurada sin activación (exstyle=0x{ex:x})");
+        crate::log!(
+            "bubble",
+            "burbuja configurada sin activación (exstyle=0x{ex:x})"
+        );
     }
 }
 
@@ -808,6 +818,42 @@ pub fn right_button_down() -> bool {
     true
 }
 
+/// Captura el botón izquierdo para que un turno no termine solo porque el
+/// cursor salió del overlay mientras el usuario sigue hablando.
+#[cfg(target_os = "windows")]
+pub fn capture_left_mouse() {
+    unsafe {
+        if let Some(hwnd) = find_bubble_hwnd() {
+            SetCapture(hwnd);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn capture_left_mouse() {}
+
+/// Libera cualquier captura creada por la burbuja al finalizar el turno.
+#[cfg(target_os = "windows")]
+pub fn release_mouse_capture() {
+    unsafe {
+        ReleaseCapture();
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn release_mouse_capture() {}
+
+/// True mientras el botón izquierdo está físicamente pulsado.
+#[cfg(target_os = "windows")]
+pub fn left_button_down() -> bool {
+    unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16) & 0x8000 != 0 }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn left_button_down() -> bool {
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -842,7 +888,11 @@ mod tests {
         let s = bubble_settings(&Config::default());
         if let window::Position::SpecificWith(f) = s.position {
             let p = f(Size::new(56.0, 56.0), Size::new(1920.0, 1080.0));
-            assert!(p.x > 1700.0, "x={} debe quedar cerca del borde derecho", p.x);
+            assert!(
+                p.x > 1700.0,
+                "x={} debe quedar cerca del borde derecho",
+                p.x
+            );
             assert!(p.y < 100.0, "y={} debe quedar arriba", p.y);
         } else {
             panic!("la burbuja debe usar Position::SpecificWith");
@@ -855,8 +905,15 @@ mod tests {
     fn initial_position_mata_a_la_esquina_top_right_historica() {
         // La esquina por defecto reproduce la posición histórica
         // (monitor.width - win.width - 24, 48).
-        let p = initial_position(BubbleCorner::TopRight, Size::new(56.0, 56.0), Size::new(1920.0, 1080.0));
-        assert_eq!(p, Point::new(1920.0 - 56.0 - BUBBLE_MARGIN, BUBBLE_TOP_OFFSET));
+        let p = initial_position(
+            BubbleCorner::TopRight,
+            Size::new(56.0, 56.0),
+            Size::new(1920.0, 1080.0),
+        );
+        assert_eq!(
+            p,
+            Point::new(1920.0 - 56.0 - BUBBLE_MARGIN, BUBBLE_TOP_OFFSET)
+        );
     }
 
     #[test]
@@ -894,7 +951,10 @@ mod tests {
             for size in [48.0, 56.0, 72.0] {
                 let win = Size::new(size, size);
                 let p = initial_position(corner, win, Size::new(1920.0, 1080.0));
-                assert!(p.x >= 0.0 && p.y >= 0.0, "{corner:?}@{size}: {p:?} fuera por arriba/izquierda");
+                assert!(
+                    p.x >= 0.0 && p.y >= 0.0,
+                    "{corner:?}@{size}: {p:?} fuera por arriba/izquierda"
+                );
                 assert!(
                     p.x + size <= 1920.0 && p.y + size <= 1080.0,
                     "{corner:?}@{size}: {p:?} desborda el monitor"
@@ -1018,7 +1078,7 @@ mod tests {
         assert!(!is_drag_movement(Point::ORIGIN, Point::ORIGIN));
         assert!(!is_drag_movement(Point::ORIGIN, Point::new(4.0, 4.0))); // 5.7 px
         assert!(!is_drag_movement(Point::ORIGIN, Point::new(7.0, 0.0))); // exacto
-        // Por encima: arrastre.
+                                                                         // Por encima: arrastre.
         assert!(is_drag_movement(Point::ORIGIN, Point::new(8.0, 0.0)));
         assert!(is_drag_movement(Point::ORIGIN, Point::new(5.0, 6.0))); // 7.8 px
         assert!(is_drag_movement(Point::new(10.0, 10.0), Point::ORIGIN));
@@ -1127,7 +1187,10 @@ mod tests {
         let back = drag_target((0, 0), (0, 0), (800, 500), TAM, WORK_1080P);
         // Historia 2: el mismo cursor final sin haber pasado por el clamp.
         let direct = drag_target((0, 0), (0, 0), (800, 500), TAM, WORK_1080P);
-        assert_eq!(back, direct, "sin error acumulado: mismo cursor ⇒ misma posición");
+        assert_eq!(
+            back, direct,
+            "sin error acumulado: mismo cursor ⇒ misma posición"
+        );
         assert_eq!(back, (800, 500));
     }
 

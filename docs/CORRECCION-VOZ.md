@@ -13,11 +13,12 @@ la decodificación de Whisper. El dictado por turnos sigue igual.
 
 ---
 
-## 1. Estado actual y por qué no alcanza
+## 1. Estado actual
 
-Ya existe un motor de rectificaciones **por reglas** en
+La funcionalidad está implementada. Existe un motor de rectificaciones **por reglas** en
 `src/domain/correction.rs` (`apply_correction` + `CorrectionSession`
-multi-turno). Cubre frases del tipo:
+multi-turno), complementado por un clasificador y un cliente OpenAI-compatible
+(`src/domain/corrective.rs`, `src/llm.rs`). Cubre frases del tipo:
 
 - «no, quería decir X» / «mejor dicho X» / «me refería a X»
 - «donde dije X, quería decir Y» / «no era X, era Y»
@@ -32,8 +33,9 @@ Limitaciones frente al caso objetivo:
 3. **Negación doble / ruido.** «no no lo último está mal» no es una negación
    limpia de las que el regex reconoce.
 
-Conclusión: mantener las reglas como **fallback barato** y añadir una capa de
-**post-procesado con LLM local** para los casos que las reglas no cubren.
+Las reglas siguen siendo el **fallback barato**. Cuando el clasificador detecta
+una intención correctiva que no resuelven, la app envía el turno a un proveedor
+LLM configurable: local por defecto, cloud o endpoint personalizado.
 
 ---
 
@@ -65,14 +67,19 @@ del usuario). El umbral debe favorecer la precisión sobre el recall.
 
 ---
 
-## 3. Pipeline propuesto (post-procesado con LLM local)
+## 3. Pipeline implementado (post-procesado con LLM)
 
-### 3.1 Modelos candidatos
+### 3.1 Proveedores
 
-- **Ornith 9B** (~75 tok/s en RTX 4070) — opción principal, calidad alta.
-- **Qwen** (p. ej. Qwen2.5 7B-Instruct) — alternativa más ligera, misma GPU.
-- Ambas sirven de "correctores": prompt corto de ida y vuelta, sin generación
-  larga. El nombre exacto del modelo se confirma al cablear la feature.
+- **Por defecto (local):** `http://127.0.0.1:8081/v1`, modelo `ornith-1.0-9b`.
+- **Cloud:** OpenAI-compatible, por defecto `https://api.openai.com/v1`, modelo
+  `gpt-4o-mini` y API key obligatoria.
+- **Personalizado:** cualquier endpoint OpenAI-compatible y modelo indicado por
+  el usuario; también admite Bearer API key.
+
+La API key se mantiene fuera de `config.json`: en Windows se guarda en
+Credential Manager. Los valores de configuración nuevos se escriben de forma
+retardada para no bloquear la UI al editar campos o sliders.
 
 > Nota: en esta fase el LLM se ejecuta **solo cuando el clasificador detecta
 > intención correctiva**, no en cada turno. El dictado normal no paga el coste.
@@ -83,7 +90,7 @@ Entrada al modelo (contexto + instrucción):
 
 ```
 Eres el corrector de un dictado por voz en español. Se te da:
-- TEXTO ACTUAL (el último turno dictado, ya limpio de muletillas).
+- TEXTO ACTUAL (el último turno dictado, ya pasado por el post-procesado local).
 - INSTRUCCIÓN (lo que el usuario dijo después, pidiendo una corrección).
 
 Devuelve SOLO un JSON válido, sin texto adicional:
@@ -178,7 +185,7 @@ usuario debe ver qué cambió y poder deshacerlo.
 
 ---
 
-## 5. Alternativa sin LLM (por reglas)
+## 5. Fallback sin LLM (por reglas)
 
 Fallback y, a la vez, primera iteración barata. Cubre el caso canónico y
 algunos vecinos con regex puros, sin LLM:
@@ -193,21 +200,20 @@ Ventajas: latencia ~0, determinista, testeable con unit tests (igual que
 `correction.rs`). Desventajas: frágil ante variación («eso del final», «el
 número ese», números en palabras «dos» vs «4»).
 
-**Recomendación:** implementar primero el fallback por reglas (v1, sin
-dependencias nuevas), validar la UX de confirmar/undo, y añadir el LLM (v2)
-como camino para lo que las reglas no casen. Ambas capas comparten el mismo
-contrato `AppliedDiff`, así que la v2 no reescribe la v1.
+Las reglas y el LLM comparten el mismo contrato de diff. El clasificador barato
+mantiene el coste del dictado normal prácticamente en cero y solo envía al LLM
+las frases con señales suficientes de corrección.
 
 ---
 
-## 6. Integración en `app.rs` / `transcribe` sin romper el dictado realtime
+## 6. Integración implementada en `app.rs` / `transcribe`
 
 Punto clave: el dictado es **por turnos** (grabar → transcribir → aplicar
 pipeline), no streaming. La corrección se inserta **después** de
 `apply_pipeline`, en `Message::TranscriptionDone`, y **nunca** en el hilo de
 audio ni en el de whisper.
 
-Cambios propuestos (todos aditivos):
+Comportamiento implementado:
 
 1. **`src/domain/corrective.rs`** (nuevo): `classify`, `apply_diff`, `Diff`,
    `CorrectiveDecision`. Lógica pura + tests (sin I/O, sin red).
@@ -225,8 +231,9 @@ Cambios propuestos (todos aditivos):
      resultado, se aplica el diff y se actualiza el estado.
    - El `Poll` de 100 ms ya drena `transcribe_rx`; añadir un `correct_rx`
      análogo (mismo patrón, sin bloquear).
-4. **`src/transcribe.rs`**: **sin cambios**. La corrección consume el texto ya
-   transcrito; no interfiere con `WhisperEngine`.
+4. **`src/transcribe.rs`** mantiene separadas la transcripción y la corrección;
+   además, el contexto de Whisper se cachea por modelo para evitar recargas por
+   turno.
 
 Lo que **no** debe pasar:
 
@@ -250,10 +257,11 @@ Lo que **no** debe pasar:
 - `cargo check` sin errores; `src/transcribe.rs` y `src/audio.rs` intactos.
 - Commit en español, por capa (v1 reglas, v2 LLM).
 
-## 8. Decisiones abiertas
+## 8. Decisiones cerradas
 
-- Nombre exacto del modelo y motor de inferencia (llama-cpp vs candle vs
-  servidor OpenAI-compatible). Se fija al empezar la v2.
-- Alcance del diff: ¿solo `last_turn` o todo el transcript? v1 = `last_turn`.
-- ¿Confirmación por defecto on u off? Propuesta: **off** (aplicar + aviso +
-  undo), por fluidez.
+- Motor: servidor OpenAI-compatible mediante `ureq`, sin añadir otro runtime
+  local al proceso nativo.
+- Alcance del diff: `last_turn`; el transcript se actualiza solo si el target
+  capturado sigue presente.
+- Confirmación: off por defecto (aplicar + aviso + undo); puede activarse desde
+  Ajustes para mostrar «Aplicar / Descartar».

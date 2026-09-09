@@ -8,8 +8,8 @@
 use iced::border::Radius;
 use iced::theme::Palette;
 use iced::widget::{
-    button, checkbox as check, container, pick_list as pick, progress_bar, rule, scrollable as scroll,
-    text_input as input,
+    button, checkbox as check, container, pick_list as pick, progress_bar, rule,
+    scrollable as scroll, text_input as input,
 };
 use iced::{Background, Border, Color, Shadow, Theme};
 
@@ -110,7 +110,7 @@ pub const FONT_MD: u16 = 14;
 pub const FONT_LG: u16 = 16;
 pub const FONT_XL: u16 = 20;
 pub const FONT_HERO: u16 = 24; // label del estado del micrófono
-// (FONT_DOT se eliminó: el punto de estado del hero ahora usa FONT_XL)
+                               // (FONT_DOT se eliminó: el punto de estado del hero ahora usa FONT_XL)
 
 /// Tamaños de fuente resueltos por el tamaño seleccionado en Ajustes
 /// (`Config::font_size()`). Factor 1.0 = los `FONT_*` de baseline.
@@ -147,9 +147,7 @@ pub fn font_sizes(factor: f32) -> FontSizes {
 /// default de la app) — la configuración nunca rompe el arranque.
 #[cfg(target_os = "windows")]
 pub fn system_dark_mode() -> bool {
-    use winapi::um::winreg::{
-        RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD,
-    };
+    use winapi::um::winreg::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
 
     fn wide(s: &str) -> Vec<u16> {
         s.encode_utf16().chain(std::iter::once(0)).collect()
@@ -170,7 +168,11 @@ pub fn system_dark_mode() -> bool {
             &mut data as *mut u32 as *mut _,
             &mut size,
         );
-        if r == 0 { data == 0 } else { true }
+        if r == 0 {
+            data == 0
+        } else {
+            true
+        }
     }
 }
 
@@ -215,7 +217,11 @@ pub fn is_dark(theme: &Theme) -> bool {
 
 /// Paleta semántica del tema activo.
 pub fn tokens(theme: &Theme) -> &'static UiPalette {
-    if is_dark(theme) { &DARK } else { &LIGHT }
+    if is_dark(theme) {
+        &DARK
+    } else {
+        &LIGHT
+    }
 }
 
 fn border(color: Color, width: f32, radius: f32) -> Border {
@@ -363,11 +369,7 @@ pub fn checkbox(theme: &Theme, status: check::Status) -> check::Style {
             t.surface_alt
         }),
         icon_color: t.accent,
-        border: border(
-            if is_checked { t.accent } else { t.border },
-            1.0,
-            RADIUS_SM,
-        ),
+        border: border(if is_checked { t.accent } else { t.border }, 1.0, RADIUS_SM),
         text_color: Some(t.text),
     }
 }
@@ -479,8 +481,14 @@ mod tests {
         // Jerarquía: cada nivel supera al anterior en cualquier factor.
         for f in [0.85, 1.0, 1.15, 1.3] {
             let fs = font_sizes(f);
-            assert!(fs.xxs < fs.sm && fs.sm < fs.md && fs.md < fs.lg && fs.lg < fs.xl && fs.xl < fs.hero,
-                "jerarquía rota con factor {f}: {fs:?}");
+            assert!(
+                fs.xxs < fs.sm
+                    && fs.sm < fs.md
+                    && fs.md < fs.lg
+                    && fs.lg < fs.xl
+                    && fs.xl < fs.hero,
+                "jerarquía rota con factor {f}: {fs:?}"
+            );
         }
     }
 
@@ -497,7 +505,15 @@ mod tests {
 
     #[test]
     fn with_alpha_cambia_solo_el_canal_alpha() {
-        assert_eq!(with_alpha(Color::WHITE, 0.5), Color { r: 1.0, g: 1.0, b: 1.0, a: 0.5 });
+        assert_eq!(
+            with_alpha(Color::WHITE, 0.5),
+            Color {
+                r: 1.0,
+                g: 1.0,
+                b: 1.0,
+                a: 0.5
+            }
+        );
         assert_eq!(with_alpha(BG, 0.2).a, 0.2);
         assert_eq!(with_alpha(BG, 0.2).r, BG.r, "RGB intacto");
     }

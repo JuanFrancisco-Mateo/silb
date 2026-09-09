@@ -53,7 +53,11 @@ pub fn write_log(tag: &str, msg: &str) {
     if let Some(dir) = log_path().parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(log_path()) {
+    if let Ok(mut f) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(log_path())
+    {
         let _ = writeln!(f, "{line}");
         let _ = f.flush();
     }

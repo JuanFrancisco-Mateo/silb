@@ -7,9 +7,34 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
 use crate::transcribe::Model;
+
+/// Proveedor de corrección IA. Permite elegir entre el método local por
+/// defecto, un proveedor cloud OpenAI-compatible o un endpoint propio.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CorrectionProvider {
+    Default,
+    Cloud,
+    Custom,
+}
+
+impl CorrectionProvider {
+    pub fn label(self) -> &'static str {
+        match self {
+            CorrectionProvider::Default => "Por defecto (local)",
+            CorrectionProvider::Cloud => "Cloud (OpenAI-compatible)",
+            CorrectionProvider::Custom => "Endpoint personalizado",
+        }
+    }
+}
+
+impl std::fmt::Display for CorrectionProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
 
 /// Modo de tema de la app. `Auto` sigue el tema del SISTEMA Windows
 /// (`AppsUseLightTheme` del registro, cacheado en el Poll cada 5 s);
@@ -67,6 +92,31 @@ impl std::str::FromStr for ThemeMode {
             "oscuro" | "dark" => Ok(ThemeMode::Oscuro),
             other => Err(format!("modo de tema desconocido: {other}")),
         }
+    }
+}
+
+/// Estilo visual de la burbuja flotante.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BubbleStyle {
+    Solid,
+    Ring,
+    Minimal,
+}
+
+impl BubbleStyle {
+    pub fn label(self) -> &'static str {
+        match self {
+            BubbleStyle::Solid => "Sólida",
+            BubbleStyle::Ring => "Anillo",
+            BubbleStyle::Minimal => "Minimal",
+        }
+    }
+}
+
+impl std::fmt::Display for BubbleStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
     }
 }
 
@@ -214,7 +264,6 @@ impl std::fmt::Display for BubbleHideTimeout {
 pub struct Config {
     pub dictionary: Vec<DictionaryEntry>,
     pub model: Option<String>,
-    pub cleanup_enabled: Option<bool>,
     pub auto_inject: Option<bool>,
     pub input_device: Option<String>,
     /// Tema oscuro por defecto (2026: dark mode default); toggle persistido.
@@ -223,11 +272,18 @@ pub struct Config {
     /// intención correctiva («no no, era 2 en vez de 4»). Toggle en Ajustes;
     /// spec en docs/CORRECCION-VOZ.md. Default: activada.
     pub ai_correction_enabled: Option<bool>,
-    /// Override del endpoint OpenAI-compatible del corrector. Default:
+    /// Proveedor del corrector: local por defecto, cloud OpenAI-compatible o
+    /// endpoint personalizado. `None` conserva el método local histórico.
+    pub correction_provider: Option<CorrectionProvider>,
+    /// Endpoint OpenAI-compatible del corrector. Se usa en modo Custom y,
+    /// si está presente, también permite sustituir el endpoint cloud.
     /// `http://127.0.0.1:8081/v1` (llama.cpp/Ornith en WSL, alcanzable desde
     /// Windows por localhost forwarding). Groq/Gemini con su base_url.
     pub llm_base_url: Option<String>,
     pub llm_model: Option<String>,
+    /// API key en memoria. No se serializa: en Windows se guarda en
+    /// Credential Manager y se migra cualquier valor legado al cargar/guardar.
+    #[serde(default, skip_serializing)]
     pub llm_api_key: Option<String>,
     /// Timeout de la llamada HTTP al LLM corrector, en segundos. Default
     /// 25 s (en el límite de los ~4-6 s esperados + margen para endpoints
@@ -282,10 +338,8 @@ pub struct Config {
     /// cuello suele estar en GPU (small + cuda). Default: 4 (lo que ya
     /// usaba la app como constante). El sistema físico lo respeta.
     pub n_threads: Option<u32>,
-    /// Remuestreo automático del audio del micro a 16 kHz (lo que exige
-    /// whisper.cpp). Default: true. La opción existe como perilla
-    /// informativa: si está apagada y el dispositivo NO está a 16 kHz,
-    /// whisper fallaría; la app registra un aviso y remuestrea igual.
+    /// Campo legado de configuración. Whisper siempre recibe 16 kHz; se
+    /// conserva para no romper configs antiguas, pero ya no se expone en UI.
     pub auto_resample_to_16k: Option<bool>,
     // ── Apariencia (tema / fuente / burbuja) ────────────────────────────────
     /// Tema claro/oscuro/auto. `None` = legacy: se deriva de `dark_mode`
@@ -302,6 +356,8 @@ pub struct Config {
     pub bubble_corner: Option<BubbleCorner>,
     /// Opacidad de la burbuja en % (rango 20..=100). `None` = 100.
     pub bubble_opacity: Option<u8>,
+    /// Estilo visual de la burbuja. `None` = sólida (compatibilidad histórica).
+    pub bubble_style: Option<BubbleStyle>,
     /// Auto-ocultar la burbuja tras N segundos sin dictar. `None` = nunca.
     /// Se re-muestra al pulsar el micrófono o al abrir la burbuja.
     pub bubble_hide_timeout: Option<BubbleHideTimeout>,
@@ -311,11 +367,6 @@ pub struct Config {
     /// limpian: la esquina vuelve a mandar en el siguiente arranque.
     pub bubble_x: Option<i32>,
     pub bubble_y: Option<i32>,
-    /// Muletillas personalizadas (Ajustes → Muletillas). `None` = las
-    /// listas por defecto de `cleanup.rs` (eh/um/uh/o sea/you know ·
-    /// este/esto/tipo/like/pues · bueno/pues). Se persiste solo cuando el
-    /// usuario toca las listas; el botón «Por defecto» lo vuelve a None.
-    pub fillers: Option<FillerWords>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -331,16 +382,96 @@ pub fn dictionary_path() -> PathBuf {
     base.join("whispr-open").join("dictionary.json")
 }
 
+#[cfg(target_os = "windows")]
+const API_KEY_CREDENTIAL_TARGET: &str = "WhisprOpen/llm-api-key";
+
+#[cfg(target_os = "windows")]
+fn wide(value: &str) -> Vec<u16> {
+    use std::os::windows::ffi::OsStrExt;
+    std::ffi::OsStr::new(value)
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+#[cfg(target_os = "windows")]
+fn load_api_key_secret() -> Option<String> {
+    use winapi::um::wincred::{CredFree, CredReadW, CREDENTIALW, CRED_TYPE_GENERIC};
+
+    unsafe {
+        let target = wide(API_KEY_CREDENTIAL_TARGET);
+        let mut raw: *mut CREDENTIALW = std::ptr::null_mut();
+        if CredReadW(target.as_ptr(), CRED_TYPE_GENERIC, 0, &mut raw) == 0 || raw.is_null() {
+            return None;
+        }
+        let credential = &*raw;
+        let bytes = std::slice::from_raw_parts(
+            credential.CredentialBlob,
+            credential.CredentialBlobSize as usize,
+        );
+        let value = String::from_utf8(bytes.to_vec()).ok();
+        CredFree(raw as *mut _);
+        value.filter(|key| !key.is_empty())
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn load_api_key_secret() -> Option<String> {
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn save_api_key_secret(value: Option<&str>) {
+    use winapi::shared::minwindef::DWORD;
+    use winapi::um::wincred::{
+        CredDeleteW, CredWriteW, CREDENTIALW, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
+    };
+
+    unsafe {
+        let target = wide(API_KEY_CREDENTIAL_TARGET);
+        match value.filter(|key| !key.is_empty()) {
+            Some(key) => {
+                let bytes = key.as_bytes();
+                let mut credential: CREDENTIALW = std::mem::zeroed();
+                credential.Type = CRED_TYPE_GENERIC;
+                credential.TargetName = target.as_ptr() as *mut _;
+                credential.CredentialBlobSize = bytes.len() as DWORD;
+                credential.CredentialBlob = bytes.as_ptr() as *mut _;
+                credential.Persist = CRED_PERSIST_LOCAL_MACHINE;
+                if CredWriteW(&mut credential, 0) == 0 {
+                    crate::log!(
+                        "config",
+                        "no se pudo guardar la API key en Credential Manager"
+                    );
+                }
+            }
+            None => {
+                let _ = CredDeleteW(target.as_ptr(), CRED_TYPE_GENERIC, 0);
+            }
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn save_api_key_secret(_value: Option<&str>) {}
+
 impl Config {
     pub fn load() -> Self {
         let path = config_path();
-        let Ok(raw) = std::fs::read_to_string(&path) else {
-            return Self::default();
+        let mut cfg: Self = match std::fs::read_to_string(&path) {
+            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+            Err(_) => Self::default(),
         };
-        serde_json::from_str(&raw).unwrap_or_default()
+        // La key nueva vive en Credential Manager; el campo legado del JSON
+        // solo se conserva para migrar configuraciones antiguas al guardar.
+        if cfg.llm_api_key.is_none() {
+            cfg.llm_api_key = load_api_key_secret();
+        }
+        cfg
     }
 
     pub fn save(&self) {
+        save_api_key_secret(self.llm_api_key.as_deref());
         let path = config_path();
         if let Some(parent) = path.parent() {
             let _ = std::fs::create_dir_all(parent);
@@ -352,6 +483,7 @@ impl Config {
 
     pub fn selected_model(&self) -> Model {
         match self.model.as_deref() {
+            Some("tiny") => Model::Tiny,
             Some("base") => Model::Base,
             Some("small") => Model::Small,
             // Default (sin config) y valores inválidos: Small. Base/tiny en
@@ -403,17 +535,35 @@ impl Config {
     /// Configuración del LLM corrector. Defaults: llama.cpp local en WSL
     /// (Ornith 9B, puerto 8081); overridables en config.json. El timeout
     /// sale de `llm_timeout_secs` (default 25 s).
+    pub fn correction_provider(&self) -> CorrectionProvider {
+        self.correction_provider
+            .unwrap_or(CorrectionProvider::Default)
+    }
+
     pub fn llm_settings(&self) -> crate::llm::LlmConfig {
+        let provider = self.correction_provider();
+        let (default_url, default_model, needs_key) = match provider {
+            CorrectionProvider::Default => ("http://127.0.0.1:8081/v1", "ornith-1.0-9b", false),
+            CorrectionProvider::Cloud => ("https://api.openai.com/v1", "gpt-4o-mini", true),
+            CorrectionProvider::Custom => ("http://127.0.0.1:8081/v1", "ornith-1.0-9b", true),
+        };
         crate::llm::LlmConfig {
+            provider,
             base_url: self
                 .llm_base_url
                 .clone()
-                .unwrap_or_else(|| "http://127.0.0.1:8081/v1".to_string()),
+                .filter(|url| !url.trim().is_empty())
+                .unwrap_or_else(|| default_url.to_string()),
             model: self
                 .llm_model
                 .clone()
-                .unwrap_or_else(|| "ornith-1.0-9b".to_string()),
-            api_key: self.llm_api_key.clone(),
+                .filter(|model| !model.trim().is_empty())
+                .unwrap_or_else(|| default_model.to_string()),
+            api_key: if needs_key {
+                self.llm_api_key.clone()
+            } else {
+                None
+            },
             timeout_secs: self.llm_timeout_secs().unwrap_or(25),
         }
     }
@@ -482,14 +632,10 @@ impl Config {
         }
     }
 
-    /// ¿Remuestrear el audio del micro a 16 kHz automáticamente?
-    /// Por defecto true. Whisper.cpp exige 16 kHz; si el dispositivo NO
-    /// está a esa frecuencia y la opción está apagada, el caller
-    /// (`audio::AudioCapture::stop`) registra un aviso y devuelve las
-    /// muestras al rate nativo — el llamador puede detectar el problema
-    /// y forzar el remuestreo si va a pasarle las muestras a whisper.
+    /// Compatibilidad con configs antiguas. El pipeline siempre remuestrea
+    /// a 16 kHz antes de invocar Whisper.
     pub fn auto_resample_16k(&self) -> bool {
-        self.auto_resample_to_16k.unwrap_or(true)
+        true
     }
 
     /// Modo de tema efectivo. `None` (config vieja sin el campo) se deriva
@@ -536,6 +682,11 @@ impl Config {
         self.bubble_opacity.unwrap_or(100).clamp(20, 100)
     }
 
+    /// Estilo de la burbuja. Default: sólida.
+    pub fn bubble_style(&self) -> BubbleStyle {
+        self.bubble_style.unwrap_or(BubbleStyle::Solid)
+    }
+
     /// Auto-ocultar de la burbuja. Default: nunca.
     pub fn bubble_hide_timeout(&self) -> BubbleHideTimeout {
         self.bubble_hide_timeout.unwrap_or(BubbleHideTimeout::Never)
@@ -549,12 +700,6 @@ impl Config {
             _ => None,
         }
     }
-
-    /// Muletillas efectivas: las personalizadas de Ajustes o, si no hay
-    /// (`None`), los defaults de `cleanup.rs` (las listas originales).
-    pub fn fillers(&self) -> FillerWords {
-        self.fillers.clone().unwrap_or_default()
-    }
 }
 
 #[cfg(test)]
@@ -566,7 +711,6 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.selected_model(), Model::Small);
         assert!(cfg.dictionary.is_empty());
-        assert_eq!(cfg.cleanup_enabled, None);
     }
 
     #[test]
@@ -576,7 +720,10 @@ mod tests {
 
     #[test]
     fn invalid_model_falls_back_to_small() {
-        let cfg = Config { model: Some("gigante".into()), ..Default::default() };
+        let cfg = Config {
+            model: Some("gigante".into()),
+            ..Default::default()
+        };
         assert_eq!(cfg.selected_model(), Model::Small);
     }
 
@@ -584,7 +731,10 @@ mod tests {
     fn dark_mode_por_defecto() {
         let cfg = Config::default();
         assert!(cfg.is_dark(), "2026: dark mode default");
-        let claro = Config { dark_mode: Some(false), ..Default::default() };
+        let claro = Config {
+            dark_mode: Some(false),
+            ..Default::default()
+        };
         assert!(!claro.is_dark());
     }
 
@@ -608,9 +758,18 @@ mod tests {
         assert_eq!(s.window_filter.as_deref(), Some("Visual Studio Code"));
 
         // Formato desconocido → paste (default seguro); filtro en blanco → sin filtro.
-        let c = Config { inject_format: Some("escaneo".into()), ..Default::default() };
-        assert_eq!(c.inject_settings().format, crate::inject::InjectFormat::Paste);
-        let c = Config { inject_window_filter: Some("  ".into()), ..Default::default() };
+        let c = Config {
+            inject_format: Some("escaneo".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            c.inject_settings().format,
+            crate::inject::InjectFormat::Paste
+        );
+        let c = Config {
+            inject_window_filter: Some("  ".into()),
+            ..Default::default()
+        };
         assert_eq!(c.inject_settings().window_filter, None);
     }
 
@@ -618,34 +777,61 @@ mod tests {
     fn atajo_global_default_y_personalizado() {
         let cfg = Config::default();
         assert_eq!(cfg.shortcut(), "Ctrl+Shift+D");
-        let c = Config { shortcut: Some("Alt+Space".into()), ..Default::default() };
+        let c = Config {
+            shortcut: Some("Alt+Space".into()),
+            ..Default::default()
+        };
         assert_eq!(c.shortcut(), "Alt+Space");
         // En blanco/ausente → default (la config nunca rompe el arranque).
-        let c = Config { shortcut: Some("   ".into()), ..Default::default() };
+        let c = Config {
+            shortcut: Some("   ".into()),
+            ..Default::default()
+        };
         assert_eq!(c.shortcut(), "Ctrl+Shift+D");
     }
 
     #[test]
     fn correction_ia_defaults_on_y_local() {
         let cfg = Config::default();
-        assert!(cfg.ai_correction_enabled(), "corrección IA activada por defecto");
+        assert!(
+            cfg.ai_correction_enabled(),
+            "corrección IA activada por defecto"
+        );
         let llm = cfg.llm_settings();
         assert_eq!(llm.base_url, "http://127.0.0.1:8081/v1");
         assert_eq!(llm.model, "ornith-1.0-9b");
         assert_eq!(llm.api_key, None);
-        // Override de endpoint (p. ej. Groq/Gemini) via config.json.
+        assert_eq!(cfg.correction_provider(), CorrectionProvider::Default);
+        // Override de endpoint (p. ej. cualquier API OpenAI-compatible) via config.json.
         let remoto = Config {
-            llm_base_url: Some("https://api.groq.com/openai/v1".into()),
-            llm_model: Some("llama-3.3-70b-versatile".into()),
+            correction_provider: Some(CorrectionProvider::Custom),
+            llm_base_url: Some("https://api.example.com/v1".into()),
+            llm_model: Some("custom-model".into()),
             llm_api_key: Some("clave".into()),
             ..Default::default()
         };
         let l2 = remoto.llm_settings();
-        assert_eq!(l2.base_url, "https://api.groq.com/openai/v1");
-        assert_eq!(l2.model, "llama-3.3-70b-versatile");
-        assert_eq!(l2.api_key.as_deref(), Some("clave"));
+        assert_eq!(l2.base_url, "https://api.example.com/v1");
+        assert_eq!(l2.model, "custom-model");
+        assert_eq!(
+            l2.api_key.as_deref(),
+            Some("clave"),
+            "custom también puede requerir autenticación"
+        );
+        let cloud = Config {
+            correction_provider: Some(CorrectionProvider::Cloud),
+            llm_api_key: Some("clave".into()),
+            ..Default::default()
+        };
+        let cloud_settings = cloud.llm_settings();
+        assert_eq!(cloud_settings.base_url, "https://api.openai.com/v1");
+        assert_eq!(cloud_settings.model, "gpt-4o-mini");
+        assert_eq!(cloud_settings.api_key.as_deref(), Some("clave"));
         // Toggle off persistido.
-        let off = Config { ai_correction_enabled: Some(false), ..Default::default() };
+        let off = Config {
+            ai_correction_enabled: Some(false),
+            ..Default::default()
+        };
         assert!(!off.ai_correction_enabled());
     }
 
@@ -662,11 +848,17 @@ mod tests {
         assert!(!cfg.ai_correction_confirm());
 
         // Override de timeout desde config.json.
-        let c = Config { llm_timeout_secs: Some(45), ..Default::default() };
+        let c = Config {
+            llm_timeout_secs: Some(45),
+            ..Default::default()
+        };
         assert_eq!(c.llm_timeout_secs(), Some(45));
         assert_eq!(c.llm_settings().timeout_secs, 45);
         // 0 cae al default (timeout de 0 cortaría toda llamada).
-        let c = Config { llm_timeout_secs: Some(0), ..Default::default() };
+        let c = Config {
+            llm_timeout_secs: Some(0),
+            ..Default::default()
+        };
         assert_eq!(c.llm_timeout_secs(), None);
         assert_eq!(c.llm_settings().timeout_secs, 25);
 
@@ -688,27 +880,54 @@ mod tests {
 
         // Vacío o None también caen al default español (la config nunca
         // rompe el arranque; el usuario debe poner "auto" explícitamente).
-        let c = Config { language: None, ..Default::default() };
+        let c = Config {
+            language: None,
+            ..Default::default()
+        };
         assert_eq!(c.language(), Some("es"));
-        let c = Config { language: Some("".into()), ..Default::default() };
+        let c = Config {
+            language: Some("".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), Some("es"));
-        let c = Config { language: Some("  ".into()), ..Default::default() };
+        let c = Config {
+            language: Some("  ".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), Some("es"));
 
         // "auto" (cualquier casing) → autodetección (None).
-        let c = Config { language: Some("auto".into()), ..Default::default() };
+        let c = Config {
+            language: Some("auto".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), None);
-        let c = Config { language: Some("AUTO".into()), ..Default::default() };
+        let c = Config {
+            language: Some("AUTO".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), None);
-        let c = Config { language: Some("Auto".into()), ..Default::default() };
+        let c = Config {
+            language: Some("Auto".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), None);
-        let c = Config { language: Some("  auto  ".into()), ..Default::default() };
+        let c = Config {
+            language: Some("  auto  ".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), None);
 
         // Overrides legítimos (trimeo + BCP-47).
-        let c = Config { language: Some("en".into()), ..Default::default() };
+        let c = Config {
+            language: Some("en".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), Some("en"));
-        let c = Config { language: Some("  fr  ".into()), ..Default::default() };
+        let c = Config {
+            language: Some("  fr  ".into()),
+            ..Default::default()
+        };
         assert_eq!(c.language(), Some("fr"));
     }
 
@@ -719,17 +938,32 @@ mod tests {
 
         // Valores válidos: 1..=8.
         for n in 1..=8 {
-            let c = Config { beam_size: Some(n), ..Default::default() };
+            let c = Config {
+                beam_size: Some(n),
+                ..Default::default()
+            };
             assert_eq!(c.beam_size(), n, "beam_size válido: {n}");
         }
         // Fuera de rango → default (la config nunca rompe el arranque).
-        let c = Config { beam_size: Some(0), ..Default::default() };
+        let c = Config {
+            beam_size: Some(0),
+            ..Default::default()
+        };
         assert_eq!(c.beam_size(), 5);
-        let c = Config { beam_size: Some(9), ..Default::default() };
+        let c = Config {
+            beam_size: Some(9),
+            ..Default::default()
+        };
         assert_eq!(c.beam_size(), 5);
-        let c = Config { beam_size: Some(999), ..Default::default() };
+        let c = Config {
+            beam_size: Some(999),
+            ..Default::default()
+        };
         assert_eq!(c.beam_size(), 5);
-        let c = Config { beam_size: None, ..Default::default() };
+        let c = Config {
+            beam_size: None,
+            ..Default::default()
+        };
         assert_eq!(c.beam_size(), 5);
     }
 
@@ -739,31 +973,56 @@ mod tests {
         assert_eq!(Config::default().n_threads(), 4);
 
         // Mínimo 1.
-        let c = Config { n_threads: Some(1), ..Default::default() };
+        let c = Config {
+            n_threads: Some(1),
+            ..Default::default()
+        };
         assert_eq!(c.n_threads(), 1);
         // Valores razonables.
-        let c = Config { n_threads: Some(8), ..Default::default() };
+        let c = Config {
+            n_threads: Some(8),
+            ..Default::default()
+        };
         assert_eq!(c.n_threads(), 8);
-        let c = Config { n_threads: Some(16), ..Default::default() };
+        let c = Config {
+            n_threads: Some(16),
+            ..Default::default()
+        };
         assert_eq!(c.n_threads(), 16);
         // Tope blando 32 (más hilos no aportan pero se permite).
-        let c = Config { n_threads: Some(64), ..Default::default() };
+        let c = Config {
+            n_threads: Some(64),
+            ..Default::default()
+        };
         assert_eq!(c.n_threads(), 32);
         // 0 y None → default.
-        let c = Config { n_threads: Some(0), ..Default::default() };
+        let c = Config {
+            n_threads: Some(0),
+            ..Default::default()
+        };
         assert_eq!(c.n_threads(), 4);
-        let c = Config { n_threads: None, ..Default::default() };
+        let c = Config {
+            n_threads: None,
+            ..Default::default()
+        };
         assert_eq!(c.n_threads(), 4);
     }
 
     #[test]
-    fn auto_resample_16k_default_y_personalizado() {
-        // Default: true (whisper.cpp exige 16 kHz; la app ya remuestreaba).
+    fn legacy_resampling_setting_is_ignored() {
+        // Whisper siempre exige 16 kHz: el campo legacy ya no puede desactivar
+        // el remuestreo aunque un config.json antiguo lo contenga.
         assert!(Config::default().auto_resample_16k());
-        let c = Config { auto_resample_to_16k: Some(false), ..Default::default() };
-        assert!(!c.auto_resample_16k());
-        let c = Config { auto_resample_to_16k: Some(true), ..Default::default() };
-        assert!(c.auto_resample_16k());
+        let disabled = Config {
+            auto_resample_to_16k: Some(false),
+            ..Default::default()
+        };
+        assert!(disabled.auto_resample_16k());
+        let enabled = Config {
+            auto_resample_to_16k: Some(true),
+            ..Default::default()
+        };
+        assert!(enabled.auto_resample_16k());
     }
 
     #[test]
@@ -781,7 +1040,7 @@ mod tests {
         assert_eq!(leido.language(), Some("en"));
         assert_eq!(leido.beam_size(), 3);
         assert_eq!(leido.n_threads(), 8);
-        assert!(!leido.auto_resample_16k());
+        assert!(leido.auto_resample_16k());
 
         // Compatibilidad hacia atrás: un config.json viejo sin los campos
         // nuevos se deserializa sin error y los getters devuelven los defaults.
@@ -801,7 +1060,10 @@ mod tests {
         // Default (sin nada): Oscuro (2026: dark por defecto).
         assert_eq!(Config::default().theme_mode(), ThemeMode::Oscuro);
         // Legacy dark_mode=false → Claro (config vieja con toggle en claro).
-        let claro = Config { dark_mode: Some(false), ..Default::default() };
+        let claro = Config {
+            dark_mode: Some(false),
+            ..Default::default()
+        };
         assert_eq!(claro.theme_mode(), ThemeMode::Claro);
         // theme_mode explícito manda sobre dark_mode.
         let c = Config {
@@ -820,14 +1082,29 @@ mod tests {
     #[test]
     fn resolved_dark_sigue_al_modo_y_al_sistema() {
         // Auto: decide el sistema (cacheado en el Poll).
-        let auto = Config { theme_mode: Some(ThemeMode::Auto), ..Default::default() };
+        let auto = Config {
+            theme_mode: Some(ThemeMode::Auto),
+            ..Default::default()
+        };
         assert!(auto.resolved_dark(true));
         assert!(!auto.resolved_dark(false));
         // Claro/Oscuro: fuerzan sin mirar al sistema.
-        let claro = Config { theme_mode: Some(ThemeMode::Claro), ..Default::default() };
-        assert!(!claro.resolved_dark(true), "claro gana aunque el sistema sea oscuro");
-        let oscuro = Config { theme_mode: Some(ThemeMode::Oscuro), ..Default::default() };
-        assert!(oscuro.resolved_dark(false), "oscuro gana aunque el sistema sea claro");
+        let claro = Config {
+            theme_mode: Some(ThemeMode::Claro),
+            ..Default::default()
+        };
+        assert!(
+            !claro.resolved_dark(true),
+            "claro gana aunque el sistema sea oscuro"
+        );
+        let oscuro = Config {
+            theme_mode: Some(ThemeMode::Oscuro),
+            ..Default::default()
+        };
+        assert!(
+            oscuro.resolved_dark(false),
+            "oscuro gana aunque el sistema sea claro"
+        );
         // Default (None) = Oscuro, ignora al sistema.
         assert!(Config::default().resolved_dark(false));
     }
@@ -852,7 +1129,10 @@ mod tests {
         assert_eq!(FontSize::Small.factor(), 0.85);
         assert_eq!(FontSize::Large.factor(), 1.15);
         assert_eq!(FontSize::XLarge.factor(), 1.3);
-        let c = Config { font_size: Some(FontSize::XLarge), ..Default::default() };
+        let c = Config {
+            font_size: Some(FontSize::XLarge),
+            ..Default::default()
+        };
         assert_eq!(c.font_size(), FontSize::XLarge);
     }
 
@@ -866,14 +1146,27 @@ mod tests {
         assert_eq!(cfg.bubble_hide_timeout(), BubbleHideTimeout::Never);
         assert_eq!(cfg.bubble_position(), None, "sin arrastre no hay posición");
         // Opacidad fuera de rango (config.json a mano) se clampea a 20..=100.
-        let baja = Config { bubble_opacity: Some(5), ..Default::default() };
+        let baja = Config {
+            bubble_opacity: Some(5),
+            ..Default::default()
+        };
         assert_eq!(baja.bubble_opacity(), 20);
-        let alta = Config { bubble_opacity: Some(255), ..Default::default() };
+        let alta = Config {
+            bubble_opacity: Some(255),
+            ..Default::default()
+        };
         assert_eq!(alta.bubble_opacity(), 100);
         // Posición solo con la pareja completa.
-        let solo_x = Config { bubble_x: Some(10), ..Default::default() };
+        let solo_x = Config {
+            bubble_x: Some(10),
+            ..Default::default()
+        };
         assert_eq!(solo_x.bubble_position(), None);
-        let par = Config { bubble_x: Some(10), bubble_y: Some(20), ..Default::default() };
+        let par = Config {
+            bubble_x: Some(10),
+            bubble_y: Some(20),
+            ..Default::default()
+        };
         assert_eq!(par.bubble_position(), Some((10, 20)));
         // Timeouts: Nunca = None, el resto segundos exactos.
         assert_eq!(BubbleHideTimeout::Never.secs(), None);
@@ -902,6 +1195,7 @@ mod tests {
         assert_eq!(leida.bubble_size(), BubbleSize::Large);
         assert_eq!(leida.bubble_corner(), BubbleCorner::BottomLeft);
         assert_eq!(leida.bubble_opacity(), 80);
+        assert_eq!(leida.bubble_style(), BubbleStyle::Solid);
         assert_eq!(leida.bubble_hide_timeout(), BubbleHideTimeout::S10);
         assert_eq!(leida.bubble_position(), Some((1400, 920)));
 
@@ -918,23 +1212,55 @@ mod tests {
     }
 
     #[test]
-    fn fillers_defaults_y_personalizados() {
-        // Sin configuración: los defaults de cleanup.rs (listas originales).
+    fn correction_provider_defaults_and_roundtrip() {
         let cfg = Config::default();
-        assert_eq!(cfg.fillers(), FillerWords::default());
+        assert_eq!(cfg.correction_provider(), CorrectionProvider::Default);
+        let original = Config {
+            correction_provider: Some(CorrectionProvider::Cloud),
+            llm_base_url: Some("https://api.example.com/v1".into()),
+            llm_model: Some("model".into()),
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&original).unwrap();
+        let loaded: Config = serde_json::from_str(&raw).unwrap();
+        assert_eq!(loaded.correction_provider(), CorrectionProvider::Cloud);
+    }
 
-        // Personalizado: se persiste en config.json y se relee.
-        let mut f = FillerWords::default();
-        f.ambiguous.push("vale".to_string());
-        let cfg = Config { fillers: Some(f.clone()), ..Default::default() };
-        let raw = serde_json::to_string(&cfg).expect("serializa");
-        let leida: Config = serde_json::from_str(&raw).expect("deserializa");
-        assert_eq!(leida.fillers(), f);
+    #[test]
+    fn api_key_never_serializes_to_config_json() {
+        let cfg = Config {
+            llm_api_key: Some("secret-value".into()),
+            correction_provider: Some(CorrectionProvider::Cloud),
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&cfg).expect("config serializable");
+        assert!(!json.contains("secret-value"));
+        assert!(!json.contains("llm_api_key"));
 
-        // Backward compat: config.json viejo sin `fillers` → defaults.
-        let viejo = r#"{"dictionary":[]}"#;
-        let cfg: Config = serde_json::from_str(viejo).expect("json viejo");
-        assert_eq!(cfg.fillers(), FillerWords::default());
+        // El formato legado se sigue leyendo para poder migrarlo, pero nunca
+        // vuelve a salir al serializar.
+        let legacy: Config =
+            serde_json::from_str(r#"{"dictionary":[],"llm_api_key":"legacy-secret"}"#)
+                .expect("legacy config");
+        assert_eq!(legacy.llm_api_key.as_deref(), Some("legacy-secret"));
+        let migrated = serde_json::to_string(&legacy).expect("migrated config");
+        assert!(!migrated.contains("legacy-secret"));
+    }
+
+    #[test]
+    fn tiny_model_can_be_selected_from_config() {
+        let cfg = Config {
+            model: Some("tiny".into()),
+            ..Default::default()
+        };
+        assert_eq!(cfg.selected_model(), Model::Tiny);
+    }
+
+    #[test]
+    fn obsolete_filler_settings_are_ignored_when_loading_legacy_json() {
+        let raw = r#"{"dictionary":[],"cleanup_enabled":false,"fillers":{"unambiguous":[]}}"#;
+        let cfg: Config = serde_json::from_str(raw).expect("legacy config");
+        assert!(cfg.dictionary.is_empty());
     }
 
     #[test]

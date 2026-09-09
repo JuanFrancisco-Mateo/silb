@@ -78,7 +78,10 @@ impl FillerWords {
 fn escape_regexp(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
-        if matches!(c, '.' | '*' | '+' | '?' | '^' | '$' | '{' | '}' | '(' | ')' | '|' | '[' | ']' | '\\') {
+        if matches!(
+            c,
+            '.' | '*' | '+' | '?' | '^' | '$' | '{' | '}' | '(' | ')' | '|' | '[' | ']' | '\\'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -165,7 +168,10 @@ fn is_filler_only(value: &str) -> bool {
 pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResult {
     let original = normalize_spaces(input);
     if original.is_empty() {
-        return CleanupResult { text: String::new(), removed: vec![] };
+        return CleanupResult {
+            text: String::new(),
+            removed: vec![],
+        };
     }
 
     let mut text = original.clone();
@@ -226,7 +232,10 @@ pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResul
     }
 
     if is_filler_only(&text) {
-        return CleanupResult { text: original, removed: vec![] };
+        return CleanupResult {
+            text: original,
+            removed: vec![],
+        };
     }
 
     // Dedupe conservando el orden.
@@ -252,12 +261,18 @@ mod tests {
 
     #[test]
     fn removes_eh_mid_sentence() {
-        assert_eq!(cleaned("Vamos a empezar, eh, con la reunión"), ("Vamos a empezar, con la reunión".into(), vec!["eh".into()]));
+        assert_eq!(
+            cleaned("Vamos a empezar, eh, con la reunión"),
+            ("Vamos a empezar, con la reunión".into(), vec!["eh".into()])
+        );
     }
 
     #[test]
     fn removes_eh_at_end_without_comma() {
-        assert_eq!(cleaned("Avísame luego eh"), ("Avísame luego".into(), vec!["eh".into()]));
+        assert_eq!(
+            cleaned("Avísame luego eh"),
+            ("Avísame luego".into(), vec!["eh".into()])
+        );
     }
 
     #[test]
@@ -267,52 +282,82 @@ mod tests {
 
     #[test]
     fn removes_um_mid_sentence() {
-        assert_eq!(cleaned("No sé, um, qué hacer"), ("No sé, qué hacer".into(), vec!["um".into()]));
+        assert_eq!(
+            cleaned("No sé, um, qué hacer"),
+            ("No sé, qué hacer".into(), vec!["um".into()])
+        );
     }
 
     #[test]
     fn removes_este_before_pause() {
-        assert_eq!(cleaned("Este, el informe del jueves"), ("El informe del jueves".into(), vec!["Este".into()]));
+        assert_eq!(
+            cleaned("Este, el informe del jueves"),
+            ("El informe del jueves".into(), vec!["Este".into()])
+        );
     }
 
     #[test]
     fn keeps_este_as_legit_demonstrative() {
-        assert_eq!(cleaned("Este es el plan"), ("Este es el plan".into(), vec![]));
+        assert_eq!(
+            cleaned("Este es el plan"),
+            ("Este es el plan".into(), vec![])
+        );
     }
 
     #[test]
     fn removes_esto_before_pause() {
-        assert_eq!(cleaned("Dijo, esto, que vendría"), ("Dijo, que vendría".into(), vec!["esto".into()]));
+        assert_eq!(
+            cleaned("Dijo, esto, que vendría"),
+            ("Dijo, que vendría".into(), vec!["esto".into()])
+        );
     }
 
     #[test]
     fn keeps_esto_as_legit_demonstrative() {
-        assert_eq!(cleaned("Esto es importante"), ("Esto es importante".into(), vec![]));
+        assert_eq!(
+            cleaned("Esto es importante"),
+            ("Esto es importante".into(), vec![])
+        );
     }
 
     #[test]
     fn removes_o_sea() {
-        assert_eq!(cleaned("Vamos, o sea, al parque"), ("Vamos, al parque".into(), vec!["o sea".into()]));
+        assert_eq!(
+            cleaned("Vamos, o sea, al parque"),
+            ("Vamos, al parque".into(), vec!["o sea".into()])
+        );
     }
 
     #[test]
     fn removes_tipo_before_pause() {
-        assert_eq!(cleaned("Fue, tipo, muy raro"), ("Fue, muy raro".into(), vec!["tipo".into()]));
+        assert_eq!(
+            cleaned("Fue, tipo, muy raro"),
+            ("Fue, muy raro".into(), vec!["tipo".into()])
+        );
     }
 
     #[test]
     fn keeps_tipo_in_tipo_de_documento() {
-        assert_eq!(cleaned("Necesito un tipo de documento"), ("Necesito un tipo de documento".into(), vec![]));
+        assert_eq!(
+            cleaned("Necesito un tipo de documento"),
+            ("Necesito un tipo de documento".into(), vec![])
+        );
     }
 
     #[test]
     fn removes_bueno_at_start_and_capitalizes() {
-        assert_eq!(cleaned("Bueno, vamos a empezar"), ("Vamos a empezar".into(), vec!["Bueno".into()]));
+        assert_eq!(
+            cleaned("Bueno, vamos a empezar"),
+            ("Vamos a empezar".into(), vec!["Bueno".into()])
+        );
     }
 
     #[test]
     fn keeps_bueno_as_adjective() {
-        assert_eq!(cleaned("El vino es bueno"), ("El vino es bueno".into(), vec![]));
+        assert_eq!(
+            cleaned("El vino es bueno"),
+            ("El vino es bueno".into(), vec![])
+        );
     }
 
     #[test]
@@ -323,19 +368,31 @@ mod tests {
     #[test]
     fn removes_pues_at_start_and_before_pause() {
         // "pues" vive en dos categorías por defecto: inicio de turno y pausa.
-        assert_eq!(cleaned("Pues, vamos"), ("Vamos".into(), vec!["Pues".into()]));
-        assert_eq!(cleaned("Vamos, pues, ya"), ("Vamos, ya".into(), vec!["pues".into()]));
+        assert_eq!(
+            cleaned("Pues, vamos"),
+            ("Vamos".into(), vec!["Pues".into()])
+        );
+        assert_eq!(
+            cleaned("Vamos, pues, ya"),
+            ("Vamos, ya".into(), vec!["pues".into()])
+        );
     }
 
     #[test]
     fn collapses_word_repetition() {
         // La repetición abre el turno -> la primera palabra se capitaliza.
-        assert_eq!(cleaned("el el proyecto"), ("El proyecto".into(), vec!["el".into()]));
+        assert_eq!(
+            cleaned("el el proyecto"),
+            ("El proyecto".into(), vec!["el".into()])
+        );
     }
 
     #[test]
     fn collapses_bigram_repetition() {
-        assert_eq!(cleaned("hay que hay que hacerlo"), ("Hay que hacerlo".into(), vec!["hay que".into()]));
+        assert_eq!(
+            cleaned("hay que hay que hacerlo"),
+            ("Hay que hacerlo".into(), vec!["hay que".into()])
+        );
     }
 
     #[test]
@@ -346,7 +403,10 @@ mod tests {
     #[test]
     fn removes_english_fillers() {
         // "you know" es muletilla inequívoca: se elimina aunque no haya pausa.
-        assert_eq!(cleaned("I mean, like, you know"), ("I mean,".into(), vec!["you know".into(), "like".into()]));
+        assert_eq!(
+            cleaned("I mean, like, you know"),
+            ("I mean,".into(), vec!["you know".into(), "like".into()])
+        );
     }
 
     // ── Muletillas configuradas ─────────────────────────────────────────────
@@ -395,8 +455,7 @@ mod tests {
         let parsed: FillerWords = serde_json::from_str("{}").unwrap();
         assert_eq!(parsed, FillerWords::default());
         // Una lista parcial solo sustituye su campo (backward compatible).
-        let parcial: FillerWords =
-            serde_json::from_str(r#"{"unambiguous":["vale"]}"#).unwrap();
+        let parcial: FillerWords = serde_json::from_str(r#"{"unambiguous":["vale"]}"#).unwrap();
         assert_eq!(parcial.unambiguous, vec!["vale"]);
         assert_eq!(parcial.ambiguous, FillerWords::default().ambiguous);
     }

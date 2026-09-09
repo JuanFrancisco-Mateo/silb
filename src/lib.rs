@@ -12,16 +12,16 @@
 //! - `tray`: bandeja del sistema (icono + menú Mostrar/Ocultar/Salir).
 //! - `app`: UI Iced.
 
-pub mod log;
 pub mod app;
-pub mod fonts;
-pub mod bubble;
 pub mod audio;
+pub mod bubble;
 pub mod config;
 pub mod domain;
+pub mod fonts;
 pub mod hotkey;
 pub mod inject;
 pub mod llm;
+pub mod log;
 pub mod theme;
-pub mod tray;
 pub mod transcribe;
+pub mod tray;

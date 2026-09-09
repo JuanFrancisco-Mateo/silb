@@ -50,7 +50,9 @@ pub fn import_dictionary_from(path: &Path) -> Result<Vec<DictionaryEntry>, Strin
         return Err("El fichero contiene entradas sin «from»".to_string());
     }
     if entries.is_empty() {
-        return Err("El fichero importado está vacío: no se toca el diccionario actual".to_string());
+        return Err(
+            "El fichero importado está vacío: no se toca el diccionario actual".to_string(),
+        );
     }
     Ok(entries)
 }
@@ -58,7 +60,10 @@ pub fn import_dictionary_from(path: &Path) -> Result<Vec<DictionaryEntry>, Strin
 fn escape_regexp(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
-        if matches!(c, '.' | '*' | '+' | '?' | '^' | '$' | '{' | '}' | '(' | ')' | '|' | '[' | ']' | '\\') {
+        if matches!(
+            c,
+            '.' | '*' | '+' | '?' | '^' | '$' | '{' | '}' | '(' | ')' | '|' | '[' | ']' | '\\'
+        ) {
             out.push('\\');
         }
         out.push(c);
@@ -83,7 +88,10 @@ fn to_word_pattern(value: &str) -> Regex {
 /// Devuelve el texto resultante y la lista (única) de términos aplicados.
 pub fn apply_dictionary(text: &str, entries: &[DictionaryEntry]) -> DictionaryResult {
     if text.is_empty() {
-        return DictionaryResult { text: String::new(), applied: vec![] };
+        return DictionaryResult {
+            text: String::new(),
+            applied: vec![],
+        };
     }
 
     let mut result = text.to_string();
@@ -107,7 +115,10 @@ pub fn apply_dictionary(text: &str, entries: &[DictionaryEntry]) -> DictionaryRe
         }
     }
 
-    DictionaryResult { text: result, applied }
+    DictionaryResult {
+        text: result,
+        applied,
+    }
 }
 
 #[cfg(test)]
@@ -115,7 +126,10 @@ mod tests {
     use super::*;
 
     fn dict(from: &str, to: &str) -> DictionaryEntry {
-        DictionaryEntry { from: from.into(), to: to.into() }
+        DictionaryEntry {
+            from: from.into(),
+            to: to.into(),
+        }
     }
 
     #[test]

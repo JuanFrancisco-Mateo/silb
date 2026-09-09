@@ -13,6 +13,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
+use crate::config::CorrectionProvider;
 use crate::domain::corrective::Diff;
 
 /// Endpoint + modelo del corrector. Lo rellena `Config::llm_settings()` con
@@ -20,6 +21,7 @@ use crate::domain::corrective::Diff;
 /// override desde config.json.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LlmConfig {
+    pub provider: CorrectionProvider,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
@@ -32,6 +34,7 @@ pub struct LlmConfig {
 impl Default for LlmConfig {
     fn default() -> Self {
         Self {
+            provider: CorrectionProvider::Default,
             base_url: "http://127.0.0.1:8081/v1".to_string(),
             model: "ornith-1.0-9b".to_string(),
             api_key: None,
@@ -72,6 +75,10 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
         "max_tokens": 120,
     });
 
+    if matches!(cfg.provider, CorrectionProvider::Cloud) && cfg.api_key.is_none() {
+        return Err("el proveedor cloud requiere una API key".to_string());
+    }
+
     let mut request = ureq::post(&url)
         .timeout(Duration::from_secs(cfg.timeout_secs.max(1)))
         .set("Content-Type", "application/json");
@@ -86,8 +93,8 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
     let body_raw = response
         .into_string()
         .map_err(|e| format!("lectura de la respuesta: {e}"))?;
-    let value: serde_json::Value = serde_json::from_str(&body_raw)
-        .map_err(|e| format!("JSON de respuesta inválido: {e}"))?;
+    let value: serde_json::Value =
+        serde_json::from_str(&body_raw).map_err(|e| format!("JSON de respuesta inválido: {e}"))?;
 
     let content = value["choices"][0]["message"]["content"]
         .as_str()
@@ -118,7 +125,11 @@ fn parse_diff(content: &str) -> Result<Diff, String> {
     let value: serde_json::Value =
         serde_json::from_str(slice).map_err(|e| format!("el LLM no devolvió JSON válido: {e}"))?;
     Ok(Diff {
-        find: value.get("find").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+        find: value
+            .get("find")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string(),
         replace: value
             .get("replace")
             .and_then(|v| v.as_str())
@@ -134,27 +145,51 @@ mod tests {
     #[test]
     fn parse_diff_plano() {
         let diff = parse_diff(r#"{"find": "4", "replace": "2"}"#).expect("json plano");
-        assert_eq!(diff, Diff { find: "4".into(), replace: "2".into() });
+        assert_eq!(
+            diff,
+            Diff {
+                find: "4".into(),
+                replace: "2".into()
+            }
+        );
     }
 
     #[test]
     fn parse_diff_con_fences_de_markdown() {
         let content = "```json\n{\"find\": \"la reunión\", \"replace\": \"el informe\"}\n```";
         let diff = parse_diff(content).expect("fences");
-        assert_eq!(diff, Diff { find: "la reunión".into(), replace: "el informe".into() });
+        assert_eq!(
+            diff,
+            Diff {
+                find: "la reunión".into(),
+                replace: "el informe".into()
+            }
+        );
     }
 
     #[test]
     fn parse_diff_con_texto_alrededor() {
         let content = "Claro: {\"find\": \"jueves\", \"replace\": \"viernes\"} hecho.";
         let diff = parse_diff(content).expect("texto alrededor");
-        assert_eq!(diff, Diff { find: "jueves".into(), replace: "viernes".into() });
+        assert_eq!(
+            diff,
+            Diff {
+                find: "jueves".into(),
+                replace: "viernes".into()
+            }
+        );
     }
 
     #[test]
     fn parse_diff_vacio_cuando_no_localiza() {
         let diff = parse_diff(r#"{"find": "", "replace": ""}"#).expect("json vacío");
-        assert_eq!(diff, Diff { find: String::new(), replace: String::new() });
+        assert_eq!(
+            diff,
+            Diff {
+                find: String::new(),
+                replace: String::new()
+            }
+        );
     }
 
     #[test]
@@ -162,7 +197,13 @@ mod tests {
         // El contrato exige find+replace, pero si el modelo omite una clave no
         // debemos romper: queda vacía y apply_diff la descarta si no aplica.
         let diff = parse_diff(r#"{"find": "4"}"#).expect("solo find");
-        assert_eq!(diff, Diff { find: "4".into(), replace: String::new() });
+        assert_eq!(
+            diff,
+            Diff {
+                find: "4".into(),
+                replace: String::new()
+            }
+        );
     }
 
     #[test]
@@ -173,6 +214,7 @@ mod tests {
     #[test]
     fn llm_config_defaults_local() {
         let cfg = LlmConfig::default();
+        assert_eq!(cfg.provider, CorrectionProvider::Default);
         assert_eq!(cfg.base_url, "http://127.0.0.1:8081/v1");
         assert_eq!(cfg.model, "ornith-1.0-9b");
         assert_eq!(cfg.api_key, None);
