@@ -22,7 +22,7 @@ etapa.
 | System tray | `src/tray.rs` | commit `e3e0f3b`. `tray-icon` 0.24, menú Mostrar/Ocultar/Salir, icono RGBA 32×32 generado en código (círculo violeta). |
 | Atajo global | `src/hotkey.rs` | configurable `shortcut` en `config.json` (default `Ctrl+Shift+D`; global-hotkey 0.6), canal crossbeam drenado en el Poll de 100 ms, eventos filtrados por id del atajo. |
 | Inyección en app activa | `src/inject.rs` | `arboard` (portapapeles) + `enigo` (Ctrl+V o tecleo directo). Formato, retardo y filtro por título de ventana configurables (`inject_*` en `config.json`). Solo Windows. |
-| Post-procesado | `src/domain/{cleanup,dictionary,correction}.rs` | Limpieza fija de repeticiones/expresiones, diccionario personal y rectificaciones habladas; la UI ya no expone configuración de muletillas. |
+| Post-procesado | `src/domain/{cleanup,dictionary,correction}.rs` | Limpieza de repeticiones/expresiones con muletillas configurables (Ajustes → Muletillas, toggle «Limpiar muletillas»), diccionario personal y rectificaciones habladas. |
 | Corrección IA configurable | `src/config.rs`, `src/llm.rs`, `src/app.rs` | Proveedor local/cloud/custom OpenAI-compatible, timeout, umbral, confirmación opcional y API key fuera de `config.json`. |
 | Audio robusto | `src/audio.rs` | El stream se crea y reproduce antes de entrar en `Recording`; todo audio no-16 kHz se remuestrea a 16 kHz. |
 | Build release | `target/release/whispr-open.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
@@ -35,7 +35,7 @@ Versión actual del paquete: **0.2.0** (`Cargo.toml`). Rama activa: `native-iced
 ```
 micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
   → whisper.cpp (modelo elegido, idioma configurable, beam search, CUDA)
-  → limpieza local fija (repeticiones/muletillas)
+  → limpieza local configurable (repeticiones/muletillas en Ajustes)
   → dictionary (reemplazos personales)
   → correction (reglas + LLM opcional en hilo)
   → inyección en app activa / transcript

@@ -14,8 +14,9 @@ el texto se escribe donde esté tu cursor.
   Formato (pegar/teclear), retardo y filtro por título de ventana
   configurables en `config.json`.
 - **Post-procesado local**: normalización de repeticiones y expresiones de
-  relleno antes de la inyección; las reglas son fijas y ya no hay una sección
-  de configuración de muletillas en la interfaz.
+  relleno antes de la inyección; las muletillas (inequívocas, solo antes de
+  pausa, solo al inicio) son configurables desde Ajustes → Muletillas y se
+  pueden desactivar por completo.
 - **Diccionario personal** (jerga, siglas, nombres propios) persistente.
 - **Rectificaciones habladas**: "no, quería decir X" corrige el último turno.
 
