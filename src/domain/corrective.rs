@@ -36,13 +36,22 @@ fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).expect("patrón correctivo inválido")
 }
 
-// Señales §2. Regla de decisión (nivel B): (negación | verbo correctivo) Y
-// (numeral | referencia anafórica). Peso por diseño: precisión > recall — un
-// falso positivo cuesta una llamada al LLM que devolverá `find` vacío y el
-// turno se conserva; un falso negativo solo significa no corregir.
+// Señales §2. Regla de decisión (nivel B): (negación | verbo correctivo |
+// marcador de sustitución) Y (numeral | referencia anafórica). Peso por
+// diseño: precisión > recall — un falso positivo cuesta una llamada al LLM
+// que devolverá `find` vacío y el turno se conserva; un falso negativo solo
+// significa no corregir.
+//
+// `SUBSTITUTION_MARKER` cubre la construcción «X en vez de Y», «X en lugar
+// de Y», «X en su lugar», «sustituir X por Y», «cambiar X por Y» sin verbo
+// independiente. Son correcciones habladas por sí solas: «2 en vez de 4»
+// ya pide cambiar un 4 por un 2, sin necesidad de un «no» previo. Si no
+// las contáramos como neg/verb, el caso de uso cotidiano que motiva la
+// corrección IA (spec §5) se queda en `Plain` y nunca llega al LLM.
 const NEGATION: &str = r"(?i)\b(no|mal|me equivoqu[eé]|equivocad[oa]|est[aá] mal|as[ií] no)\b";
-const CORRECTIVE_VERB: &str = r"(?i)\b(corr[ií]ge|corrig[eé]|corr[ií]geme|cambia|cambie|pon|quita|qu[ií]tame|borra|elimina|sustituye|sustituir)\b";
-const NUMERAL: &str = r"(?i)(\b\d+(?:[.,]\d+)?\b|en vez de|en lugar de|en su lugar|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|veinte|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|mil)\b";
+const CORRECTIVE_VERB: &str = r"(?i)\b(corr[ií]ge|corrig[eé]|corr[ií]geme|cambia|cambie|pon|quita|qu[ií]tame|borra|elimina|sustituye|sustituir|di que|sea)\b";
+const SUBSTITUTION_MARKER: &str = r"(?i)\b(en vez de|en lugar de|en su lugar|cambia por|cámbialo por|sustitúyelo por|reemplaza con)\b";
+const NUMERAL: &str = r"(?i)(\b\d+(?:[.,]\d+)?\b|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|veinte|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|mil)\b";
 const REFERENCE: &str = r"(?i)\b(lo [úu]ltimo|la [úu]ltima palabra|la [úu]ltima frase|eso|esto|lo otro|esta palabra|esta frase|esa palabra|ese n[uú]mero|el n[uú]mero ese|lo que acabo de decir|aquello)\b";
 
 /// Clasificador de dos niveles (§2): solo enruta al LLM los turnos con
@@ -66,30 +75,59 @@ pub fn classify(turn: &str) -> CorrectiveDecision {
 pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
     let neg = rx(NEGATION).is_match(turn).unwrap_or(false);
     let verb = rx(CORRECTIVE_VERB).is_match(turn).unwrap_or(false);
+    // `subst` cubre la construcción «X en vez de Y» / «sustituir X por Y»
+    // SIN verbo independiente. Equivale a un verbo correctivo a efectos
+    // de la regla de los dos niveles: el turno ya ES una corrección.
+    let subst = rx(SUBSTITUTION_MARKER).is_match(turn).unwrap_or(false);
     let num = rx(NUMERAL).is_match(turn).unwrap_or(false);
     let reference = rx(REFERENCE).is_match(turn).unwrap_or(false);
 
-    // Regla de los dos niveles (spec §2): sin (neg|verb) o sin
+    // Regla de los dos niveles (spec §2): sin (neg|verb|subst) o sin
     // (num|reference) NO se enruta al LLM — falso positivo es peor que
     // falso negativo (un acierto casual nos cuesta una llamada al LLM y
     // un `find` vacío).
-    if !(neg || verb) || !(num || reference) {
+    //
+    // Excepción para el marcador de sustitución: «X en vez de Y» ya ES
+    // la sustitución por construcción, así que la presencia del subst +
+    // numeral/referencia satisface el segundo nivel sin requerir un neg/verb
+    // explícito. Sin numeral/referencia ni neg/verb, el turno es solo
+    // un «en vez de» coloquial (p. ej. «en vez de descansar prefiero
+    // esto») — NO es una corrección, sigue siendo Plain.
+    if !(neg || verb || subst) {
+        return CorrectiveDecision::Plain;
+    }
+    if subst && !neg && !verb && !(num || reference) {
+        // Substituto aislado sin objetivo: NO enrutar.
+        return CorrectiveDecision::Plain;
+    }
+    if !(num || reference) {
         return CorrectiveDecision::Plain;
     }
     if threshold == 0 {
         return CorrectiveDecision::Plain;
     }
 
-    // Puntuación: nº de señales presentes. Mínimo 2 (regla de los dos
-    // niveles), máximo 4. Ratio sobre 100: 50, 75, 100. threshold=50
-    // deja pasar cualquier caso que cumpla la regla (conducta previa);
-    // 60+ empieza a filtrar los casos de solo 2 señales; 80+ es muy
-    // conservador (solo los de 3+ señales).
-    let score = [neg, verb, num, reference].iter().filter(|x| **x).count() as u16;
+    // Puntuación (spec §2): nº de señales presentes
+    // (neg/verb/subst/num/reference). Mínimo 2 (regla de los dos
+    // niveles). Bonus de +1 cuando el «subst» es la única señal
+    // correctiva y viene acompañado de numeral/referencia: «X en vez de
+    // Y» cuenta como si fueran 3 señales → ratio 75, lo que pasa el
+    // default 50 (preservando la conducta previa para el caso de uso «2
+    // en vez de 4»). Subir el umbral = más conservador (precision > recall).
+    let base_score = [neg, verb, subst, num, reference]
+        .iter()
+        .filter(|x| **x)
+        .count() as u16;
+    let score = if subst && (num || reference) && !neg && !verb {
+        base_score + 1 // bonus: «X en vez de Y» cuenta doble por construcción
+    } else {
+        base_score
+    };
     let ratio: u16 = match score {
         2 => 50,
         3 => 75,
-        _ => 100, // score == 4
+        4 => 90,
+        _ => 100, // score >= 5
     };
     if ratio >= u16::from(threshold) {
         CorrectiveDecision::NeedsLlm
@@ -211,6 +249,178 @@ mod tests {
         }
     }
 
+    // ── Sustitución sin verbo independiente (bug Juanfri 09/09/2026) ─────
+    //
+    // Antes del fix, «2 en vez de 4» se evaluaba como (subst NO matcheaba,
+    // no había verb) → (false || false) → Plain. La frase cotidiana que
+    // motiva la corrección IA (spec §5) nunca llegaba al LLM. El nuevo
+    // marcador `SUBSTITUTION_MARKER` cubre la construcción «X en vez de Y»
+    // (y variantes) como señal correctiva suficiente para la regla de los
+    // dos niveles. Estos tests blindan esa conducta: si alguien recorta el
+    // regex a su forma original, fallan al instante.
+
+    #[test]
+    fn correccion_minima_con_en_vez_de_llega_al_llm() {
+        // Caso reportado por Juanfri como «no llama al LLM». Ahora va.
+        for turn in [
+            "2 en vez de 4",
+            "cinco en vez de seis",
+            "pon 2 en vez de 4", // verb + subst + num → también
+            "5 en lugar de 4",
+            "5 en su lugar",
+            "pon 2 en lugar de 4",
+            "cámbialo por 5",
+        ] {
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::NeedsLlm,
+                "debe enrutarse al LLM: {turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn en_vez_de_sin_numeral_o_referencia_no_es_correccion() {
+        // «X en vez de Y» sin numeral explícito ni referencia anafórica
+        // no tiene ancla sobre la que el LLM pueda buscar `find`: el
+        // clasificador la trata como Plain. Esto filtra casos coloquiales
+        // («lo hice en vez de descansar») que NO son corrección del
+        // último turno.
+        //
+        // «en vez de eso prefiero callar» SÍ matchea REFERENCE («eso»)
+        // y por tanto va al LLM: el usuario está apuntando a algo del
+        // turno anterior. Lo excluimos del grupo Plain (es la conducta
+        // correcta, no un bug).
+        for turn in ["lo hice en vez de descansar"] {
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::Plain,
+                "debe ser Plain: {turn:?}"
+            );
+        }
+        // Sanity check: la variante con referencia sí va al LLM.
+        assert_eq!(
+            classify("en vez de eso prefiero callar"),
+            CorrectiveDecision::NeedsLlm,
+            "con referencia, va al LLM"
+        );
+    }
+
+    #[test]
+    fn correccion_con_solo_negacion_y_numeral_llega_al_llm() {
+        // Variantes coloquiales que ya estaban en los tests previos pero
+        // que conviene blindar con su forma exacta.
+        for turn in ["no, es 3", "no es 4", "no, era 5"] {
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::NeedsLlm,
+                "{turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn correccion_con_cambia_por_y_verb_llega_al_llm() {
+        // «cambia X por Y» tiene verbo correctivo + marcador de sustitución
+        // + numerales: ratio alto, va seguro al LLM.
+        for turn in ["cambia 5 por 6", "cambia cuatro por cinco"] {
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::NeedsLlm,
+                "{turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn por_aislado_no_es_marcador_de_sustitucion() {
+        // «por» es demasiado común en español («voy por el pan», «gracias
+        // por», «por la mañana»). El marcador exige la construcción
+        // completa «cambia por» / «en vez de» / etc.
+        for turn in [
+            "voy por el pan",
+            "gracias por todo",
+            "por la mañana",
+            "pasado por agua",
+        ] {
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::Plain,
+                "no debe enrutar: {turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn marcador_sustitucion_sin_objetivo_es_dictado_normal() {
+        // «en vez de» sin numeral ni referencia: falla la regla de los
+        // dos niveles (no hay a qué sustituir). Sirve de red de seguridad
+        // para frases coloquiales en las que «en vez de» aparece como
+        // construcción narrativa, no como corrección.
+        for turn in ["lo hice en vez de descansar", "lo prefiero en vez de eso"] {
+            // «lo prefiero en vez de eso» lleva referencia («eso»), así
+            // que en realidad SÍ pasa la regla y va al LLM (por
+            // construcción). Lo excluimos del grupo Plain para no mentir
+            // sobre la conducta: si el usuario tiene contexto y dice
+            // «eso» refiriendose al último turno, sí queremos enrutar.
+            if turn.contains("eso") || turn.contains("esto") {
+                continue;
+            }
+            assert_eq!(
+                classify(turn),
+                CorrectiveDecision::Plain,
+                "{turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn umbral_cero_tambien_apaga_la_correccion_por_sustitucion() {
+        // Aunque la nueva señal «subst» pase la regla de los dos niveles,
+        // threshold=0 sigue siendo el atajo «corrección IA off».
+        for turn in [
+            "2 en vez de 4",
+            "5 en lugar de 4",
+            "cambia 5 por 6",
+        ] {
+            assert_eq!(
+                classify_with(turn, 0),
+                CorrectiveDecision::Plain,
+                "umbral 0 nunca enruta: {turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn umbral_alto_puede_filtrar_la_sustitucion_minima() {
+        // «2 en vez de 4» puntúa 3/5 (ratio 75) gracias al bonus. Con
+        // threshold 80 cae; con threshold 70 pasa. Test bidireccional para
+        // detectar cambios accidentales en la puntuación.
+        let minimal = "2 en vez de 4";
+        assert_eq!(
+            classify_with(minimal, 50),
+            CorrectiveDecision::NeedsLlm,
+            "default pasa"
+        );
+        assert_eq!(
+            classify_with(minimal, 70),
+            CorrectiveDecision::NeedsLlm,
+            "70 pasa (ratio 75)"
+        );
+        assert_eq!(
+            classify_with(minimal, 80),
+            CorrectiveDecision::Plain,
+            "80 cae (ratio 75 < 80)"
+        );
+        // El canónico de la spec puntúa más alto (4 señales) y aguanta más.
+        let canonico = "no no lo último está mal es 2 en vez de 4";
+        assert_eq!(
+            classify_with(canonico, 80),
+            CorrectiveDecision::NeedsLlm,
+            "canónico aguanta 80"
+        );
+    }
+
     // ── Umbral del clasificador (spec §2): modula sensibilidad ────────────
 
     #[test]
@@ -248,20 +458,26 @@ mod tests {
 
     #[test]
     fn umbral_alto_filtra_los_casos_de_2_senales() {
-        // Con threshold > 50 (3/4=75, 4/4=100) los casos de solo 2 señales
+        // Con threshold > 50 (3/5=75, 4/5=90) los casos de solo 2 señales
         // (ratio 50) caen. Subir el umbral = más conservador (precision
         // > recall, spec §2).
-        let ambiguo = "no era 4, era 2"; // neg + num = 2/4 → ratio 50
+        let ambiguo = "no era 4, era 2"; // neg + num = 2/5 → ratio 50
         assert_eq!(classify(ambiguo), CorrectiveDecision::NeedsLlm);
         // Con threshold 60, ratio 50 < 60 → NO se enruta.
         assert_eq!(classify_with(ambiguo, 60), CorrectiveDecision::Plain);
         // Con threshold 80 (muy conservador) tampoco.
         assert_eq!(classify_with(ambiguo, 80), CorrectiveDecision::Plain);
-        // El caso canónico (3/4 → ratio 75) sigue pasando con 60.
+        // El caso canónico (4/5 → ratio 90) sigue pasando con 80: solo
+        // muy conservador (≥ 95) lo filtra. Antes (sin marcador de
+        // sustitución) era 3/4 → ratio 75 → caía con 80. Ahora el bonus
+        // del subst lo hace más resistente — sigue la lógica de spec §2
+        // (precision > recall: si el turno huele a varias señales,
+        // conservamos la corrección).
         let canonico = "no no lo último está mal es 2 en vez de 4";
         assert_eq!(classify_with(canonico, 60), CorrectiveDecision::NeedsLlm);
-        // Solo con 80+ cae también.
-        assert_eq!(classify_with(canonico, 80), CorrectiveDecision::Plain);
+        assert_eq!(classify_with(canonico, 80), CorrectiveDecision::NeedsLlm);
+        // Solo el threshold máximo (≥ 95) lo descarta.
+        assert_eq!(classify_with(canonico, 95), CorrectiveDecision::Plain);
     }
 
     #[test]

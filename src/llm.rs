@@ -220,4 +220,30 @@ mod tests {
         assert_eq!(cfg.api_key, None);
         assert_eq!(cfg.timeout_secs, 25, "timeout por defecto: 25 s");
     }
+
+    #[test]
+    fn correct_falla_con_endpoint_caido_y_devuelve_error_con_prefijo_http() {
+        // Garantiza que cuando el servidor LLM NO está corriendo
+        // (`connect refused` o similar), el error lleva el prefijo «HTTP:»
+        // para que la UI pueda mostrar el hint «¿está el servidor LLM
+        // arrancado?». Sin prefijo, la UI no sabe categorizar el error y
+        // el usuario queda a ciegas (bug Juanfri 09/09/2026: «no llama al
+        // LLM» sin diagnóstico).
+        //
+        // Usamos un puerto casi seguro libre: 1 (reservado, nadie escucha).
+        // Si por lo que sea alguien escucha ahí, el test falla y lo vemos.
+        let cfg = LlmConfig {
+            provider: CorrectionProvider::Default,
+            base_url: "http://127.0.0.1:1".to_string(),
+            model: "fake".to_string(),
+            api_key: None,
+            timeout_secs: 2, // corta rápido para no penalizar el test
+        };
+        let err = correct("texto objetivo", "no, es 2", &cfg)
+            .expect_err("un endpoint cerrado debe fallar");
+        assert!(
+            err.starts_with("HTTP:"),
+            "el error debe llevar prefijo HTTP para que la UI lo categorice: {err:?}"
+        );
+    }
 }
