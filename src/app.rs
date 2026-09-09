@@ -111,12 +111,46 @@ struct MicUi {
 /// (spec §3.3.1: nunca perder texto). `target` es el turno sobre el que se
 /// pidió la corrección (capturado al despachar: un turno nuevo dictado
 /// mientras el LLM trabaja no debe desviar el diff a otro texto).
+///
+/// Desde t_78d9e1fa hay dos modos:
+///
+/// - `CrossTurn`: el LLM devuelve un `Diff {find, replace}` que se aplica
+///   sobre `target`. Modo histórico (spec §3.2-3.4).
+/// - `InTurn`: el LLM devuelve el texto FINAL corregido del turno (sin
+///   meta-lengua). `target` es el turno completo enviado al LLM; el
+///   resultado REEMPLAZA ese turno entero. Modo principal desde el
+///   10/09/2026 (spec §3.5).
+///
+/// `instruction` solo se usa en `CrossTurn`; en `InTurn` el input que
+/// recibió el LLM es exactamente `target`. Se conserva el campo por
+/// uniformidad (los logs y el fallback de error son más fáciles).
+enum LlmMode {
+    CrossTurn,
+    InTurn,
+}
+
 struct LlmPending {
+    mode: LlmMode,
     instruction: String,
-    /// Último turno dictado que la instrucción pretende corregir.
+    /// Último turno dictado que la instrucción pretende corregir
+    /// (cross-turn) o turno completo enviado al LLM (in-turn).
     target: String,
     /// El turno venía de la burbuja (inyección forzada al soltar).
     force_inject: bool,
+}
+
+/// Resultado del LLM que viaja por el canal `llm_rx`. El despacho mete
+/// el resultado dentro del enum correspondiente; la UI lo consume en
+/// `handle_llm_correction` o `handle_llm_redaction` según `mode`.
+///
+/// `pub` porque aparece dentro de `Message::CorrectionDone(Result<LlmResult, String>)`,
+/// que sí es público (variante del enum usado por la API de mensajes
+/// de iced). El enum no se expone al usuario final; solo es la firma
+/// del canal interno entre el hilo del LLM y el bucle de UI.
+#[derive(Debug, Clone)]
+pub enum LlmResult {
+    Diff(crate::domain::corrective::Diff),
+    Redacted(String),
 }
 
 struct PendingDiff {
@@ -162,8 +196,20 @@ pub enum Message {
     /// Descarta el diff pendiente (reinserta la instrucción hablada
     /// como dictado normal, spec §3.3.1).
     DiscardPendingDiff,
-    /// Resultado del LLM corrector: diff a aplicar sobre el último turno.
-    CorrectionDone(Result<crate::domain::corrective::Diff, String>),
+    /// Resultado del LLM corrector. Llega por `Message::CorrectionDone`
+    /// con un `LlmResult` que indica el modo:
+    ///   - `LlmResult::Diff(diff)` (cross-turn, spec §3.2-3.4): se aplica
+    ///     el diff sobre `target` (el último turno).
+    ///   - `LlmResult::Redacted(text)` (in-turn, spec §3.5): el LLM
+    ///     devuelve el texto final corregido del turno (sin meta-lengua);
+    ///     sustituye a `target` por completo.
+    ///
+    /// El despacho del corrector decide el modo mirando
+    /// `self.llm_pending.mode`; el result type no necesita su propio
+    /// discriminador de modo (lo que viaja es la forma del output, no
+    /// la intención del clasificador). Esto simplifica el Poll y el
+    /// manejo de errores.
+    CorrectionDone(Result<LlmResult, String>),
     /// Deshacer la última corrección IA aplicada (un nivel).
     UndoLastCorrection,
     ClearTranscript,
@@ -292,7 +338,7 @@ pub struct WhisprApp {
     bubble_drag: Option<crate::bubble::BubbleDrag>,
     pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
     // ── Corrección IA (LLM) ────────────────────────────────────────────────
-    llm_rx: Option<Receiver<Result<crate::domain::corrective::Diff, String>>>,
+    llm_rx: Option<Receiver<Result<LlmResult, String>>>,
     /// Instrucción en ruta al LLM (con el target capturado): si la llamada
     /// falla o el diff no aplica, se reinserta como dictado normal.
     llm_pending: Option<LlmPending>,
@@ -488,130 +534,317 @@ impl WhisprApp {
         }
     }
 
-    /// Aplica el diff del LLM al último turno (o recupera la instrucción si
-    /// la llamada falló: dictado normal, nunca perder texto del usuario).
+    /// Despachador unificado del resultado LLM (t_78d9e1fa). Llega por
+    /// `Message::CorrectionDone` o `Message::RedactionDone` (ambos
+    /// llevan `Result<LlmResult, String>`); este método decide el modo
+    /// mirando `llm_pending.mode` y enruta a `handle_llm_diff` (cross)
+    /// o `handle_llm_redaction` (in-turn). En caso de error del LLM,
+    /// ambos modos acaban en `restore_pending_as_dictation` para no
+    /// perder el texto del usuario.
     fn handle_llm_correction(
         &mut self,
-        result: Result<crate::domain::corrective::Diff, String>,
+        result: Result<LlmResult, String>,
+    ) -> Task<Message> {
+        let pending = self.llm_pending.take();
+        let mode = pending.as_ref().map(|p| match p.mode {
+            LlmMode::CrossTurn => "cross-turn",
+            LlmMode::InTurn => "in-turn",
+        }).unwrap_or("none");
+        match result {
+            Ok(LlmResult::Diff(diff)) => self.handle_llm_diff(diff, pending),
+            Ok(LlmResult::Redacted(redacted)) => self.handle_llm_redaction(redacted, pending),
+            Err(e) => {
+                self.last_correction = Some(self.format_llm_error(&e));
+                crate::log!(
+                    "llm",
+                    "resultado del corrector {}: error (recuperado como dictado normal): {}",
+                    mode,
+                    e
+                );
+                self.restore_pending_as_dictation(pending);
+                self.status = Status::Idle;
+                self.arm_bubble_hide_timeout();
+                self.save_config();
+                Task::none()
+            }
+        }
+    }
+
+    /// Formatea un error del LLM con un hint orientado al usuario
+    /// (mismo contrato que la versión previa de handle_llm_correction).
+    fn format_llm_error(&self, e: &str) -> String {
+        let hint = if e.starts_with("HTTP:") {
+            " (¿está el servidor LLM arrancado? Mira el log en %APPDATA%\\whispr-open)"
+        } else if e.starts_with("el proveedor cloud requiere una API key") {
+            " (configura la API key del proveedor en Ajustes)"
+        } else {
+            ""
+        };
+        format!("Corrección IA no disponible: {e}{hint}")
+    }
+
+    /// Modo cross-turn: aplica el diff a `target` (el último turno).
+    /// Migrado desde el antiguo `handle_llm_correction` sin cambios de
+    /// comportamiento; solo se aísla para que el flujo in-turn no le
+    /// afecte.
+    fn handle_llm_diff(
+        &mut self,
+        diff: crate::domain::corrective::Diff,
+        pending: Option<LlmPending>,
     ) -> Task<Message> {
         self.llm_rx = None;
-        let pending = self.llm_pending.take();
 
-        match result {
-            Ok(diff) => {
-                // El target se capturó al despachar; un turno nuevo dictado
-                // mientras el LLM trabajaba no debe desviar el diff.
-                let Some(p) = pending.as_ref() else {
-                    self.status = Status::Idle;
-                    return Task::none();
-                };
-                let target = p.target.clone();
+        let Some(p) = pending else {
+            self.status = Status::Idle;
+            return Task::none();
+        };
+        let target = p.target.clone();
 
-                // LOG: el LLM devolvió algo (válido o vacío). Antes esto
-                // era invisible; ahora se ve siempre.
-                if diff.find.is_empty() {
-                    crate::log!(
-                        "llm",
-                        "corrector devolvió diff vacío: instruction={:?} target={:?} (se recupera como dictado normal)",
-                        p.instruction,
-                        target
-                    );
+        // LOG: el LLM devolvió algo (válido o vacío). Antes esto
+        // era invisible; ahora se ve siempre.
+        if diff.find.is_empty() {
+            crate::log!(
+                "llm",
+                "corrector (cross-turn) devolvió diff vacío: instruction={:?} target={:?} (se recupera como dictado normal)",
+                p.instruction,
+                target
+            );
+        } else {
+            crate::log!(
+                "llm",
+                "corrector (cross-turn) devolvió diff: find={:?} replace={:?} target={:?}",
+                diff.find,
+                diff.replace,
+                target
+            );
+        }
+
+        // Modo confirmar (spec §4.2): si el toggle está activo,
+        // no aplicamos a ciegas. Guardamos el diff en `pending_diff`
+        // y dejamos que la UI muestre «Aplicar» / «Descartar».
+        if self.config.ai_correction_confirm() {
+            self.pending_diff = Some(PendingDiff {
+                diff: diff.clone(),
+                target,
+                force_inject: p.force_inject,
+            });
+            self.last_correction = Some(format!(
+                "Rectificado IA propuesto: «{}» → «{}» (Aplicar/Descartar)",
+                diff.find, diff.replace
+            ));
+            self.status = Status::Idle;
+            return Task::none();
+        }
+
+        // Modo fluido (default): aplicar inmediatamente.
+        match crate::domain::corrective::apply_diff(&target, &diff) {
+            Some(after) => {
+                // Undo de 1 nivel ANTES de mutar (estado completo).
+                self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
+                if let Some(t) = crate::domain::corrective::replace_last_turn(
+                    &self.transcript,
+                    &target,
+                    &after,
+                ) {
+                    self.transcript = t;
                 } else {
-                    crate::log!(
-                        "llm",
-                        "corrector devolvió diff: find={:?} replace={:?} target={:?}",
-                        diff.find,
-                        diff.replace,
-                        target
-                    );
-                }
-
-                // Modo confirmar (spec §4.2): si el toggle está activo,
-                // no aplicamos a ciegas. Guardamos el diff en `pending_diff`
-                // y dejamos que la UI muestre «Aplicar» / «Descartar».
-                // El status vuelve a Idle para que el usuario pueda dictar
-                // otra cosa mientras decide (la corrección sigue armada).
-                if self.config.ai_correction_confirm() {
-                    self.pending_diff = Some(PendingDiff {
-                        diff: diff.clone(),
-                        target,
-                        force_inject: p.force_inject,
-                    });
-                    self.last_correction = Some(format!(
-                        "Rectificado IA propuesto: «{}» → «{}» (Aplicar/Descartar)",
-                        diff.find, diff.replace
-                    ));
+                    self.last_correction =
+                        Some("La corrección IA ya no aplica al último turno".to_string());
+                    self.restore_pending_as_dictation(Some(p));
                     self.status = Status::Idle;
+                    self.arm_bubble_hide_timeout();
                     return Task::none();
                 }
+                if self.last_turn == target {
+                    self.last_turn = after.clone();
+                }
+                self.last_correction = Some(format!(
+                    "Rectificado IA: “{}” → “{}”",
+                    diff.find, diff.replace
+                ));
+                crate::log!("llm", "rectificado (cross-turn): {} → {}", diff.find, diff.replace);
 
-                // Modo fluido (default): aplicar inmediatamente.
-                match crate::domain::corrective::apply_diff(&target, &diff) {
-                    Some(after) => {
-                        // Undo de 1 nivel ANTES de mutar (estado completo).
-                        self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
-                        if let Some(t) = crate::domain::corrective::replace_last_turn(
-                            &self.transcript,
-                            &target,
-                            &after,
-                        ) {
-                            self.transcript = t;
-                        } else {
-                            self.last_correction =
-                                Some("La corrección IA ya no aplica al último turno".to_string());
-                            self.restore_instruction_as_dictation(pending);
-                            self.status = Status::Idle;
-                            self.arm_bubble_hide_timeout();
-                            return Task::none();
-                        }
-                        // Solo si no intervino un turno nuevo: last_turn sigue
-                        // siendo el turno corregido.
-                        if self.last_turn == target {
-                            self.last_turn = after.clone();
-                        }
-                        self.last_correction = Some(format!(
-                            "Rectificado IA: “{}” → “{}”",
-                            diff.find, diff.replace
-                        ));
-                        crate::log!("llm", "rectificado: {} → {}", diff.find, diff.replace);
-
-                        let force_inject = p.force_inject;
-                        if (self.config.auto_inject.unwrap_or(true) || force_inject)
-                            && !after.is_empty()
-                        {
-                            self.inject_into_active(&after);
-                        }
-                    }
-                    None => {
-                        self.last_correction =
-                            Some("De momento no sé qué corregir en el último turno".to_string());
-                        self.restore_instruction_as_dictation(pending);
-                    }
+                let force_inject = p.force_inject;
+                if (self.config.auto_inject.unwrap_or(true) || force_inject)
+                    && !after.is_empty()
+                {
+                    self.inject_into_active(&after);
                 }
             }
-            Err(e) => {
-                // Mensaje orientado al usuario, NO al programador: el log
-                // (crate::log! arriba) ya tiene el detalle técnico. Aquí
-                // solo decimos qué ha pasado y qué hacer (el log
-                // %APPDATA%\whispr-open\whispr-open.log tiene los datos
-                // para depurar). Antes esto era un «corrección IA no
-                // disponible» que el usuario no sabía cómo actuar.
-                let hint = if e.starts_with("HTTP:") {
-                    " (¿está el servidor LLM arrancado? Mira el log en %APPDATA%\\whispr-open)"
-                } else if e.starts_with("el proveedor cloud requiere una API key") {
-                    " (configura la API key del proveedor en Ajustes)"
-                } else {
-                    ""
-                };
-                self.last_correction = Some(format!("Corrección IA no disponible: {e}{hint}"));
-                self.restore_instruction_as_dictation(pending);
+            None => {
+                self.last_correction =
+                    Some("De momento no sé qué corregir en el último turno".to_string());
+                self.restore_pending_as_dictation(Some(p));
             }
         }
         self.status = Status::Idle;
-        // El turno (con su corrección IA) terminó: armar el auto-ocultar.
         self.arm_bubble_hide_timeout();
         self.save_config();
         Task::none()
+    }
+
+    /// Modo in-turn (t_78d9e1fa, spec §3.5): el LLM devuelve el texto
+    /// final corregido (sin meta-lengua). Lo aplicamos COMO el turno
+    /// completo (no como diff sobre `last_turn`):
+    ///
+    ///   - `self.transcript` se extiende con el texto corregido.
+    ///   - `self.last_turn` pasa a ser el texto corregido.
+    ///   - Se inyecta el texto corregido en la app activa (mismo
+    ///     contrato que un dictado normal exitoso).
+    ///   - El undo de 1 nivel guarda el estado PREVIO (transcript +
+    ///     last_turn) por si el usuario quiere revertir.
+    ///
+    /// Casos de fallback al input bruto:
+    ///   - El LLM devuelve vacío (modelo roto, respuesta vacía).
+    ///   - El LLM no eliminó la meta-lengua (regex de in-turn todavía
+    ///     presente en el output → la corrección falló).
+    ///   - El LLM devuelve el mismo texto que el input (puede ser
+    ///     legítimo: «no hay corrección»; en ese caso, treat como
+    ///     input ya limpio y sigue el flujo normal).
+    fn handle_llm_redaction(
+        &mut self,
+        redacted: String,
+        pending: Option<LlmPending>,
+    ) -> Task<Message> {
+        self.llm_rx = None;
+
+        let Some(p) = pending else {
+            self.status = Status::Idle;
+            return Task::none();
+        };
+        let input = p.target.clone(); // el turno completo enviado al LLM
+        let force_inject = p.force_inject;
+
+        crate::log!(
+            "llm",
+            "corrector (in-turn) devolvió: input={:?} output={:?}",
+            input,
+            redacted
+        );
+
+        // Filtros de seguridad: si el output está vacío o contiene
+        // todavía un marcador in-turn, NO usamos la respuesta:
+        // fallback al input bruto (spec §3.5.4).
+        let clean_text = redacted.trim();
+        let still_has_meta = crate::domain::corrective::contains_in_turn_marker(clean_text);
+        if clean_text.is_empty() {
+            crate::log!(
+                "llm",
+                "in-turn: respuesta vacía del LLM, fallback al input bruto"
+            );
+            self.last_correction = Some(
+                "Corrección IA no pudo reescribir el turno (texto vacío)".to_string(),
+            );
+            self.inject_or_store_raw(&input, force_inject);
+            self.status = Status::Idle;
+            self.arm_bubble_hide_timeout();
+            self.save_config();
+            return Task::none();
+        }
+        if still_has_meta {
+            crate::log!(
+                "llm",
+                "in-turn: la respuesta todavía contiene meta-lengua correctiva ({:?}), fallback al input bruto",
+                clean_text
+            );
+            self.last_correction = Some(
+                "Corrección IA no pudo limpiar el turno (sigue con meta-lengua)".to_string(),
+            );
+            self.inject_or_store_raw(&input, force_inject);
+            self.status = Status::Idle;
+            self.arm_bubble_hide_timeout();
+            self.save_config();
+            return Task::none();
+        }
+
+        // Caso normal: tenemos texto limpio. Lo aplicamos como el
+        // turno completo. Undo antes de mutar.
+        self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
+        let clean = clean_text.to_string();
+        self.transcript = crate::domain::correction::append_transcript(
+            &self.transcript,
+            &clean,
+        );
+        self.last_turn = clean.clone();
+        let removed = self.removed_fillers_summary();
+        let summary = if input == clean {
+            format!("Turno confirmado por IA (sin cambios): «{}»", clean)
+        } else {
+            // Mostramos la corrección aplicada: «antes → después» con
+            // el meta-lengua destacada.
+            let stripped_meta = crate::domain::corrective::strip_in_turn_meta(&input);
+            format!(
+                "Auto-corregido IA: «{}» → «{}»",
+                stripped_meta.trim(),
+                clean
+            )
+        };
+        self.last_correction = Some(summary);
+        crate::log!(
+            "llm",
+            "in-turn aplicado: «{}» → «{}»",
+            input,
+            clean
+        );
+
+        if (self.config.auto_inject.unwrap_or(true) || force_inject) && !clean.is_empty() {
+            self.inject_into_active(&clean);
+        }
+        // Silenciar warning de variable no usada (removed fillers: hay
+        // feedback útil si el filtro actuó sobre el turno limpio, pero
+        // por ahora solo se loguea para diagnóstico).
+        let _ = removed;
+        self.status = Status::Idle;
+        self.arm_bubble_hide_timeout();
+        self.save_config();
+        Task::none()
+    }
+
+    /// Fallback unificado para cuando el LLM falla o devuelve algo no
+    /// utilizable (cross-turn o in-turn). El turno original se inyecta
+    /// tal cual o se trata como dictado normal (spec §3.3.1 y §3.5.4:
+    /// nunca perder texto del usuario).
+    fn restore_pending_as_dictation(&mut self, pending: Option<LlmPending>) {
+        let Some(p) = pending else { return };
+        let text = if p.target.is_empty() {
+            return;
+        } else if matches!(p.mode, LlmMode::InTurn) {
+            p.target.clone()
+        } else {
+            // Cross-turn: la instrucción es lo que el usuario QUIERE
+            // que aparezca si la corrección falla.
+            if !p.instruction.is_empty() {
+                p.instruction.clone()
+            } else {
+                p.target.clone()
+            }
+        };
+        self.inject_or_store_raw(&text, p.force_inject);
+    }
+
+    /// Inyecta `text` si el toggle está activo (o si `force_inject`),
+    /// y si no lo inyecta, lo acumula al menos como `last_turn` para
+    /// que el siguiente turno pueda corregirlo.
+    fn inject_or_store_raw(&mut self, text: &str, force_inject: bool) {
+        if text.is_empty() {
+            return;
+        }
+        let should_update_turn = self.last_turn.is_empty();
+        self.transcript =
+            crate::domain::correction::append_transcript(&self.transcript, text);
+        if should_update_turn {
+            self.last_turn = text.to_string();
+        }
+        if self.config.auto_inject.unwrap_or(true) || force_inject {
+            self.inject_into_active(text);
+        }
+    }
+
+    /// Resumen de las muletillas eliminadas en el turno actual (si
+    /// las hay). Solo se usa para diagnóstico en logs; reservado
+    /// para una versión futura del feedback de UI.
+    fn removed_fillers_summary(&self) -> String {
+        self.removed_fillers.join(", ")
     }
 
     /// Aplica el diff pendiente (modo `ai_correction_confirm`). Reconstruye
@@ -677,32 +910,6 @@ impl WhisprApp {
             return;
         };
         self.last_correction = Some("Corrección IA descartada ✕".to_string());
-    }
-
-    /// Spec §3.3.1: si el LLM no llega a corregir nada (caído, timeout o
-    /// diff inválido), la instrucción se trata como dictado normal. El texto
-    /// nunca se pierde; si un turno nuevo intervino mientras corregía, se
-    /// conserva igualmente sin pisar el turno actual.
-    fn restore_instruction_as_dictation(&mut self, pending: Option<LlmPending>) {
-        let Some(p) = pending else { return };
-        if p.instruction.is_empty() {
-            return;
-        }
-        let should_update_turn = self.last_turn == p.target;
-        self.transcript =
-            crate::domain::correction::append_transcript(&self.transcript, &p.instruction);
-        if should_update_turn {
-            self.last_turn = p.instruction.clone();
-        } else {
-            crate::log!("llm", "instrucción recuperada tras un turno intermedio");
-        }
-        if self.config.auto_inject.unwrap_or(true) || p.force_inject {
-            // Si hubo un turno intermedio, `last_turn` ya no es la instrucción
-            // recuperada. Inyectar el último turno aquí volvería a escribir
-            // texto ajeno; este helper debe inyectar exactamente el texto
-            // que el LLM no pudo procesar.
-            self.inject_into_active(&p.instruction);
-        }
     }
 
     // ── Accesores para la burbuja flotante (bubble.rs) ─────────────────────
@@ -974,19 +1181,34 @@ impl WhisprApp {
                             return Task::none();
                         }
 
-                        // Corrección IA (v2, docs/CORRECCION-VOZ.md §3): si las
-                        // reglas no resolvieron el turno, la función está
-                        // activa y el turno huele a corrección («no no lo
-                        // último está mal, es 2 en vez de 4»), se enruta al
-                        // LLM: corrige el ÚLTIMO turno dictado usando esta
-                        // frase como instrucción. Corre en un hilo (patrón
-                        // transcribe_rx); el resultado se drena en Poll.
+                        // Corrección IA (spec §3 + §3.5, t_78d9e1fa): el sistema decide en
+                        // cascada qué modo aplicar al turno recién
+                        // transcrito. De más prioritario a menos:
                         //
-                        // El clasificador usa el umbral configurable de
-                        // Ajustes (default 50 = conducta previa; subir =
-                        // más conservador, spec §2). `classify_with` ya
-                        // respeta la regla de los dos niveles: por debajo
-                        // del umbral NUNCA enruta.
+                        //   1) IN-TURN (modo principal desde 10/09/2026):
+                        //      el turno contiene auto-corrección hablada
+                        //      («digo X», «quiero decir», «no X sino Y»,
+                        //      «mejor X», «en vez de»...) → el LLM
+                        //      recibe el turno COMPLETO y devuelve el
+                        //      texto final corregido (sin meta-lengua).
+                        //      Caso canónico:
+                        //        «que calor en murcia digo cartagena»
+                        //          → «que calor en cartagena»
+                        //
+                        //   2) CROSS-TURN (modo histórico, fallback):
+                        //      la frase apunta al turno ANTERIOR («no no
+                        //      lo último está mal, es 2 en vez de 4») →
+                        //      el LLM recibe (target, instruction) y
+                        //      devuelve {find, replace} sobre `target`.
+                        //
+                        //   3) PLAIN: no se detecta intención correctiva
+                        //      → el turno se inyecta como está.
+                        //
+                        // Ambos modos comparten los mismos gates de
+                        // «AI activada», «server LLM listo» y «no hay
+                        // otra corrección volando». El modo in-turn NO
+                        // exige que haya un turno previo (el input es
+                        // el turno actual entero); el cross-turn SÍ.
                         //
                         // LOG DE DECISIÓN (bug Juanfri 09/09/2026): el
                         // síntoma «no llama al LLM» antes era invisible
@@ -995,6 +1217,7 @@ impl WhisprApp {
                         // que cortan y la decisión de enrutar van al log
                         // del archivo `%APPDATA%\whispr-open\whispr-open.log`
                         // (visible siempre, incluso sin consola).
+                        let in_turn = crate::domain::corrective::classify_in_turn(&processed);
                         let decision = crate::domain::corrective::classify_with(
                             &processed,
                             self.config.llm_classifier_threshold(),
@@ -1003,20 +1226,68 @@ impl WhisprApp {
                         let enabled = self.config.ai_correction_enabled();
                         let llm_ready = matches!(self.llm_status, LlmStatus::Ready { .. });
                         let llm_busy = self.llm_rx.is_some() || self.llm_pending.is_some();
-                        let can_route = !rule_corrected
-                            && enabled
-                            && !llm_busy
-                            && llm_ready
-                            && !self.last_turn.is_empty();
-                        if can_route
+                        let can_route_common = !rule_corrected && enabled && !llm_busy && llm_ready;
+                        let can_route_in_turn = can_route_common;
+                        let can_route_cross_turn = can_route_common && !self.last_turn.is_empty();
+
+                        if can_route_in_turn && in_turn {
+                            // ── Modo in-turn (t_78d9e1fa) ───────────
+                            // El LLM recibe `processed` entero y
+                            // devuelve el texto final limpio. El
+                            // resultado REEMPLAZA el turno que
+                            // íbamos a inyectar (no se aplica diff).
+                            let target = processed.clone();
+                            let llm_cfg = self.config.llm_settings();
+                            let (tx, rx) = mpsc::channel();
+                            self.llm_rx = Some(rx);
+                            self.llm_pending = Some(LlmPending {
+                                mode: LlmMode::InTurn,
+                                instruction: target.clone(),
+                                target: target.clone(),
+                                force_inject,
+                            });
+                            self.status = Status::Correcting;
+                            crate::log!(
+                                "llm",
+                                "enrutando al corrector (in-turn): input={:?} endpoint={} modelo={} timeout={}s",
+                                target,
+                                llm_cfg.base_url,
+                                llm_cfg.model,
+                                llm_cfg.timeout_secs,
+                            );
+                            std::thread::spawn(move || {
+                                let result = crate::llm::redact(&target, &llm_cfg);
+                                let wrapped = match &result {
+                                    Ok(s) => Ok(LlmResult::Redacted(s.clone())),
+                                    Err(_) => Err(
+                                        result.as_ref().err().cloned().unwrap_or_default(),
+                                    ),
+                                };
+                                if let Err(ref e) = result {
+                                    crate::log!(
+                                        "llm",
+                                        "fallo del corrector in-turn (recuperado como dictado normal): {e}"
+                                    );
+                                }
+                                let _ = tx.send(wrapped);
+                            });
+                            return Task::none();
+                        }
+
+                        if can_route_cross_turn
                             && decision == crate::domain::corrective::CorrectiveDecision::NeedsLlm
                         {
+                            // ── Modo cross-turn (flujo histórico) ─────
+                            // El LLM recibe (last_turn, instruction)
+                            // y devuelve {find, replace}. Se aplica
+                            // sobre `target` (= last_turn).
                             let target = self.last_turn.clone();
                             let instruction = processed.clone();
                             let llm_cfg = self.config.llm_settings();
                             let (tx, rx) = mpsc::channel();
                             self.llm_rx = Some(rx);
                             self.llm_pending = Some(LlmPending {
+                                mode: LlmMode::CrossTurn,
                                 instruction: instruction.clone(),
                                 target: target.clone(),
                                 force_inject,
@@ -1024,7 +1295,7 @@ impl WhisprApp {
                             self.status = Status::Correcting;
                             crate::log!(
                                 "llm",
-                                "enrutando al corrector: instruction={:?} target={:?} endpoint={} modelo={} timeout={}s threshold={}",
+                                "enrutando al corrector (cross-turn): instruction={:?} target={:?} endpoint={} modelo={} timeout={}s threshold={}",
                                 instruction,
                                 target,
                                 llm_cfg.base_url,
@@ -1034,22 +1305,34 @@ impl WhisprApp {
                             );
                             std::thread::spawn(move || {
                                 let result = crate::llm::correct(&target, &instruction, &llm_cfg);
+                                let wrapped = match &result {
+                                    Ok(diff) => Ok(LlmResult::Diff(diff.clone())),
+                                    Err(_) => Err(
+                                        result.as_ref().err().cloned().unwrap_or_default(),
+                                    ),
+                                };
                                 if let Err(ref e) = result {
                                     crate::log!(
                                         "llm",
-                                        "fallo del corrector (recuperado como dictado normal): {e}"
+                                        "fallo del corrector cross-turn (recuperado como dictado normal): {e}"
                                     );
                                 }
-                                let _ = tx.send(result);
+                                let _ = tx.send(wrapped);
                             });
                             return Task::none();
                         }
                         // Ruta no tomada: registrar POR QUÉ para que
                         // «no llama al LLM» deje de ser un misterio cuando
-                        // el usuario mira el log.
+                        // el usuario mira el log. Distinguimos
+                        // in_turn / cross_turn por separado para que el
+                        // diagnóstico de Juanfri sea inmediato cuando un
+                        // modo detecta y el otro no (caso real: el turno
+                        // tiene «digo X» que SÍ es in-turn pero el
+                        // cross-turn lo descarta por umbral alto).
                         crate::log!(
                             "llm",
-                            "no se enruta: classifier={:?} threshold={} enabled={} llm_ready={} rule_corrected={} llm_busy={} last_turn_empty={} instruction={:?}",
+                            "no se enruta: in_turn={} classifier={:?} threshold={} enabled={} llm_ready={} rule_corrected={} llm_busy={} last_turn_empty={} processed={:?}",
+                            in_turn,
                             decision,
                             classifier_threshold,
                             enabled,
@@ -1659,7 +1942,7 @@ impl WhisprApp {
                                 "Corrección IA no disponible: el hilo terminó inesperadamente"
                                     .to_string(),
                             );
-                            self.restore_instruction_as_dictation(pending);
+                            self.restore_pending_as_dictation(pending);
                             self.status = Status::Idle;
                             self.arm_bubble_hide_timeout();
                             self.save_config();

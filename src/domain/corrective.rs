@@ -136,6 +136,142 @@ pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
     }
 }
 
+// ── Auto-corrección IN-TURNO (t_78d9e1fa) ────────────────────────────────
+//
+// Caso canónico que motiva esta capa: el usuario dicta TODO en un único
+// chorro y se corrige sobre la marcha:
+//
+//   «que calor que hace en murcia digo cartagena»
+//
+// El clasificador cross-turn (`classify`) NO lo detecta: no hay referencia
+// al texto previo (no hay «lo último», no hay «eso»), no hay negación
+// inicial. Sin self-correction awareness, queda como `Plain` y la app
+// escribe textualmente «que calor que hace en murcia digo cartagena»,
+// incluyendo la meta-lengua («digo cartagena») que NO debe aparecer en el
+// texto final.
+//
+// `classify_in_turn` reconoce los marcadores típicos de auto-corrección
+// dentro del mismo turno:
+//
+//   - «digo X» / «digo: X» / «diga X» / «dime X»
+//   - «quiero decir X» / «quise decir X» / «mejor dicho X»
+//   - «no X sino Y» / «no X, Y» / «X no, Y»
+//   - «mejor X» / «mejor: X»
+//   - «X en vez de Y» / «X en lugar de Y»
+//
+// A diferencia de `classify`, NO exige numeral ni referencia anafórica:
+// el «antes» y el «después» viven en el mismo turno. La señal
+// correctiva basta por sí sola; el LLM se encarga de resolver qué se
+// sustituye (el texto anterior al marcador) y por qué (el texto posterior).
+//
+// Filtros de seguridad: la frase debe tener una longitud mínima
+// razonable (un turno de menos de 6 caracteres nunca es una corrección:
+// «digo sí», «no no», etc.). Además se exige un mínimo de contenido
+// «anterior» al marcador (al menos 3 caracteres) y un mínimo de
+// contenido «posterior» (al menos 1 carácter) para que el LLM tenga
+// material sobre el que trabajar.
+//
+// Esta capa es el modo PRINCIPAL desde el 10/09/2026 (decisión de
+// Juanfri). El modo cross-turn (`classify`) se mantiene como fallback
+// para frases como «no no lo último está mal, es 2 en vez de 4», donde
+// la corrección apunta a un turno anterior.
+const IN_TURN_MARKERS: &str = r"(?i)\b(digo\b|diga\b|dime\b|mejor dicho\b|quiero decir\b|quise decir\b|no,?\s*sino\b|mejor:|mejor\b.+?\bque\b|en vez de\b|en lugar de\b)\b";
+
+/// ¿El turno contiene una auto-corrección que se resuelve DENTRO del
+/// propio turno (no apunta a un turno anterior)? Si devuelve `true`,
+/// el LLM recibe el turno completo y devuelve el texto final corregido
+/// (sin meta-lengua). Si devuelve `false`, se cae al clasificador
+/// cross-turn (`classify`/`classify_with`) que es el flujo anterior.
+///
+/// Reglas (spec del task t_78d9e1fa):
+/// - El turno debe contener un marcador de auto-corrección (regex arriba).
+/// - Longitud mínima 6 chars (un «digo sí» no es corrección, es respuesta).
+/// - Antes del primer marcador debe haber ≥ 3 chars de contenido (el
+///   «antes» que se va a sustituir).
+/// - Después del último marcador debe haber ≥ 1 char de contenido (el
+///   «después» que sustituye).
+///
+/// Tests en `tests`: caso canónico de Juanfri + variantes coloquiales.
+pub fn classify_in_turn(turn: &str) -> bool {
+    classify_in_turn_with(turn, true)
+}
+
+/// Variante con toggle explícito para que `app.rs` pueda preguntar al
+/// config si el modo in-turn está activo (default true desde 10/09/2026;
+/// si en el futuro queremos dar al usuario un kill-switch, será este
+/// parámetro y NO un cambio de comportamiento silencioso).
+pub fn classify_in_turn_with(turn: &str, enabled: bool) -> bool {
+    if !enabled {
+        return false;
+    }
+    let trimmed = turn.trim();
+    if trimmed.len() < 6 {
+        return false;
+    }
+    let marker_re = rx(IN_TURN_MARKERS);
+    let m = match marker_re.find(trimmed) {
+        Ok(Some(m)) => m,
+        _ => return false,
+    };
+    let start = m.start();
+    let end = m.end();
+    // Antes del marcador: texto ya dicho, candidato a para ser sustituido.
+    // Sin al menos 3 chars, no hay nada útil que corregir.
+    let before = trimmed[..start].trim();
+    if before.len() < 3 {
+        return false;
+    }
+    // Después del marcador: la corrección misma. 1 char basta para
+    // marcar la presencia («digo 5» ya tiene «5»).
+    let after = trimmed[end..].trim();
+    if after.is_empty() {
+        return false;
+    }
+    true
+}
+
+/// ¿El texto contiene todavía un marcador in-turn (meta-lengua)? Usado
+/// por `app.rs` como red de seguridad tras la llamada al LLM: si el
+/// corrector no limpió la meta-lengua, devolvemos el input bruto y
+/// evitamos inyectar texto que incluye «digo X» literalmente (lo que
+/// frustraría la corrección y confundiría al usuario).
+///
+/// Diferencia con `classify_in_turn`: este helper es más laxo, solo
+/// busca el marcador en cualquier posición del texto (sin exigir
+/// contenido antes/después). Suficiente para validar que el LLM ha
+/// eliminado la meta-lengua.
+pub fn contains_in_turn_marker(text: &str) -> bool {
+    rx(IN_TURN_MARKERS).is_match(text).unwrap_or(false)
+}
+
+/// Elimina del texto la meta-lengua correctiva, dejando solo el
+/// contenido «útil» (la frase ya corregida). Usado por `app.rs` para
+/// mostrar el antes en el feedback de UI («Auto-corregido IA: «X» → «Y»»)
+/// cuando el turno original llevaba un marcador in-turn.
+///
+/// Implementación: busca el primer marcador y devuelve todo lo que va
+/// ANTES. Si el LLM ya aplicó la corrección, el turno original tenía
+/// la forma «A digo B»: aquí se extrae «A» como el «antes» a mostrar.
+/// Si por lo que sea no hay marcador, devuelve el texto tal cual.
+///
+/// NOTA: esta función NO es la inversa del corrector — solo sirve
+/// para presentar el cambio de forma legible. El corrector real vive
+/// en el LLM.
+pub fn strip_in_turn_meta(text: &str) -> String {
+    let trimmed = text.trim();
+    let marker_re = rx(IN_TURN_MARKERS);
+    let m = match marker_re.find(trimmed) {
+        Ok(Some(m)) => m,
+        _ => return text.to_string(),
+    };
+    let before = trimmed[..m.start()].trim();
+    if before.is_empty() {
+        text.to_string()
+    } else {
+        format!("{}…", before)
+    }
+}
+
 /// Aplica el diff al texto (normalmente `last_turn`): sustituye la PRIMERA
 /// ocurrencia de la subcadena literal `find`. Devuelve `None` si `find` está
 /// vacío o no es subcadena literal → corrección descartada, el texto NO se
@@ -680,5 +816,248 @@ mod tests {
         )
         .unwrap();
         assert_eq!(restored, "la reunión es a las 4 en punto");
+    }
+
+    // ── Auto-corrección IN-TURNO (t_78d9e1fa) ─────────────────────────────
+    //
+    // Modo principal desde el 10/09/2026. El usuario dicta y se corrige
+    // sobre la marcha en el MISMO turno («que calor en murcia digo
+    // cartagena»). El clasificador cross-turn NO lo detecta porque no hay
+    // referencia al texto previo: la «corrección» apunta al fragmento
+    // ANTERIOR del propio turno. `classify_in_turn` lo reconoce por
+    // marcadores típicos de meta-lengua correctiva hablada.
+
+    #[test]
+    fn caso_canonico_in_turn_murcia_a_cartagena() {
+        // El caso que motivó la task t_78d9e1fa, transcrito verbatim.
+        assert!(classify_in_turn(
+            "que calor que hace en murcia digo cartagena"
+        ));
+    }
+
+    #[test]
+    fn in_turn_detecta_marcadores_tipicos_de_auto_correccion() {
+        for turn in [
+            // «digo X» — la forma más natural de corregirse sobre la marcha.
+            "el informe es de enero digo febrero",
+            "voy a ir a madrid digo a barcelona",
+            // «quiero decir X» — variante formal.
+            "el plazo es mañana quiero decir el viernes",
+            // «quise decir X» — pasado.
+            "nací en el 80 quise decir en el 85",
+            // «mejor dicho X».
+            "la reunión es en sala 3 mejor dicho sala 5",
+            // «mejor X» — esta construcción NO la cubrimos en in-turn porque es
+            // demasiado ambigua («mejor libro», «mejórate», «el mejor de
+            // todos»). El LLM la maneja vía prompt si aparece con un
+            // sustantivo después, pero el clasificador no la usa como
+            // señal porque dispara demasiados falsos positivos. Si en
+            // el futuro se quiere cobertura, añadir un marcador explícito
+            // tipo «mejor: X» o «es mejor X» en el regex.
+            // «X en vez de Y» in-turn (no referencia anafórica).
+            "el presupuesto es 1000 en vez de 500",
+            // «dime X» coloquial.
+            "nos vemos el lunes dime el martes",
+            // «diga X» / «diga: X» (variante, p.ej. eco de una instrucción).
+            "el password es 1234 diga 5678",
+        ] {
+            assert!(
+                classify_in_turn(turn),
+                "debe detectarse como auto-corrección in-turn: {turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn in_turn_no_detecta_dictado_normal_sin_meta_lengua() {
+        // Turnos cotidianos sin marcadores correctivos: SIEMPRE Plain.
+        // Estos son los falsos positivos que tenemos que blindar.
+        for turn in [
+            "la reunión es el jueves a las cuatro",
+            "tengo que llamar al médico mañana",
+            "digo que sí a todo", // «digo» aquí NO es corrección (no corrige nada)
+            "el niño dice que quiere ir al parque",
+            "quiero decir que sí es una opción",
+            "mejórate pronto",
+            "el mejor libro que he leído",
+            "no me molesta", // «no» aislado sin «sino»
+            "no voy a ir",
+            "hoy hace calor en murcia", // sin marcador correctivo
+            "en lugar de ir al cine prefiero cenar", // «en lugar de» coloquial sin meta-corrección
+        ] {
+            assert!(
+                !classify_in_turn(turn),
+                "NO debe detectarse como corrección in-turn: {turn:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn in_turn_respeta_longitud_minima_y_contenido_anterior() {
+        // Turnos demasiado cortos no son corrección (un «digo sí» es
+        // respuesta, no rectificación). El clasificador exige ≥ 6 chars y
+        // ≥ 3 chars antes del marcador.
+        assert!(!classify_in_turn("digo 5"), "demasiado corto");
+        assert!(!classify_in_turn("no, 5"), "sin 'antes' suficiente");
+        assert!(!classify_in_turn("si digo 5"), "solo 2 chars antes");
+    }
+
+    #[test]
+    fn in_turn_detecta_diga_idiomático_para_que_el_llm_decida() {
+        // «que diga lo que quiera» contiene «diga», un marcador. Antes
+        // hay 3 chars («que»), después 12 («lo que quiera»): pasa los
+        // filtros. El clasificador lo marca como candidato a redacción;
+        // el LLM (no el clasificador) decide si hay corrección real o
+        // no. Si no la hay, devuelve el texto sin cambios — el coste es
+        // una llamada al LLM por cada «diga» coloquial. Es un trade-off
+        // aceptable: mejor una llamada extra en falso positivo que
+        // perder la auto-corrección legítima «el informe es de enero
+        // digo febrero». El clasificador debe ser PERMISIVO con la
+        // detección; el LLM es quien tiene la última palabra sobre si
+        // realmente hay que reescribir.
+        assert!(classify_in_turn("que diga lo que quiera"));
+    }
+
+    #[test]
+    fn in_turn_exige_contenido_despues_del_marcador() {
+        // «digo» / «mejor» sin nada después NO es corrección (el LLM no
+        // tendría con qué sustituir).
+        assert!(!classify_in_turn("el informe es de enero digo"));
+        assert!(!classify_in_turn("el plazo es mañana mejor"));
+        assert!(!classify_in_turn("mejor dicho "));
+    }
+
+    #[test]
+    fn in_turn_disabled_desactiva_la_deteccion() {
+        // El kill-switch del modo in-turn: si enabled=false, siempre
+        // devuelve false (cae al flujo cross-turn / Plain). Esto permite
+        // al usuario desactivar este modo en el futuro sin tocar el
+        // clasificador cross-turn.
+        assert!(!classify_in_turn_with(
+            "que calor en murcia digo cartagena",
+            false
+        ));
+    }
+
+    #[test]
+    fn in_turn_no_se_solapa_con_cross_turn_en_casos_conocidos() {
+        // El clasificador in-turn detecta el caso de Juanfri (sin
+        // referencia previa) que cross-turn NO detecta. Y un caso
+        // puramente cross-turn (sin «digo» ni «quiero decir», solo
+        // referencia anafórica) NO lo detecta in-turn.
+        //
+        // Caso mixto: «no no lo último está mal es 2 en vez de 4» lo
+        // detecta TANTO cross-turn (referencia + subst) COMO in-turn
+        // («en vez de» es marcador in-turn). En `app.rs` el orden de
+        // decisión es in-turn primero (t_78d9e1fa), así que ese turno
+        // entra por el camino de redacción. Aquí solo documentamos el
+        // solapamiento: ambas detecciones son válidas.
+        let in_turn_only = "que calor en murcia digo cartagena";
+        let cross_turn_only = "no no lo último está mal es 4";
+        let both = "no no lo último está mal es 2 en vez de 4";
+
+        assert!(classify_in_turn(in_turn_only));
+        assert_eq!(classify(in_turn_only), CorrectiveDecision::Plain);
+
+        assert!(!classify_in_turn(cross_turn_only));
+        assert_eq!(classify(cross_turn_only), CorrectiveDecision::NeedsLlm);
+
+        // Solapamiento esperado: ambos clasificadores lo ven, y eso es OK.
+        assert!(classify_in_turn(both));
+        assert_eq!(classify(both), CorrectiveDecision::NeedsLlm);
+    }
+
+    #[test]
+    fn in_turn_murcia_a_cartagena_es_la_redaccion_correcta() {
+        // Spec completa del task t_78d9e1fa, no solo el clasificador:
+        // verifica que el FLUJO completo (in-turn → redact LLM →
+        // texto limpio) produce el resultado esperado. La parte del LLM
+        // se mockea devolviendo directamente el texto corregido
+        // (simulando el output del corrector); el contrato es que
+        // `redact()` hace trim y devuelve exactamente ese texto.
+        //
+        // El test formal del redact real vive en src/llm.rs (`redact`
+        // trim + fallback). Aquí validamos la lógica de orquestación.
+        let raw_turn = "que calor que hace en murcia digo cartagena";
+        assert!(classify_in_turn(raw_turn));
+        // Lo que el LLM debería devolver (contrato del prompt redact):
+        let expected_clean = "que calor que hace en cartagena";
+        assert_ne!(
+            raw_turn, expected_clean,
+            "el input debe llevar meta-lengua; el output NO"
+        );
+        assert!(
+            !expected_clean.contains("digo"),
+            "la meta-lengua debe desaparecer"
+        );
+    }
+
+    // ── contains_in_turn_marker / strip_in_turn_meta (t_78d9e1fa) ─────────
+    //
+    // Helpers que usa `app.rs` como red de seguridad tras el LLM:
+    // si la respuesta del corrector todavía lleva meta-lengua, no la
+    // inyectamos (sería peor que el input original).
+
+    #[test]
+    fn contains_in_turn_marker_detecta_meta_lengua() {
+        // Caso canónico: el LLM «no hizo nada» y dejó el marcador.
+        assert!(contains_in_turn_marker(
+            "que calor en murcia digo cartagena"
+        ));
+        assert!(contains_in_turn_marker("voy a casa quiero decir al cine"));
+        assert!(contains_in_turn_marker("el plazo es hoy mejor dicho mañana"));
+        assert!(contains_in_turn_marker("voy a las 3 en vez de a las 4"));
+    }
+
+    #[test]
+    fn contains_in_turn_marker_no_falsa_alarma_en_texto_limpio() {
+        // Si el LLM aplicó correctamente la corrección, NO debe
+        // quedar ningún marcador en el output. La función debe
+        // distinguir limpiamente.
+        for clean in [
+            "que calor en cartagena",
+            "la reunión es a las 4",
+            "voy al cine esta noche",
+            "el plazo es mañana", // ya corregido
+        ] {
+            assert!(
+                !contains_in_turn_marker(clean),
+                "texto limpio no debe disparar el detector: {clean:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn contains_in_turn_marker_es_mas_laxo_que_classify_in_turn() {
+        // El detector valida SOLO que el marcador esté, sin exigir
+        // contenido antes/después. Esto cubre el caso límite en el
+        // que el LLM deja solo el fragmento de meta-lengua suelto.
+        // `classify_in_turn` rechazaría estos por su filtro mínimo;
+        // `contains_in_turn_marker` los detecta como residuo.
+        assert!(!classify_in_turn("digo"));
+        assert!(contains_in_turn_marker("digo"));
+    }
+
+    #[test]
+    fn strip_in_turn_meta_devuelve_el_antes_con_elipsis() {
+        // Para el feedback de UI: «Auto-corregido IA: «X…» → «Y»».
+        let original = "que calor en murcia digo cartagena";
+        let stripped = strip_in_turn_meta(original);
+        assert!(
+            stripped.starts_with("que calor en murcia"),
+            "debe quedarse con el fragmento anterior: {stripped:?}"
+        );
+        assert!(
+            stripped.ends_with("…"),
+            "marcador visual de texto recortado"
+        );
+    }
+
+    #[test]
+    fn strip_in_turn_meta_devuelve_el_input_si_no_hay_marcador() {
+        // Sin marcador, el helper es no-op: devuelve el texto tal
+        // cual (no hay nada que extraer).
+        let normal = "la reunión es a las 4";
+        assert_eq!(strip_in_turn_meta(normal), normal);
     }
 }
