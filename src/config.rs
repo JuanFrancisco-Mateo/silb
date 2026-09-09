@@ -7,6 +7,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
 use crate::transcribe::Model;
 
@@ -264,6 +265,9 @@ impl std::fmt::Display for BubbleHideTimeout {
 pub struct Config {
     pub dictionary: Vec<DictionaryEntry>,
     pub model: Option<String>,
+    /// Limpieza de muletillas (toggle «Limpiar muletillas» en Ajustes).
+    /// `None` = activa (default: se limpian las muletillas comunes).
+    pub cleanup_enabled: Option<bool>,
     pub auto_inject: Option<bool>,
     pub input_device: Option<String>,
     /// Tema oscuro por defecto (2026: dark mode default); toggle persistido.
@@ -367,6 +371,12 @@ pub struct Config {
     /// limpian: la esquina vuelve a mandar en el siguiente arranque.
     pub bubble_x: Option<i32>,
     pub bubble_y: Option<i32>,
+    /// Muletillas personalizadas (Ajustes → Muletillas). `None` = las
+    /// listas por defecto de `cleanup.rs` (eh/um/uh/o sea/you know ·
+    /// este/esto/tipo/like/pues · bueno/pues). Se persiste solo cuando el
+    /// usuario toca las listas; el botón «Por defecto» lo vuelve a None.
+    /// Los configs legacy que ya traían `fillers` vuelven a usarlos.
+    pub fillers: Option<FillerWords>,
 }
 
 pub fn config_path() -> PathBuf {
@@ -638,6 +648,18 @@ impl Config {
         true
     }
 
+    /// ¿Limpieza de muletillas activa? Default: sí (se limpian las
+    /// muletillas comunes; el toggle de Ajustes puede desactivarla).
+    pub fn cleanup_enabled(&self) -> bool {
+        self.cleanup_enabled.unwrap_or(true)
+    }
+
+    /// Muletillas efectivas: las personalizadas de Ajustes o, si no hay
+    /// (`None`), los defaults de `cleanup.rs` (las listas originales).
+    pub fn fillers(&self) -> FillerWords {
+        self.fillers.clone().unwrap_or_default()
+    }
+
     /// Modo de tema efectivo. `None` (config vieja sin el campo) se deriva
     /// del `dark_mode` legacy: true → Oscuro, false → Claro, ausente →
     /// Oscuro (default 2026). El modo `Auto` delega en el sistema.
@@ -711,6 +733,9 @@ mod tests {
         let cfg = Config::default();
         assert_eq!(cfg.selected_model(), Model::Small);
         assert!(cfg.dictionary.is_empty());
+        assert_eq!(cfg.cleanup_enabled, None);
+        assert!(cfg.cleanup_enabled(), "default: limpiar muletillas comunes");
+        assert_eq!(cfg.fillers(), FillerWords::default());
     }
 
     #[test]
@@ -1257,10 +1282,64 @@ mod tests {
     }
 
     #[test]
-    fn obsolete_filler_settings_are_ignored_when_loading_legacy_json() {
-        let raw = r#"{"dictionary":[],"cleanup_enabled":false,"fillers":{"unambiguous":[]}}"#;
+    fn legacy_filler_settings_are_honored_when_loading() {
+        // Config legacy de Juanfri (muletillas desactivadas + listas vacías):
+        // el refactor auditado las ignoraba; ahora deben cargar SIN ROMPER y
+        // volver a mandar (cleanup desactivado, fillers vacíos, no defaults).
+        let raw = r#"{"dictionary":[],"cleanup_enabled":false,"fillers":{"unambiguous":[],"ambiguous":[],"start_of_turn":[]}}"#;
         let cfg: Config = serde_json::from_str(raw).expect("legacy config");
-        assert!(cfg.dictionary.is_empty());
+        assert!(
+            !cfg.cleanup_enabled(),
+            "legacy cleanup_enabled=false se honra"
+        );
+        assert!(cfg.fillers().unambiguous.is_empty());
+        assert!(cfg.fillers().ambiguous.is_empty());
+        assert!(cfg.fillers().start_of_turn.is_empty());
+    }
+
+    #[test]
+    fn filler_defaults_limpian_muletillas_comunes() {
+        // Config sin el campo → default sensato: limpiar las muletillas
+        // comunes por defecto, con opción de desactivar en Ajustes.
+        let cfg: Config = serde_json::from_str(r#"{"dictionary":[]}"#).expect("json");
+        assert!(cfg.cleanup_enabled());
+        assert_eq!(
+            cfg.fillers().unambiguous,
+            ["eh", "um", "uh", "o sea", "you know"]
+        );
+        assert_eq!(
+            cfg.fillers().ambiguous,
+            ["este", "esto", "tipo", "like", "pues"]
+        );
+        // Un `fillers` parcial cae por campo al default (semántica de ee614dc).
+        let parcial: Config =
+            serde_json::from_str(r#"{"dictionary":[],"fillers":{"unambiguous":["vale"]}}"#)
+                .expect("json");
+        assert_eq!(parcial.fillers().unambiguous, ["vale"]);
+        assert_eq!(
+            parcial.fillers().ambiguous,
+            ["este", "esto", "tipo", "like", "pues"]
+        );
+    }
+
+    #[test]
+    fn fillers_roundtrip_a_traves_del_json() {
+        // Lo que se ve en Ajustes se persiste y se relee igual.
+        let original = Config {
+            cleanup_enabled: Some(false),
+            fillers: Some(FillerWords {
+                unambiguous: vec!["vale".into()],
+                ambiguous: vec![],
+                start_of_turn: vec!["pues".into()],
+            }),
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&original).expect("serializa");
+        let leida: Config = serde_json::from_str(&raw).expect("deserializa");
+        assert!(!leida.cleanup_enabled());
+        assert_eq!(leida.fillers().unambiguous, ["vale"]);
+        assert!(leida.fillers().ambiguous.is_empty());
+        assert_eq!(leida.fillers().start_of_turn, ["pues"]);
     }
 
     #[test]

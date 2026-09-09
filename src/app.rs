@@ -1,5 +1,5 @@
 //! UI de Whispr Open con Iced: dictado por turnos, transcript acumulado,
-//! diccionario personal, selector de modelo e
+//! limpieza de muletillas, diccionario personal, selector de modelo e
 //! inyección en la app activa.
 
 use std::sync::mpsc::{self, Receiver};
@@ -18,7 +18,7 @@ use crate::config::{
     dictionary_path, BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, Config,
     CorrectionProvider, FontSize, ThemeMode,
 };
-use crate::domain::cleanup::clean_transcript;
+use crate::domain::cleanup::{clean_transcript_with, FillerWords};
 use crate::domain::correction::CorrectionSession;
 use crate::domain::dictionary::{
     apply_dictionary, export_dictionary_to, import_dictionary_from, DictionaryEntry,
@@ -78,6 +78,7 @@ pub enum Message {
     StopRecording,
     TranscriptionDone(Result<String, String>),
     ModelSelected(Model),
+    ToggleCleanup(bool),
     ToggleAutoInject(bool),
     /// Corrección IA (otro modelo) activada/desactivada — Ajustes.
     ToggleAiCorrection(bool),
@@ -118,6 +119,18 @@ pub enum Message {
     EntryFromChanged(String),
     EntryToChanged(String),
     RemoveEntry(usize),
+    // ── Muletillas (Ajustes) ──────────────────────────────────────────────
+    /// Añade la muletilla escrita en `filler_input` a la categoría
+    /// seleccionada (botón «Añadir» o Enter en el input).
+    AddFiller,
+    FillerInputChanged(String),
+    FillerCategorySelected(FillerCategory),
+    RemoveFiller {
+        category: FillerCategory,
+        index: usize,
+    },
+    /// Vuelve a las listas por defecto de `cleanup.rs` (config.fillers = None).
+    ResetFillers,
     // ── Diccionario: importar/exportar (backup/restore a JSON) ────────────
     /// Exporta el diccionario a `%APPDATA%/whispr-open/dictionary.json`.
     ExportDictionary,
@@ -184,6 +197,7 @@ pub struct WhisprApp {
     status: Status,
     transcript: String,
     last_turn: String,
+    removed_fillers: Vec<String>,
     last_correction: Option<String>,
     session: CorrectionSession,
     audio: Option<AudioCapture>,
@@ -196,6 +210,10 @@ pub struct WhisprApp {
     hotkey_label: String,
     entry_from: String,
     entry_to: String,
+    /// Muletilla en curso de escritura (Ajustes → Muletillas).
+    filler_input: String,
+    /// Categoría seleccionada en el `pick_list` de muletillas.
+    filler_category: FillerCategory,
     settings_open: bool,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
     bubble_id: Option<window::Id>,
@@ -293,6 +311,7 @@ impl WhisprApp {
             status: Status::Idle,
             transcript: String::new(),
             last_turn: String::new(),
+            removed_fillers: vec![],
             last_correction: None,
             session: CorrectionSession::new(),
             audio: None,
@@ -303,6 +322,8 @@ impl WhisprApp {
             hotkey_label,
             entry_from: String::new(),
             entry_to: String::new(),
+            filler_input: String::new(),
+            filler_category: FillerCategory::Unambiguous,
             settings_open: false,
             bubble_id,
             bubble_pressed: false,
@@ -695,7 +716,14 @@ impl WhisprApp {
     /// (en ese caso el LLM no debe intervenir — nivel A de la spec §2).
     fn apply_pipeline(&mut self, raw: &str) -> (String, bool) {
         // Orden de procesado (igual que la web): cleanup -> diccionario.
-        let mut text = clean_transcript(raw).text;
+        let mut text = raw.to_string();
+        self.removed_fillers.clear();
+
+        if self.config.cleanup_enabled() {
+            let cleaned = clean_transcript_with(raw, &self.config.fillers());
+            text = cleaned.text;
+            self.removed_fillers = cleaned.removed;
+        }
 
         if !self.config.dictionary.is_empty() {
             let dict = apply_dictionary(&text, &self.config.dictionary);
@@ -960,6 +988,11 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            Message::ToggleCleanup(on) => {
+                self.config.cleanup_enabled = Some(on);
+                self.save_config();
+                Task::none()
+            }
             Message::ToggleAutoInject(on) => {
                 self.config.auto_inject = Some(on);
                 self.save_config();
@@ -1106,6 +1139,50 @@ impl WhisprApp {
                     self.config.dictionary.remove(idx);
                     self.save_config();
                 }
+                Task::none()
+            }
+            // ── Muletillas (Ajustes: listas editables) ────────────────────
+            Message::AddFiller => {
+                let word = self.filler_input.trim().to_string();
+                if !word.is_empty() {
+                    let mut fillers = self.config.fillers();
+                    let list = self.filler_category.list_mut(&mut fillers);
+                    if !list.iter().any(|w| w == &word) {
+                        list.push(word);
+                        self.config.fillers = Some(fillers);
+                        self.save_config();
+                    }
+                }
+                self.filler_input.clear();
+                Task::none()
+            }
+            Message::FillerInputChanged(v) => {
+                self.filler_input = v;
+                Task::none()
+            }
+            Message::FillerCategorySelected(category) => {
+                self.filler_category = category;
+                Task::none()
+            }
+            Message::RemoveFiller { category, index } => {
+                let mut fillers = self.config.fillers();
+                let list = category.list_mut(&mut fillers);
+                if index < list.len() {
+                    list.remove(index);
+                    // Si tras quitar quedan las listas de serie, se guarda
+                    // None (el getter resuelve los defaults sin JSON extra).
+                    self.config.fillers = if fillers.is_default() {
+                        None
+                    } else {
+                        Some(fillers)
+                    };
+                    self.save_config();
+                }
+                Task::none()
+            }
+            Message::ResetFillers => {
+                self.config.fillers = None;
+                self.save_config();
                 Task::none()
             }
             // ── Diccionario: importar/exportar (backup/restore) ───────────
@@ -1846,6 +1923,14 @@ impl WhisprApp {
                 );
             }
             row_el.into()
+        } else if !self.removed_fillers.is_empty() {
+            text(format!(
+                "Muletillas eliminadas: {}",
+                self.removed_fillers.join(", ")
+            ))
+            .size(fs.sm)
+            .color(t.dim)
+            .into()
         } else {
             text("").into()
         };
@@ -1944,6 +2029,18 @@ impl WhisprApp {
         ]
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
+
+        // «Por defecto» solo tiene sentido cuando hay muletillas
+        // personalizadas (config.fillers = Some); si ya son las de serie, la
+        // fila se deja vacía para no mostrar un botón que no haría nada.
+        let reset_button: Element<'_, Message> = if self.config.fillers.is_some() {
+            button("Por defecto")
+                .on_press(Message::ResetFillers)
+                .style(theme::secondary)
+                .into()
+        } else {
+            Space::new(Length::Shrink, 0).into()
+        };
 
         let panel = column![
             row![
@@ -2138,6 +2235,9 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
+            checkbox("Limpiar muletillas", self.config.cleanup_enabled(),)
+                .on_toggle(Message::ToggleCleanup)
+                .style(theme::checkbox),
             checkbox(
                 "Autoinyectar al terminar",
                 self.config.auto_inject.unwrap_or(true),
@@ -2326,6 +2426,33 @@ impl WhisprApp {
                 text("").size(fs.sm).color(t.ok)
             },
             horizontal_rule(1).style(theme::rule),
+            // ── Muletillas: las listas de cleanup.rs, editables ────────────
+            // El toggle «Limpiar muletillas» sigue arriba; aquí se añaden y
+            // quitan palabras por categoría (Enter en el input añade).
+            text("Muletillas")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+            row![
+                text_input("muletilla (ej. «vale»)", &self.filler_input)
+                    .on_input(Message::FillerInputChanged)
+                    .on_submit(Message::AddFiller)
+                    .style(theme::text_input),
+                pick_list(
+                    FillerCategory::ALL.to_vec(),
+                    Some(self.filler_category),
+                    Message::FillerCategorySelected,
+                )
+                .placeholder("Categoría")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+                button("Añadir")
+                    .on_press(Message::AddFiller)
+                    .style(theme::primary),
+            ]
+            .spacing(theme::SPACE_2),
+            filler_lists(&self.config.fillers(), fs),
+            reset_button,
         ]
         .spacing(theme::SPACE_2)
         .width(Length::Fill);
@@ -2335,6 +2462,57 @@ impl WhisprApp {
             .padding(theme::SPACE_3)
             .style(|th| theme::card(th))
             .into()
+    }
+}
+
+/// Categoría de una muletilla en Ajustes. Cada variante corresponde a una
+/// regla distinta de `cleanup.rs`: inequívoca (cualquier posición), solo
+/// antes de pausa, o solo abriendo el turno. Se usa en el `pick_list` de
+/// Ajustes y en los mensajes de añadir/quitar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FillerCategory {
+    Unambiguous,
+    Ambiguous,
+    StartOfTurn,
+}
+
+impl FillerCategory {
+    const ALL: [FillerCategory; 3] = [
+        FillerCategory::Unambiguous,
+        FillerCategory::Ambiguous,
+        FillerCategory::StartOfTurn,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            FillerCategory::Unambiguous => "En cualquier posición",
+            FillerCategory::Ambiguous => "Solo antes de pausa",
+            FillerCategory::StartOfTurn => "Solo al inicio",
+        }
+    }
+
+    /// Lista de palabras de esta categoría (solo lectura).
+    fn list<'a>(self, fillers: &'a FillerWords) -> &'a [String] {
+        match self {
+            FillerCategory::Unambiguous => &fillers.unambiguous,
+            FillerCategory::Ambiguous => &fillers.ambiguous,
+            FillerCategory::StartOfTurn => &fillers.start_of_turn,
+        }
+    }
+
+    /// Lista de palabras de esta categoría (para mutar).
+    fn list_mut<'a>(self, fillers: &'a mut FillerWords) -> &'a mut Vec<String> {
+        match self {
+            FillerCategory::Unambiguous => &mut fillers.unambiguous,
+            FillerCategory::Ambiguous => &mut fillers.ambiguous,
+            FillerCategory::StartOfTurn => &mut fillers.start_of_turn,
+        }
+    }
+}
+
+impl std::fmt::Display for FillerCategory {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
     }
 }
 
@@ -2412,6 +2590,45 @@ fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes) -> Element
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
         );
+    }
+    col.into()
+}
+
+/// Listas de muletillas por categoría con botón ✕ para quitar (idéntico en
+/// estilo a `dictionary_list`). Solo muestra las categorías con palabras;
+/// si todas están vacías (el usuario quitó todo) avisa de que no se limpia
+/// nada y que «Por defecto» restaura las listas de serie.
+fn filler_lists(fillers: &FillerWords, fs: theme::FontSizes) -> Element<'static, Message> {
+    if FillerCategory::ALL
+        .iter()
+        .all(|category| category.list(fillers).is_empty())
+    {
+        return text("Sin muletillas: no se limpiará nada. «Por defecto» restaura las de serie.")
+            .size(fs.sm)
+            .into();
+    }
+    let mut col = Column::new().spacing(theme::SPACE_2);
+    for category in FillerCategory::ALL {
+        let words = category.list(fillers);
+        if words.is_empty() {
+            continue;
+        }
+        col = col.push(text(format!("{}:", category.label())).size(fs.xxs));
+        for (idx, word) in words.iter().enumerate() {
+            col = col.push(
+                row![
+                    text(word.clone()).size(fs.md),
+                    button(ui_text("✕"))
+                        .on_press(Message::RemoveFiller {
+                            category,
+                            index: idx,
+                        })
+                        .style(theme::secondary),
+                ]
+                .spacing(theme::SPACE_2)
+                .align_y(iced::Alignment::Center),
+            );
+        }
     }
     col.into()
 }
