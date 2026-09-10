@@ -11,8 +11,9 @@ use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
 use crate::transcribe::Model;
 
-/// Proveedor de corrección IA. Permite elegir entre el método local por
-/// defecto, un proveedor cloud OpenAI-compatible o un endpoint propio.
+/// Proveedor de corrección IA. Permite elegir entre el LLM local por
+/// defecto (llama.cpp, el que trae la app), un proveedor cloud
+/// (OpenAI) o un endpoint propio OpenAI-compatible (Custom).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CorrectionProvider {
@@ -22,11 +23,14 @@ pub enum CorrectionProvider {
 }
 
 impl CorrectionProvider {
+    /// Etiqueta del selector de Ajustes. Los nombres son los del
+    /// requisito UX 10/09/2026: dejar claro que Local es el que viene
+    /// con la app, y que Custom es cualquier endpoint OpenAI-compatible.
     pub fn label(self) -> &'static str {
         match self {
-            CorrectionProvider::Default => "Por defecto (local)",
-            CorrectionProvider::Cloud => "Cloud (OpenAI-compatible)",
-            CorrectionProvider::Custom => "Endpoint personalizado",
+            CorrectionProvider::Default => "Local (llama.cpp, el que viene con la app)",
+            CorrectionProvider::Cloud => "Cloud (OpenAI)",
+            CorrectionProvider::Custom => "Custom LLM (endpoint OpenAI-compatible)",
         }
     }
 }

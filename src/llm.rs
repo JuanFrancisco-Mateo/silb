@@ -562,12 +562,22 @@ fn last_balanced_json_object(s: &str) -> Option<&str> {
 /// 503 en /health pero /models solo responde cuando la carga acabó — usar
 /// /models es la forma fiable de esperar a que el modelo esté listo.
 pub fn server_alive(base_url: &str) -> bool {
+    server_alive_auth(base_url, None)
+}
+
+/// Igual que `server_alive` pero enviando `Authorization: Bearer` cuando hay
+/// api_key. Los endpoints remotos (Custom/Cloud) suelen exigirla — sin la
+/// cabecera un 401 haría parecer «caído» un endpoint perfectamente sano —
+/// y llama.cpp la ignora si llega, así que es seguro mandarla siempre que
+/// el usuario la haya configurado.
+pub fn server_alive_auth(base_url: &str, api_key: Option<&str>) -> bool {
     let url = format!("{}/models", base_url.trim_end_matches('/'));
     let started = std::time::Instant::now();
-    let ok = ureq::get(&url)
-        .timeout(Duration::from_secs(2))
-        .call()
-        .is_ok();
+    let mut request = ureq::get(&url).timeout(Duration::from_secs(2));
+    if let Some(key) = api_key.filter(|k| !k.is_empty()) {
+        request = request.set("Authorization", &format!("Bearer {key}"));
+    }
+    let ok = request.call().is_ok();
     if ok {
         crate::log!(
             "llm",
