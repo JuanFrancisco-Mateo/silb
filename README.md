@@ -159,7 +159,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 229 tests (dominio, config, audio, burbuja, UI, llm)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 234 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm)
 ```
 
 ## Estructura
@@ -177,6 +177,7 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 229 tests (dominio, config, audio
 | `src/hotkey.rs` | atajo global |
 | `src/config.rs` | configuración persistente + Credential Manager |
 | `docs/CORRECCION-VOZ.md` | especificación y diseño final del corrector IA |
+| `docs/GUIA-USUARIO.md` | guía de usuario: dictar y corregir hablando |
 | `docs/SETUP.md` | cómo configurar Local / Custom / Cloud |
 | `docs/EMPAQUETADO.md` · `docs/ROADMAP.md` · `docs/UI-FUTURA.md` | empaquetado y hoja de ruta |
 
