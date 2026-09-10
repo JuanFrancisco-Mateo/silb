@@ -1939,4 +1939,49 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&otros);
     }
+
+    // ── Regresión VIVA contra un server real (t_75732630) ─────────────────
+    //
+    // Se ejecuta a mano con un llama-server NATIVO ya escuchando en
+    // 127.0.0.1:8081 (Qwen3.5-0.8B-Q8_0.gguf):
+    //   D:\LlamaCPP\llama-server.exe -m <gguf> --host 127.0.0.1 --port 8081
+    //   cargo.exe test regresion_viva -- --ignored --nocapture
+    //
+    // Fija el criterio 4 de la task: `server_alive`/`wait_for_server` pasan
+    // (sin «sin respuesta tras 0 s») con la base `/v1` del config del
+    // usuario, y la URL cruda duplicada `/v1/v1/models` —el bug— da 404.
+    #[test]
+    #[ignore = "requiere llama-server.exe nativo en 127.0.0.1:8081"]
+    fn regresion_viva_normalizacion_url_contra_server_real() {
+        let con_v1 = "http://127.0.0.1:8081/v1";
+        let duplicada = "http://127.0.0.1:8081/v1/v1";
+
+        assert!(
+            server_alive(con_v1),
+            "GET /v1/models debe responder contra el server nativo real"
+        );
+        assert!(
+            server_alive(duplicada),
+            "la base con /v1/v1 se colapsa a /v1/models y también responde"
+        );
+        let t0 = std::time::Instant::now();
+        assert!(
+            wait_for_server(con_v1, Duration::from_secs(5)),
+            "wait_for_server no debe devolver en el primer poll"
+        );
+        assert!(
+            t0.elapsed() < Duration::from_secs(5),
+            "el health check debe pasar en el primer intento"
+        );
+
+        // La URL CRUDA duplicada sí es un 404: es exactamente el bug que
+        // arregla `api_url` (nadie la construye ya así).
+        let cruda = ureq::get("http://127.0.0.1:8081/v1/v1/models")
+            .timeout(Duration::from_secs(2))
+            .call();
+        assert!(
+            cruda.is_err(),
+            "sanity del bug: /v1/v1/models crudo debe ser un 404"
+        );
+    }
 }
