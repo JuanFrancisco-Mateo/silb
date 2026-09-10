@@ -14,6 +14,9 @@ pub const BEAM_SIZE: i32 = 5;
 pub const VAD_MODEL_FILE: &str = "ggml-vad-q8.bin";
 const PROMPT_MAX_CHARS: usize = 256;
 
+/// Modelo de voz whisper disponible (tiny/base/small): trade-off
+/// velocidad ↔ calidad de transcripción. Tiny/Base cometen errores
+/// fonéticos en español («buscar»→«boscar»); Small es el mínimo fiable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Model {
     Tiny,
@@ -22,6 +25,7 @@ pub enum Model {
 }
 
 impl Model {
+    /// Identificador persistido en config.json (`"tiny"|"base"|"small"`).
     pub fn id(&self) -> &'static str {
         match self {
             Model::Tiny => "tiny",
@@ -29,6 +33,7 @@ impl Model {
             Model::Small => "small",
         }
     }
+    /// Etiqueta en español para el selector de la UI.
     pub fn label(&self) -> &'static str {
         match self {
             Model::Tiny => "Tiny (rápido)",
@@ -36,6 +41,7 @@ impl Model {
             Model::Small => "Small (preciso)",
         }
     }
+    /// Nombre del fichero GGML en disco (`ggml-*.bin`).
     pub fn file_name(&self) -> &'static str {
         match self {
             Model::Tiny => "ggml-tiny.bin",
@@ -43,6 +49,7 @@ impl Model {
             Model::Small => "ggml-small.bin",
         }
     }
+    /// Tamaño aproximado de descarga, en MB (para los avisos de la UI).
     pub fn approx_mb(&self) -> u32 {
         match self {
             Model::Tiny => 75,
@@ -50,9 +57,11 @@ impl Model {
             Model::Small => 466,
         }
     }
+    /// Los tres modelos ofrecidos en el selector.
     pub fn all() -> [Model; 3] {
         [Model::Tiny, Model::Base, Model::Small]
     }
+    /// URL de descarga (HuggingFace, repo oficial de whisper.cpp).
     pub fn download_url(&self) -> String {
         format!(
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
@@ -67,15 +76,20 @@ impl std::fmt::Display for Model {
     }
 }
 
+/// Carpeta de modelos bajo `%APPDATA%\whispr-open\models` (donde instalan
+/// los GGML descargados).
 pub fn models_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("whispr-open")
         .join("models")
 }
+/// Ruta completa del GGML del modelo indicado.
 pub fn model_path(model: Model) -> PathBuf {
     models_dir().join(model.file_name())
 }
+/// ¿El fichero del modelo existe ya en disco? (Existir ≠ ser válido: para
+/// eso está `model_file_is_valid`.)
 pub fn model_exists(model: Model) -> bool {
     model_path(model).is_file()
 }
@@ -180,18 +194,32 @@ pub fn friendly_download_error(raw: &str) -> &'static str {
         "error de red o de disco durante la descarga"
     }
 }
+/// Ruta del modelo de VAD (detección de actividad de voz) si se descargó.
 pub fn vad_model_path() -> PathBuf {
     models_dir().join(VAD_MODEL_FILE)
 }
+/// ¿El fichero de VAD indicado existe? (La VAD es opcional: si falta,
+/// whisper transcribe sin ella.)
 pub fn vad_available_for(model_file: &Path) -> bool {
     model_file.is_file()
 }
+/// ¿Hay VAD disponible en la carpeta de modelos?
 pub fn vad_available() -> bool {
     vad_available_for(&vad_model_path())
 }
 
 static DOWNLOAD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
+/// Garantiza que el modelo está en disco y ES un GGML sano, descargándolo
+/// si falta (o re-descargándolo si el fichero existente está truncado).
+///
+/// Recibe `on_progress(downloaded, total)` con los bytes descargados y el
+/// total (0 si el servidor no lo declara) para la barra de progreso.
+/// Devuelve la ruta del fichero listo para cargar.
+///
+/// Falla con un mensaje en español cuando: no hay red, no se puede escribir
+/// en la carpeta (permisos/disco), o el servidor no devuelve un GGML
+/// válido. Nunca deja un `.part` a medias tras un fallo.
 pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
     let lock = DOWNLOAD_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
@@ -310,6 +338,8 @@ pub fn build_initial_prompt(
     (!out.is_empty()).then_some(out)
 }
 
+/// Volcado de la decisión de parámetros de una transcripción (para el log:
+/// saber QUÉ se le pidió a whisper cuando algo suena raro).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamsDecision {
     pub strategy: &'static str,
@@ -322,6 +352,9 @@ pub struct ParamsDecision {
     pub vad: bool,
 }
 
+/// Parámetros de inferencia ajustables desde Ajustes avanzados: idioma
+/// (`None` = autodetección), beam size (calidad ↔ velocidad) y nº de
+/// hilos del decoder.
 #[derive(Debug, Clone)]
 pub struct InferenceParams {
     pub language: Option<String>,
@@ -376,10 +409,14 @@ fn build_params<'a>(
     (params, decision)
 }
 
+/// Motor de transcripción: un contexto whisper.cpp protegido con un mutex
+/// (una transcripción a la vez; el hilo de UI nunca lo toca directamente).
 pub struct WhisperEngine {
     inner: Mutex<WhisperContext>,
 }
 impl WhisperEngine {
+    /// Carga el contexto del modelo desde disco. Falla si el fichero no
+    /// existe o no es un GGML válido (el mensaje nombra el modelo).
     pub fn load(model: Model) -> Result<Self, String> {
         crate::log!("transcribe", "{}", whisper_rs::print_system_info());
         let ctx = WhisperContext::new_with_params(
@@ -391,6 +428,11 @@ impl WhisperEngine {
             inner: Mutex::new(ctx),
         })
     }
+    /// Transcribe `samples` (f32 mono 16 kHz) a texto plano. Recibe los
+    /// parámetros de inferencia y un `initial_prompt` opcional (los
+    /// términos del diccionario, para sesgar el reconocedor). Devuelve los
+    /// segmentos unidos por espacios. Falla si whisper no puede procesar
+    /// el audio (mensaje en español).
     pub fn transcribe(
         &self,
         samples: &[f32],

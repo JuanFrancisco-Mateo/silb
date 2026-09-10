@@ -4,6 +4,8 @@ Dictado por voz **local** y de escritorio nativo (Windows). Alternativa
 open-source al flujo de Wispr Flow (wisprflow.ai): hablas, sueltas el atajo y
 el texto se escribe donde esté tu cursor.
 
+> Licencia: [MIT](LICENSE) — uso, modificación y redistribución libres.
+
 - **UI nativa**: Iced (renderizado directo, sin webview, sin HTML/CSS/JS).
 - **Transcripción local**: whisper.cpp vía `whisper-rs` (modelos GGML,
   tiny/base/small). Nada sale de tu máquina.
@@ -12,7 +14,13 @@ el texto se escribe donde esté tu cursor.
 - **Inyección en la app activa**: al terminar, el texto se escribe en la
   ventana con foco (Slack, Notion, editor…) vía portapapeles + Ctrl+V.
   Formato (pegar/teclear), retardo y filtro por título de ventana
-  configurables en `config.json`.
+  configurables en `config.json`. Si no hay ninguna ventana con foco, el
+  texto queda copiado en el portapapeles con aviso (nunca se pierde).
+- **Nota editable**: el transcript se puede corregir a mano (editor
+  multilínea en la ventana principal) antes de mandarla — un error de
+  Whisper ya no obliga a re-dictar. Editar y seguir dictando no se pisan;
+  «Copiar» se confirma con un «✓ Copiado» breve y borrar la nota pide
+  confirmación y se puede deshacer.
 - **Post-procesado local**: normalización de repeticiones y expresiones de
   relleno antes de la inyección; las muletillas (inequívocas, solo antes de
   pausa, solo al inicio) son configurables desde Ajustes → Muletillas y se
@@ -26,6 +34,10 @@ el texto se escribe donde esté tu cursor.
   `docs/CORRECCION-VOZ.md` (diseño) y `docs/SETUP.md` (configuración).
 - **Diccionario personal** (jerga, siglas, nombres propios) persistente.
 - **Rectificaciones habladas**: «no, quería decir X» corrige el último turno.
+- **Robustez de escritorio**: una segunda instancia no roba el atajo (guard
+  de instancia única con aviso), un micrófono que muere a mitad de grabación
+  corta el turno y transcribe lo oído, y un modelo de voz truncado se
+  re-descarga solo.
 
 ## Requisitos
 
@@ -159,31 +171,39 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 234 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 261 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 ```
 
 ## Estructura
 
 | Fichero | Contenido |
 |---|---|
-| `src/main.rs` | entrada Iced |
-| `src/app.rs` | UI + flujo de dictado + routing del corrector IA + ciclo de vida del server |
+| `src/main.rs` | entrada Iced + guard de instancia única |
+| `src/app.rs` | UI + flujo de dictado + nota editable + routing del corrector IA + ciclo de vida del server |
 | `src/domain/*.rs` | lógica pura (limpieza fija, corrección, diccionario) |
 | `src/domain/corrective.rs` | clasificadores (cross-turn e in-turn) + diff — sin I/O |
 | `src/llm.rs` | cliente LLM OpenAI-compatible (ureq), prompts, guard anti-truncación, server nativo |
 | `src/audio.rs` | captura de micrófono (cpal) |
-| `src/transcribe.rs` | modelos + whisper.cpp |
+| `src/transcribe.rs` | modelos + whisper.cpp + descarga robusta |
 | `src/inject.rs` | escritura en app activa |
 | `src/hotkey.rs` | atajo global |
+| `src/single_instance.rs` | guard de instancia única (mutex de Windows) |
 | `src/config.rs` | configuración persistente + Credential Manager |
+| `src/theme.rs` | tokens de diseño + contraste WCAG medido |
+| `src/bubble.rs` · `src/tray.rs` · `src/fonts.rs` · `src/log.rs` | burbuja flotante, bandeja, fuente emoji, log a archivo |
 | `docs/CORRECCION-VOZ.md` | especificación y diseño final del corrector IA |
 | `docs/GUIA-USUARIO.md` | guía de usuario: dictar y corregir hablando |
+| `docs/ARQUITECTURA.md` | recorrido del código para alguien que nunca ha tocado Rust |
 | `docs/SETUP.md` | cómo configurar Local / Custom / Cloud |
 | `docs/EMPAQUETADO.md` · `docs/ROADMAP.md` · `docs/UI-FUTURA.md` | empaquetado y hoja de ruta |
 
 ## Historial de versiones
 
 - **0.2.0** (rama `native-iced`): reescritura a escritorio nativo. Adiós web.
+- 0.2.0 → 10/09/2026: cierre del producto — robustez a prueba de fallos
+  (descarga, audio, inyección, instancia única), nota editable, contraste
+  AA medido, pie de confianza, descarga con MB y tiempo restante,
+  licencia MIT explícita y documentación de arquitectura.
 - 0.2.0 → 10/09/2026: corrección IA completa — server LLM nativo
   autogestionado (la app lo lanza y lo cierra), ciclo de vida de memoria con el
   toggle, guard anti-truncación, proveedores Local/Custom/Cloud con API key en
