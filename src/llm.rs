@@ -44,6 +44,67 @@ impl Default for LlmConfig {
     }
 }
 
+/// Raíz de API de un endpoint OpenAI-compatible: sin espacios, sin barra
+/// final y con los sufijos de versión `/v1` REPETIDOS colapsados a uno
+/// solo.
+///
+/// ÚNICA barrera de normalización de URLs del corrector (t_75732630). El
+/// bug que la motiva es `/v1/v1/models` → 404 → `server_alive` = false →
+/// `wait_for_server` devolvía «server LLM sin respuesta tras 0 s» aunque
+/// el server respondiera en 2 ms. La base puede venir con `/v1`, sin él o
+/// con `/v1/v1` (config editada a mano, defaults antiguos, o un endpoint
+/// pegado dos veces): TODAS deben acabar en una URL válida. Ojo, el `/v1`
+/// NO se quita cuando aparece una sola vez — es el prefijo de versión que
+/// llama.cpp, OpenAI y Groq esperan (`/v1/models`,
+/// `/v1/chat/completions`): quitarlo rompería el proveedor Cloud.
+pub fn api_base(base_url: &str) -> String {
+    let mut base = base_url.trim().trim_end_matches('/');
+    // Colapsa `/v1/v1`, `/v1/v1/v1`… a un único `/v1`.
+    while let Some(rest) = base.strip_suffix("/v1") {
+        let rest = rest.trim_end_matches('/');
+        if !rest.ends_with("/v1") {
+            break;
+        }
+        base = rest;
+    }
+    base.to_string()
+}
+
+/// URL completa de un endpoint OpenAI-compatible (`models`,
+/// `chat/completions`…) construida sobre `api_base`. `path` puede venir
+/// con barra inicial o sin ella.
+pub fn api_url(base_url: &str, path: &str) -> String {
+    format!("{}/{}", api_base(base_url), path.trim_start_matches('/'))
+}
+
+/// Nombre del ÚNICO ejecutable que la app acepta como server LLM.
+pub const SERVER_EXE_NAME: &str = "llama-server.exe";
+
+/// ¿`path` es un `llama-server.exe`? La app SOLO arranca ese binario
+/// (regla de producto t_75732630): el server LLM es un proceso NATIVO de
+/// Windows —nunca `wsl.exe`— y con el nombre exacto para que
+/// `terminate_server_pid` pueda verificarlo por imagen al salir. El
+/// wrapper histórico `llama.exe` no casaba con esa validación → el
+/// proceso lanzado por la app quedaba huérfano en VRAM.
+pub fn is_server_exe(path: &std::path::Path) -> bool {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| name.eq_ignore_ascii_case(SERVER_EXE_NAME))
+        .unwrap_or(false)
+}
+
+/// Corrige una ruta de server LLM que no es `llama-server.exe` (p. ej. el
+/// wrapper `llama.exe` de la instalación histórica): si en el MISMO
+/// directorio existe `llama-server.exe`, devuelve esa ruta; si no, `None`
+/// (el caller cae a la autodetección por rutas comunes).
+pub fn sanitize_server_exe(path: &std::path::Path) -> Option<std::path::PathBuf> {
+    if is_server_exe(path) {
+        return Some(path.to_path_buf());
+    }
+    let sibling = path.parent()?.join(SERVER_EXE_NAME);
+    sibling.is_file().then_some(sibling)
+}
+
 /// Prompt del contrato (§3.2): el modelo devuelve SOLO un JSON con
 /// `{find, replace}` sobre el texto actual. Si no localiza nada, vacío.
 const SYSTEM_PROMPT: &str = r#"Eres el corrector de un dictado por voz en español. Se te da:
@@ -118,7 +179,7 @@ Ejemplos:
 /// según la `instruction` hablada después. Bloquea: llamarlo en un hilo
 /// (app.rs lo lanza con `std::thread::spawn` + canal mpsc).
 pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff, String> {
-    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    let url = api_url(&cfg.base_url, "chat/completions");
     // max_tokens holgado (256): el contrato es un JSON corto, pero dejar
     // margen evita truncamientos cuando el endpoint mete prefijos o el
     // sistema añade tokens de control. El bug del Qwen3.5 reasoning era
@@ -206,7 +267,7 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
 /// Bloquea: se llama desde un hilo (app.rs lo lanza con
 /// `std::thread::spawn` + canal mpsc, mismo patrón que `correct`).
 pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
-    let url = format!("{}/chat/completions", cfg.base_url.trim_end_matches('/'));
+    let url = api_url(&cfg.base_url, "chat/completions");
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [
@@ -571,7 +632,7 @@ pub fn server_alive(base_url: &str) -> bool {
 /// y llama.cpp la ignora si llega, así que es seguro mandarla siempre que
 /// el usuario la haya configurado.
 pub fn server_alive_auth(base_url: &str, api_key: Option<&str>) -> bool {
-    let url = format!("{}/models", base_url.trim_end_matches('/'));
+    let url = api_url(base_url, "models");
     let started = std::time::Instant::now();
     let mut request = ureq::get(&url).timeout(Duration::from_secs(2));
     if let Some(key) = api_key.filter(|k| !k.is_empty()) {
@@ -623,10 +684,14 @@ pub fn port_from_base_url(base_url: &str) -> u16 {
 
 /// Lanza el servidor LLM local como proceso NATIVO de Windows. El binario
 /// es `llama-server.exe` (D:\LlamaCPP, o la ruta configurada en Ajustes):
-/// build CUDA 13 con cublas64_13.dll junto al exe. Descartado el intento
-/// previo de lanzarlo vía `wsl.exe` (server ELF de WSL): un server WSL
-/// lanzado con la app queda huérfano al salir (bug t_9fbc886f) y atar el
-/// ciclo de vida de un server de escritorio a WSL es frágil.
+/// build Clang 20/CUDA 13 con cublas64_13.dll junto al exe.
+///
+/// REGLA DE PRODUCTO (t_75732630): el server LLM se arranca SIEMPRE con el
+/// binario NATIVO de Windows, NUNCA vía `wsl.exe`. Un server WSL lanzado
+/// con la app queda huérfano al salir (bug t_9fbc886f), no es matable por
+/// nombre de imagen y atar el ciclo de vida de un server de escritorio a
+/// WSL es frágil. Este es el ÚNICO camino de arranque: cualquier otra ruta
+/// (WSL, wrapper `llama.exe`) se rechaza aquí.
 ///
 /// Detalles críticos del spawn (verificados con el binario real):
 /// - `current_dir` = directorio del exe: el binario es un stub que carga
@@ -648,6 +713,13 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+    if !is_server_exe(exe) {
+        return Err(format!(
+            "el server LLM debe ser {SERVER_EXE_NAME} (arranque NATIVO de Windows, \
+             nunca wsl.exe ni un wrapper): {}",
+            exe.display()
+        ));
+    }
     if !exe.is_file() {
         return Err(format!(
             "no existe el ejecutable del server LLM: {}",
@@ -835,13 +907,34 @@ pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::Pat
     if let Some(explicit) = cfg.llama_server_path() {
         let p = PathBuf::from(explicit);
         if p.is_file() {
-            return Some(p);
+            // Saneado (t_75732630): la ruta configurada DEBE ser
+            // `llama-server.exe`. Si apunta a un wrapper (p. ej.
+            // `llama.exe`) usamos el `llama-server.exe` hermano — así el
+            // proceso lanzado es matable por nombre al salir.
+            if let Some(fixed) = sanitize_server_exe(&p) {
+                if fixed != p {
+                    crate::log!(
+                        "llm",
+                        "ruta de server LLM «{}» no es {SERVER_EXE_NAME}: se usa {}",
+                        p.display(),
+                        fixed.display()
+                    );
+                }
+                return Some(fixed);
+            }
+            crate::log!(
+                "llm",
+                "ruta de server LLM configurada ({}) no es {SERVER_EXE_NAME} ni hay \
+                 {SERVER_EXE_NAME} junto a ella; se ignora y se autodetecta",
+                p.display()
+            );
+        } else {
+            crate::log!(
+                "llm",
+                "ruta de server LLM configurada no existe ({}); buscando por defecto",
+                p.display()
+            );
         }
-        crate::log!(
-            "llm",
-            "ruta de server LLM configurada no existe ({}); buscando por defecto",
-            p.display()
-        );
     }
     resolve_server_path_with(&default_server_roots())
 }
@@ -1723,5 +1816,127 @@ mod tests {
         // PID 0 (System Idle Process) jamás se toca: el guard corta antes de
         // OpenProcess, por lo que tampoco puede matar un proceso ajeno.
         assert!(!terminate_server_pid(0));
+    }
+
+    // ── Normalización de URL (t_75732630) ─────────────────────────────────
+    //
+    // Bug real: config.json traía `http://127.0.0.1:8081/v1` y el código
+    // concatenaba `/models` a pelo → `http://127.0.0.1:8081/v1/v1/models`
+    // → 404 → `server_alive` = false → «server LLM sin respuesta tras 0 s»
+    // aunque el server respondiera en 2 ms. La normalización vive SOLO en
+    // `api_base`/`api_url`; estos tests fijan el contrato.
+
+    #[test]
+    fn api_base_colapsa_el_v1_repetido_y_quita_la_barra_final() {
+        // Un `/v1` SOLO se conserva (es el prefijo de versión estándar);
+        // los repetidos se colapsan a uno.
+        for (entrada, esperado) in [
+            ("http://127.0.0.1:8081", "http://127.0.0.1:8081"),
+            ("http://127.0.0.1:8081/", "http://127.0.0.1:8081"),
+            ("http://127.0.0.1:8081/v1", "http://127.0.0.1:8081/v1"),
+            ("http://127.0.0.1:8081/v1/", "http://127.0.0.1:8081/v1"),
+            ("http://127.0.0.1:8081/v1/v1", "http://127.0.0.1:8081/v1"),
+            ("http://127.0.0.1:8081/v1/v1/", "http://127.0.0.1:8081/v1"),
+            ("http://127.0.0.1:8081/v1/v1/v1", "http://127.0.0.1:8081/v1"),
+            ("  http://127.0.0.1:8081/v1  ", "http://127.0.0.1:8081/v1"),
+        ] {
+            assert_eq!(api_base(entrada), esperado, "base «{entrada}»");
+        }
+    }
+
+    #[test]
+    fn api_url_es_la_misma_con_base_con_v1_duplicado() {
+        // El caso del bug: una base con `/v1/v1` debe acabar en la MISMA
+        // URL que la base con un solo `/v1` (la que un llama.cpp/OpenAI
+        // sano sirve), nunca en `/v1/v1/models` (404).
+        for base in [
+            "http://127.0.0.1:8081/v1",
+            "http://127.0.0.1:8081/v1/v1",
+            "http://127.0.0.1:8081/v1/",
+            "http://127.0.0.1:8081/v1/v1/",
+        ] {
+            assert_eq!(
+                api_url(base, "models"),
+                "http://127.0.0.1:8081/v1/models",
+                "GET /models del health check con base «{base}»"
+            );
+            assert_eq!(
+                api_url(base, "chat/completions"),
+                "http://127.0.0.1:8081/v1/chat/completions",
+                "POST /chat/completions del corrector con base «{base}»"
+            );
+        }
+        // Compat hacia atrás: endpoints remotos que ya traen /v1 (OpenAI,
+        // Groq) siguen funcionando — el /v1 simple NO se elimina.
+        assert_eq!(
+            api_url("https://api.openai.com/v1", "models"),
+            "https://api.openai.com/v1/models"
+        );
+        assert_eq!(
+            api_url("https://api.groq.com/openai/v1", "chat/completions"),
+            "https://api.groq.com/openai/v1/chat/completions"
+        );
+        // Base sin /v1 (default histórico, servida por llama.cpp en
+        // /models — verificado en el log real: «respondiendo en
+        // http://127.0.0.1:8081/v1/models (2 ms)» con base sin sufijo).
+        assert_eq!(api_url("http://127.0.0.1:8081", "models"), "http://127.0.0.1:8081/models");
+        // Un path con barra inicial no duplica la barra.
+        assert_eq!(
+            api_url("http://127.0.0.1:8081/v1", "/models"),
+            "http://127.0.0.1:8081/v1/models"
+        );
+        // Un path de versión pegado a mano tampoco rompe: `/v1` + `/v1/models`
+        // se colapsa igual.
+        assert_eq!(api_base("http://127.0.0.1:8081/v1" ), "http://127.0.0.1:8081/v1");
+    }
+
+    #[test]
+    fn server_alive_y_wait_for_server_usan_la_url_normalizada() {
+        // Contrato de integración sin red: con la base del bug
+        // (`/v1`), el único puerto que se consulta es el normalizado. Un
+        // puerto cerrado responde «no vivo» sin esperar el timeout largo.
+        assert!(!server_alive("http://127.0.0.1:1/v1"));
+        assert!(!server_alive_auth("http://127.0.0.1:1/v1/v1", Some("clave")));
+    }
+
+    // ── Saneado del ejecutable del server (t_75732630) ────────────────────
+
+    #[test]
+    fn is_server_exe_solo_acepta_llama_server_exe() {
+        use std::path::Path;
+        assert!(is_server_exe(Path::new(r"D:\LlamaCPP\llama-server.exe")));
+        assert!(is_server_exe(Path::new(r"D:\LlamaCPP\LLAMA-SERVER.EXE")));
+        // El wrapper histórico y el server ELF de WSL NO son válidos: el
+        // proceso lanzado debe ser matable por nombre de imagen al salir.
+        assert!(!is_server_exe(Path::new(r"D:\LlamaCPP\llama.exe")));
+        assert!(!is_server_exe(Path::new("/usr/bin/wsl.exe")));
+        assert!(!is_server_exe(Path::new(r"D:\LlamaCPP\llama-server")));
+        assert!(!is_server_exe(Path::new("")));
+    }
+
+    #[test]
+    fn sanitize_server_exe_cambia_el_wrapper_por_el_hermano_real() {
+        let dir = std::env::temp_dir().join(format!("whispr-sanitize-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wrapper = dir.join("llama.exe");
+        let real = dir.join("llama-server.exe");
+        std::fs::write(&wrapper, b"stub").unwrap();
+        std::fs::write(&real, b"stub").unwrap();
+
+        // `llama.exe` → `llama-server.exe` hermano (el caso de config.json).
+        assert_eq!(sanitize_server_exe(&wrapper).as_deref(), Some(real.as_path()));
+        // Un nombre ya válido se devuelve tal cual.
+        assert_eq!(sanitize_server_exe(&real).as_deref(), Some(real.as_path()));
+
+        // Sin hermano `llama-server.exe` no hay ruta válida (el caller
+        // autodetecta por rutas comunes).
+        let otros = std::env::temp_dir().join(format!("whispr-sanitize-otro-{}", std::process::id()));
+        std::fs::create_dir_all(&otros).unwrap();
+        let solo_wrapper = otros.join("llama.exe");
+        std::fs::write(&solo_wrapper, b"stub").unwrap();
+        assert_eq!(sanitize_server_exe(&solo_wrapper), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&otros);
     }
 }

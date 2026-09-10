@@ -404,7 +404,14 @@ pub struct WhisprApp {
 
 impl WhisprApp {
     pub fn new() -> (Self, Task<Message>) {
-        let config = Config::load();
+        // Config persistente. Antes de nada, saneado de la ruta del server
+        // LLM (t_75732630): una ruta legacy al wrapper `llama.exe` —o a un
+        // fichero inexistente— se corrige al `llama-server.exe` nativo y se
+        // PERSISTE. Con el wrapper, el proceso lanzado por la app no casaba
+        // con la validación por nombre de imagen al salir y quedaba huérfano
+        // en VRAM.
+        let mut config = Config::load();
+        let _ = config.heal_llama_server_path();
         let (hotkey, hotkey_rx) = match HotkeyManager::register(&config.shortcut()) {
             Ok(m) => {
                 let rx = m.listen();
@@ -1665,13 +1672,42 @@ impl WhisprApp {
             }
             Message::LlmServerPathPicked(path) => {
                 if let Some(p) = path {
-                    self.config.llama_server_path = Some(p);
-                    self.save_config();
-                    crate::log!(
-                        "llm",
-                        "server LLM configurado: {}",
-                        self.config.llama_server_path.as_deref().unwrap_or("")
-                    );
+                    // Solo `llama-server.exe` es un server válido
+                    // (t_75732630). Si el usuario elige el wrapper
+                    // `llama.exe` y junto a él vive el `llama-server.exe`
+                    // real, se guarda el real; si no hay ninguno válido se
+                    // rechaza y se conserva la config previa (la app sigue
+                    // autodetectando en el arranque).
+                    let elegido = std::path::PathBuf::from(&p);
+                    match crate::llm::sanitize_server_exe(&elegido) {
+                        Some(valid) => {
+                            if valid != elegido {
+                                crate::log!(
+                                    "llm",
+                                    "«{}» no es llama-server.exe: se guarda el server nativo {}",
+                                    elegido.display(),
+                                    valid.display()
+                                );
+                            }
+                            self.config.llama_server_path =
+                                Some(valid.to_string_lossy().into_owned());
+                            self.save_config();
+                            crate::log!(
+                                "llm",
+                                "server LLM configurado: {}",
+                                self.config.llama_server_path.as_deref().unwrap_or("")
+                            );
+                        }
+                        None => {
+                            crate::log!(
+                                "llm",
+                                "ruta rechazada: «{}» no es llama-server.exe (el server \
+                                 LLM es un proceso nativo de Windows, nunca un wrapper \
+                                 ni wsl.exe); se conserva la ruta anterior",
+                                elegido.display()
+                            );
+                        }
+                    }
                 }
                 Task::none()
             }

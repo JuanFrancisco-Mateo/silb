@@ -619,6 +619,39 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
+    /// Sanea y PERSISTE la ruta del server LLM (t_75732630). La app solo
+    /// arranca el `llama-server.exe` NATIVO de Windows, así que una ruta
+    /// que apunte a un wrapper (`llama.exe`, el valor que traía config.json)
+    /// o a un fichero inexistente deja de ser válida: se corrige a la mejor
+    /// ruta utilizable —el `llama-server.exe` hermano o la autodetección—
+    /// y se escribe en config.json. Sin esta corrección el proceso lanzado
+    /// no casaba con la validación por nombre de imagen de
+    /// `terminate_server_pid` y quedaba huérfano en VRAM al salir.
+    ///
+    /// Devuelve la ruta válida resultante (`None` si no hay server
+    /// instalado: la corrección IA se desactiva con aviso, el dictado sigue).
+    pub fn heal_llama_server_path(&mut self) -> Option<PathBuf> {
+        let resolved = crate::llm::resolve_server_path(self)?;
+        let healthy = self
+            .llama_server_path()
+            .map(|actual| {
+                let p = std::path::Path::new(actual);
+                p.is_file() && crate::llm::is_server_exe(p)
+            })
+            .unwrap_or(false);
+        if !healthy {
+            crate::log!(
+                "config",
+                "ruta del server LLM saneada: «{}» → {}",
+                self.llama_server_path().unwrap_or("(autodetección)"),
+                resolved.display()
+            );
+            self.llama_server_path = Some(resolved.to_string_lossy().into_owned());
+            self.save();
+        }
+        Some(resolved)
+    }
+
     /// Umbral del clasificador (0..=100). Default 50 (= conducta previa:
     /// todo lo que pasa la regla de los dos niveles va al LLM). Subir = más
     /// conservador (precision > recall, spec §2). El clasificador mapea el
