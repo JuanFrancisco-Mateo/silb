@@ -751,6 +751,33 @@ impl WhisprApp {
             self.save_config();
             return Task::none();
         }
+        // Guard anti-truncación (t_6b9348de): el LLM local (Qwen3.5-0.8B)
+        // responde a los turnos largos sin corrección con UN RESUMEN
+        // («estamos debulando la aplicación…» → «no se ha levantado ningún
+        // servidor», log 01:34:54). El prompt no se endurece porque toda
+        // variante «no resumas» rompe alguna auto-corrección (verificado
+        // en runtime); este guard es la capa OBLIGATORIA: si la respuesta
+        // queda desproporcionadamente corta respecto al input sin
+        // auto-corrección inequívoca que lo justifique, se descarta y se
+        // inyecta el input ORIGINAL — nunca se pierde ni se recorta el
+        // dictado (ver `guard_anti_truncacion`).
+        if crate::llm::guard_anti_truncacion(&input, clean_text) != clean_text {
+            crate::log!(
+                "llm",
+                "in-turn: respuesta recortada respecto al input (guard anti-truncación), fallback al input bruto: input={:?} output={:?}",
+                input,
+                clean_text
+            );
+            self.last_correction = Some(
+                "La corrección IA devolvió un resumen del turno; se mantiene el texto original"
+                    .to_string(),
+            );
+            self.inject_or_store_raw(&input, force_inject);
+            self.status = Status::Idle;
+            self.arm_bubble_hide_timeout();
+            self.save_config();
+            return Task::none();
+        }
         if still_has_meta {
             crate::log!(
                 "llm",
