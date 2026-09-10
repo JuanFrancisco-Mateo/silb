@@ -31,6 +31,8 @@ use crate::theme::{self, UiPalette};
 use crate::transcribe::Model;
 
 #[derive(Debug, Clone, PartialEq)]
+/// Estado global de la app tal como lo lee la UI (hero, burbuja, bandeja).
+/// Un solo enum evita combinaciones imposibles («grabando y descargando»).
 pub enum Status {
     Idle,
     Recording,
@@ -161,6 +163,10 @@ struct PendingDiff {
     force_inject: bool,
 }
 
+/// Todos los eventos que la UI sabe procesar: pulsaciones de botones,
+/// resultados de hilos (transcripción, corrección), eventos del sistema
+/// (atajo, bandeja, ventanas) y el tick del Poll. Es la «bandeja de
+/// entrada» única del bucle de eventos de Iced.
 #[derive(Debug, Clone)]
 pub enum Message {
     Toggle,
@@ -332,6 +338,9 @@ pub enum Message {
     RetryStartup,
 }
 
+/// La aplicación completa: configuración, estado de dictado, nota editable
+/// y los canales de los hilos de trabajo. Es la única estructura con
+/// acceso a la UI; todo lo demás son módulos sin estado.
 pub struct WhisprApp {
     config: Config,
     status: Status,
@@ -460,6 +469,10 @@ pub struct WhisprApp {
 }
 
 impl WhisprApp {
+    /// Construye la app: carga config, registra atajo/bandeja, abre la
+    /// burbuja y lanza el hilo de arranque (descarga + preroll de whisper,
+    /// server LLM si aplica). Devuelve el estado inicial y la primera
+    /// `Task` de Iced (abrir la burbuja + cargar la fuente emoji).
     pub fn new() -> (Self, Task<Message>) {
         // Config persistente. Antes de nada, saneado de la ruta del server
         // LLM (t_75732630): una ruta legacy al wrapper `llama.exe` —o a un
@@ -1386,6 +1399,9 @@ impl WhisprApp {
 }
 
 impl WhisprApp {
+    /// El «reductor» de Iced: recibe cada `Message` y muta el estado.
+    /// Devuelve una `Task` cuando hay que pedirle algo al runtime (abrir
+    /// ventanas, salir) o `Task::none()` si el cambio es solo de estado.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::Toggle => {
@@ -2825,6 +2841,9 @@ impl WhisprApp {
         ])
     }
 
+    /// Suscripciones de Iced: el Poll de 100 ms (latido que drena canales
+    /// de hilos y relojes efímeros), cierres/aperturas de ventana y los
+    /// eventos de ratón de la burbuja.
     pub fn subscription(&self) -> Subscription<Message> {
         let poll = iced::time::every(Duration::from_millis(100)).map(|_| Message::Poll);
         let closes = iced::window::close_requests().map(Message::WindowCloseRequested);
@@ -2835,10 +2854,16 @@ impl WhisprApp {
         Subscription::batch([poll, closes, opened, bubble])
     }
 
+    /// Tema iced según el modo resuelto (dark por defecto, auto sigue al
+    /// sistema; el Poll lo refresca cada 5 s).
     pub fn theme(&self) -> Theme {
         theme::custom(self.config.resolved_dark(self.system_dark))
     }
 
+    /// Dibuja la ventana principal: pantalla de carga hasta que el arranque
+    /// termine; después, header + chip de corrección IA + hero del
+    /// micrófono + nota editable + acciones + feedback + pie de confianza
+    /// (o el panel de Ajustes en la zona central).
     pub fn view(&self) -> Element<'_, Message> {
         let t = theme::tokens(&self.theme());
         // Tamaño de fuente global resuelto (Ajustes → Apariencia): TODOS los

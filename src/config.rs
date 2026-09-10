@@ -72,6 +72,7 @@ impl ThemeMode {
         }
     }
 
+    /// Etiqueta en español para el `pick_list` de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             ThemeMode::Auto => "Auto",
@@ -110,6 +111,7 @@ pub enum BubbleStyle {
 }
 
 impl BubbleStyle {
+    /// Etiqueta en español para el `pick_list` de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             BubbleStyle::Solid => "Sólida",
@@ -137,6 +139,7 @@ pub enum FontSize {
 }
 
 impl FontSize {
+    /// Factor multiplicador sobre los tamaños base de `theme.rs`.
     pub fn factor(self) -> f32 {
         match self {
             FontSize::Small => 0.85,
@@ -146,6 +149,7 @@ impl FontSize {
         }
     }
 
+    /// Etiqueta en español para el `pick_list` de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             FontSize::Small => "Pequeña",
@@ -174,6 +178,7 @@ pub enum BubbleSize {
 }
 
 impl BubbleSize {
+    /// Diámetro del círculo en px lógicos.
     pub fn px(self) -> f32 {
         match self {
             BubbleSize::Small => 48.0,
@@ -182,6 +187,7 @@ impl BubbleSize {
         }
     }
 
+    /// Etiqueta en español para el `pick_list` de Ajustes (con su tamaño).
     pub fn label(self) -> String {
         format!("{} px", self.px() as u16)
     }
@@ -205,6 +211,7 @@ pub enum BubbleCorner {
 }
 
 impl BubbleCorner {
+    /// Etiqueta en español para el `pick_list` de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             BubbleCorner::TopRight => "Arriba derecha",
@@ -238,6 +245,8 @@ pub enum BubbleHideTimeout {
 }
 
 impl BubbleHideTimeout {
+    /// Segundos tras el último turno antes de ocultar la burbuja; `None`
+    /// para «Nunca».
     pub fn secs(self) -> Option<u64> {
         match self {
             BubbleHideTimeout::Never => None,
@@ -502,6 +511,9 @@ impl Config {
         serde_json::from_str(raw).unwrap_or_default()
     }
 
+    /// Carga la config de `%APPDATA%\whispr-open\config.json` con degradación
+    /// elegante: fichero ausente, vacío o corrupto → defaults (nunca rompe
+    /// el arranque). La API key se lee del Credential Manager de Windows.
     pub fn load() -> Self {
         let path = config_path();
         let mut cfg: Self = match std::fs::read_to_string(&path) {
@@ -518,6 +530,10 @@ impl Config {
         cfg
     }
 
+    /// Persiste la config a `config.json` (creando el directorio si falta)
+    /// y la API key al Credential Manager (o la borra si el usuario la
+    /// vació). Los fallos de escritura se ignoran a propósito: perder la
+    /// config no debe tumbar la sesión de dictado.
     pub fn save(&self) {
         save_api_key_secret(self.llm_api_key.as_deref());
         let path = config_path();
@@ -529,6 +545,8 @@ impl Config {
         }
     }
 
+    /// Modelo whisper efectivo: el de config si es válido, o Small (base
+    /// de mejor calidad en español; la GPU lo corre en tiempo real).
     pub fn selected_model(&self) -> Model {
         match self.model.as_deref() {
             Some("tiny") => Model::Tiny,
@@ -588,6 +606,9 @@ impl Config {
             .unwrap_or(CorrectionProvider::Default)
     }
 
+    /// Configuración efectiva del corrector IA (`llm::LlmConfig`): defaults
+    /// por proveedor, overridables por los campos individuales de config
+    /// (endpoint, modelo, timeout).
     pub fn llm_settings(&self) -> crate::llm::LlmConfig {
         let provider = self.correction_provider();
         let (default_url, default_model, needs_key) = match provider {

@@ -5,7 +5,8 @@ y la especificación `docs/CORRECCION-VOZ.md`.
 
 Whispr Open es un dictado por voz local: hablas, la app transcribe y escribe
 el texto donde tengas el cursor. Además, **corrige lo que dices mientras
-dictas**: si te equivocas, lo arreglas hablando.
+dictas**: si te equivocas, lo arreglas hablando. Y si prefieres tocar el
+texto con el teclado, **la nota se puede editar a mano** antes de mandarla.
 
 ---
 
@@ -83,27 +84,57 @@ Si quieres decidir tú antes de aplicar: Ajustes → Corrección IA → «Confir
 antes de aplicar» (muestra «Aplicar / Descartar»). Hay «Deshacer ↩» de 1
 nivel por si una corrección se aplicó mal.
 
-## 4. Diccionario personal
+## 4. Corregir a mano (la nota es editable)
+
+El panel central de la ventana es un **editor de texto**: haz clic y corrige
+lo que quieras con el teclado, como en cualquier nota.
+
+- **Editar y seguir dictando no se pisan**: cada turno nuevo se añade al
+  final de lo que ya hayas corregido a mano.
+- **Copiar** confirma con un «✓ Copiado» breve en el propio botón. Si el
+  portapapeles falla, verás el error en el panel superior.
+- **Limpiar** pide confirmación («¿Borrar la nota? Sí / No») y el borrado
+  se puede deshacer con «↩ Deshacer borrado» durante el turno siguiente.
+- La corrección por voz («no, era X») sigue funcionando sobre lo último de
+  la nota, incluido lo que hayas editado a mano.
+
+Si «Autoinyectar» está desactivado, el texto queda en la ventana de Whispr y
+puedes usar «Escribir en app» o «Copiar».
+
+## 5. Diccionario personal
 
 Para jerga, siglas y nombres propios (nombres de la empresa, anglicismos…):
 Ajustes → Diccionario. Cada entrada es una palabra que Whisper no transcribe
 bien y que la app intenta respetar en el dictado.
 
-## 5. Si algo va mal
+## 6. Si algo va mal
 
 - **El texto no se inyecta en la app**: comprueba que «Autoinyectar» está
   activo y que la app destino tiene el foco. Si tienes un filtro por título de
-  ventana (`inject_window_filter`), el título debe contenerlo.
+  ventana (`inject_window_filter`), el título debe contenerlo. Si no había
+  NINGUNA ventana con el foco, el texto queda copiado en el portapapeles con
+  un aviso: pégalo tú donde quieras.
+- **El micrófono se desconecta a mitad de una nota**: la app corta el turno
+  sola, transcribe lo que oyó hasta ese momento y te avisa. Reconecta el
+  micro y sigue dictando: no hace falta reiniciar.
 - **Quieres ver qué ha decidido la app**: el log está en
   `%APPDATA%\whispr-open\whispr-open.log` (registra clasificación y enrutado de
   cada turno).
 - **La corrección consume memoria**: el toggle de Corrección IA apagado
   descarga el modelo LLM de la RAM/VRAM. Al salir de la app, el server LLM se
   cierra solo (no queda ningún `llama-server.exe` huérfano).
+- **Doble clic en el exe con la app ya abierta**: aparece un aviso («Ya hay
+  otra instancia…») y la segunda copia se cierra sola: el atajo global no se
+  duplica ni se roba.
 - **Informes de fallo útiles**: versión del binario, chip de estado, y el
   trozo del log del turno que falló.
 
-## 6. Referencias
+El pie de la ventana recuerda siempre dónde está tu voz: «Transcripción
+local · nada sale de tu PC». Si activas la corrección en la nube, el pie lo
+dice («la corrección IA usa la nube») — nunca te promete una privacidad que
+no estás usando.
+
+## 7. Referencias
 
 - Configuración de Local/Custom/Cloud: `docs/SETUP.md`.
 - Diseño del corrector: `docs/CORRECCION-VOZ.md`.
