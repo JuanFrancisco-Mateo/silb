@@ -79,6 +79,20 @@ Reglas:
 ///   5) Si NO hay corrección real, devolver el texto tal cual.
 ///
 /// Devuelve SOLO el texto final (sin JSON, sin fences, sin explicaciones).
+///
+/// REGLA DE PRESERVACIÓN (t_6b9348de): el modelo local es un 0.8B y
+/// responde a los turnos largos SIN corrección con un RESUMEN (evidencia
+/// del log 01:34:54: input de 73 palabras → output de 13). Se probaron 9
+/// variantes de prompt en runtime (server real, payload exacto) y NINGUNA
+/// consigue a la vez preservar los turnos largos y mantener las
+/// correcciones canónicas: todo refuerzo de "no resumas" rompe alguna
+/// auto-corrección («el cliente es Acme quiero decir Microsoft» devolvía
+/// «el cliente es Acme», perdiendo la corrección y engañando al guard por
+/// ratio). Por eso el prompt se mantiene TAL CUAL (correcciones fiables)
+/// y la anti-truncación es responsabilidad OBLIGATORIA del guard
+/// `guard_anti_truncacion` en `app.rs`: si el output queda <60% de las
+/// palabras sin auto-corrección inequívoca, se descarta y se inyecta el
+/// input original — nunca se pierde texto del dictado.
 const SYSTEM_PROMPT_IN_TURN: &str = r#"Eres el corrector de un dictado por voz en español. Recibes un turno completo dictado por el usuario.
 
 El usuario puede haberse corregido a sí mismo hablando ("auto-corrección"). Los marcadores típicos son: "digo X", "quiero decir X", "quise decir X", "mejor dicho X", "no X sino Y", "X en vez de Y", "X en lugar de Y", "dime X", "diga X".
@@ -179,8 +193,11 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
 /// Diferencias con `correct()`:
 /// - Prompt distinto (`SYSTEM_PROMPT_IN_TURN`): el modelo NO devuelve un
 ///   JSON `{find, replace}`, devuelve el texto final directo.
-/// - `max_tokens` mayor (512) porque devolvemos una frase entera, no un
-///   JSON corto.
+/// - `max_tokens` mayor (1024) porque devolvemos el turno COMPLETO
+///   corregido (un párrafo dictado puede superar 512 tokens de salida y
+///   un 0.8B que resuma el turno necesita margen; t_6b9348de subió el
+///   tope de 512 a 1024). El guard anti-truncación en `app.rs` es quien
+///   descarta los resúmenes, no el tope de tokens.
 /// - Sin parsing de JSON: solo se limpia de fences markdown y se hace
 ///   trim. Si el modelo mete comillas o fences, se eliminan; si mete
 ///   texto adicional, se descarta la respuesta y se devuelve un error
@@ -197,7 +214,7 @@ pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
             { "role": "user", "content": turn },
         ],
         "temperature": 0.0,
-        "max_tokens": 512,
+        "max_tokens": 1024,
         "chat_template_kwargs": { "enable_thinking": false },
     });
 
@@ -321,6 +338,89 @@ fn clean_redact_output(content: &str) -> String {
         s = chars.into_iter().collect();
     }
     s.trim().to_string()
+}
+
+/// Guard anti-truncación OBLIGATORIO del modo in-turn (t_6b9348de).
+///
+/// El corrector LLM local (Qwen3.5-0.8B) a veces devuelve un RESUMEN del
+/// turno en lugar del texto corregido (evidencia del log 01:34:54: input
+/// de 73 palabras → output de 13). El prompt (`SYSTEM_PROMPT_IN_TURN`) ya
+/// prohíbe resumir, pero un modelo pequeño no siempre obedece: esta es la
+/// red de seguridad final.
+///
+/// Heurística (nivel de palabras):
+/// - Si el output se queda por debajo del 60% de las palabras del input
+///   Y el turno no contiene un marcador INEQUÍVOCO de auto-corrección
+///   (`has_unambiguous_in_turn_marker`: «digo X», «quiero decir», «no X
+///   sino Y», «en vez de»…) que justifique el recorte (una corrección
+///   real elimina el fragmento corregido + la meta-lengua), se descarta
+///   el output y se devuelve EL INPUT ORIGINAL.
+/// - Con marcador inequívoco se admite recorte hasta el 30% de las
+///   palabras («no voy a las tres sino a las cuatro» → «voy a las
+///   cuatro» elimina >40% legítimamente). Por debajo del 30% incluso
+///   con marcador huele a resumen y también se descarta.
+///
+/// Nunca devuelve texto más corto que lo justificado y nunca bloquea el
+/// dictado: el peor caso es inyectar el input tal cual (con su
+/// meta-lengua), que es exactamente lo que el usuario dijo.
+pub fn guard_anti_truncacion(input: &str, output: &str) -> String {
+    let in_words = word_count(input);
+    if in_words == 0 {
+        // Input vacío: nada que proteger; devolvemos el output sin más.
+        return output.to_string();
+    }
+    let out_words = word_count(output);
+    let ratio = out_words as f64 / in_words as f64;
+    let justified = has_unambiguous_in_turn_marker(input) && ratio >= 0.3;
+    if ratio >= 0.6 || justified {
+        output.to_string()
+    } else {
+        input.to_string()
+    }
+}
+
+/// Detección ESTRICTA de marcador de auto-corrección para el guard.
+///
+/// A diferencia de `contains_in_turn_marker` (el clasificador de ruteo,
+/// PERMISIVO a propósito: «dime»/«diga» solo disparan una llamada barata
+/// al LLM), aquí permiso = permitir recortes de texto, y «dime si puedes
+/// revisarlo» — el caso real del bug t_6b9348de — es una petición, no una
+/// rectificación. Solo frases que NO admiten otra lectura que «corregir lo
+/// que acabo de decir» suben el piso del guard de 60% a 30% de palabras.
+fn has_unambiguous_in_turn_marker(text: &str) -> bool {
+    let t = text.to_lowercase();
+    // Frases inequívocas de auto-corrección hablada.
+    for phrase in [
+        "quiero decir",
+        "quise decir",
+        "quería decir",
+        "quería decirte",
+        "mejor dicho",
+        "en vez de",
+        "en lugar de",
+        "rectifico",
+        "corrijo",
+    ] {
+        if t.contains(phrase) {
+            return true;
+        }
+    }
+    // Palabras sueltas con límite de palabra («digo» no debe casar
+    // dentro de «indigo», «dicho» ni «diga»).
+    for word in ["digo", "sino"] {
+        if t.split(|c: char| !c.is_alphanumeric())
+            .any(|token| token == word)
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// Número de palabras de un texto (separador: cualquier whitespace).
+/// Es la unidad del guard anti-truncación: «El otro día» = 3 palabras.
+fn word_count(s: &str) -> usize {
+    s.split_whitespace().count()
 }
 
 /// Extrae el texto a parsear de la respuesta JSON del LLM. Preferentemente
@@ -1185,9 +1285,12 @@ mod tests {
     #[test]
     fn body_de_redact_lleva_system_in_turn_y_max_tokens_holgado() {
         // El body que enviamos al endpoint debe usar
-        // `SYSTEM_PROMPT_IN_TURN` y `max_tokens` mayor (512) que el
-        // modo cross-turn (256): devolvemos una frase completa, no un
-        // JSON corto. Tambien desactivamos el thinking igual que en
+        // `SYSTEM_PROMPT_IN_TURN` y `max_tokens` holgado (>=1024) porque
+        // devolvemos el turno COMPLETO, no un JSON corto. Subido de 512
+        // a 1024 en t_6b9348de: un párrafo dictado largo con su
+        // corrección cabe de sobra y el tope deja de ser un factor de
+        // truncación (el guard anti-truncación descarta los resúmenes,
+        // no el tope). Tambien desactivamos el thinking igual que en
         // `correct()` (mismo flag, mismo motivo, mismo fix Qwen3.5).
         let body = serde_json::json!({
             "model": "qwen",
@@ -1196,7 +1299,7 @@ mod tests {
                 { "role": "user", "content": "que calor en murcia digo cartagena" },
             ],
             "temperature": 0.0,
-            "max_tokens": 512,
+            "max_tokens": 1024,
             "chat_template_kwargs": { "enable_thinking": false },
         });
         assert_eq!(
@@ -1207,8 +1310,8 @@ mod tests {
             "el body debe llevar chat_template_kwargs.enable_thinking=false"
         );
         assert!(
-            body["max_tokens"].as_u64().unwrap() >= 512,
-            "max_tokens debe ser holgado (>=512) para devolver una frase completa"
+            body["max_tokens"].as_u64().unwrap() >= 1024,
+            "max_tokens debe ser holgado (>=1024) para devolver el turno completo"
         );
         // El system prompt es el de in-turn (contiene marcadores típicos
         // de auto-corrección, no el contrato JSON cross-turn).
@@ -1272,6 +1375,119 @@ mod tests {
         // La limpieza ya se hace en `clean_redact_output`; aquí
         // verificamos que el extractor entrega el texto íntegro.
         assert!(extracted.contains("que calor en cartagena"));
+    }
+
+    // ── Guard anti-truncación (t_6b9348de) ────────────────────────────────
+    //
+    // El corrector LLM local (Qwen3.5-0.8B) a veces devuelve UN RESUMEN
+    // del turno en lugar del texto corregido (evidencia del log de Juanfri
+    // 01:34:54: input de 73 palabras → output de 13). El guard descarta
+    // respuestas desproporcionadamente cortas y devuelve el input ORIGINAL:
+    // nunca se pierde ni se recorta el dictado.
+
+    const LOG_LARGO_INPUT: &str = "estamos debulando la aplicación está del whisper y parece que hemos dado que sigue el clavo pero no está funcionando lo del LLM me pone listo pero aquí no se ha levantado ningún servidor ni ha hecho una pantalla de carga como se supone que tiene que hacer y no sé dime si pueden investigar algo y porque antes he dicho dime esto y no lo odro y se ha rallado un montón";
+    const LOG_LARGO_OUTPUT: &str = "no se ha levantado ningún servidor ni ha hecho una pantalla de carga";
+
+    #[test]
+    fn guard_descarta_el_resumen_y_preserva_el_dictado_largo() {
+        // Caso REAL del log (01:34:54): 73 palabras de input → 13 de
+        // output. Sin auto-corrección que justifique el recorte, el guard
+        // devuelve el input íntegro. El assert clave es la LONGITUD
+        // PRESERVADA (requisito 1 y 2 de t_6b9348de).
+        let guarded = guard_anti_truncacion(LOG_LARGO_INPUT, LOG_LARGO_OUTPUT);
+        assert_eq!(guarded, LOG_LARGO_INPUT, "el resumen debe descartarse");
+        assert_eq!(
+            word_count(&guarded),
+            word_count(LOG_LARGO_INPUT),
+            "la longitud del dictado debe preservarse (nunca truncar)"
+        );
+        assert!(
+            word_count(LOG_LARGO_INPUT) > word_count(LOG_LARGO_OUTPUT) * 3,
+            "sanity: el caso del log debe ser un recorte severo"
+        );
+    }
+
+    #[test]
+    fn guard_respeta_la_correccion_corta_canonica() {
+        // El caso corto canónico (requisito 4): el LLM devuelve el texto
+        // corregido sin meta-lengua; 11/13 palabras (>=60%) → el guard NO
+        // debe descartarlo.
+        let input = "El otro día iba por Murcia, digo Cartagena, y me encontré un payo.";
+        let output = "El otro día iba por Murcia, y me encontré un payo.";
+        assert_eq!(
+            guard_anti_truncacion(input, output),
+            output,
+            "la corrección legítima debe pasar el guard"
+        );
+    }
+
+    #[test]
+    fn guard_admite_recorte_justificado_con_marcador() {
+        // «no X sino Y» elimina el fragmento corregido + la meta-lengua:
+        // 4/9 palabras (<60%) pero hay marcador de auto-corrección → el
+        // recorte está justificado y se admite.
+        let input = "no voy a las tres sino a las cuatro";
+        let output = "voy a las cuatro";
+        assert_eq!(
+            guard_anti_truncacion(input, output),
+            output,
+            "auto-corrección con marcador: el recorte es legítimo"
+        );
+    }
+
+    #[test]
+    fn guard_descarta_recorte_sin_marcador_aunque_no_sea_extremo() {
+        // Recorte del 40% sin ningún marcador correctivo: no hay
+        // explicación legítima para quitar más de la mitad de las
+        // palabras → se descarta y se devuelve el input original.
+        let input = "he estado revisando el presupuesto y todo cuadra perfectamente";
+        let recorte = "revisando el presupuesto";
+        assert_eq!(
+            guard_anti_truncacion(input, recorte),
+            input,
+            "sin marcador, un recorte al 30% huele a resumen y se descarta"
+        );
+    }
+
+    #[test]
+    fn guard_descarta_incluso_con_marcador_si_el_recorte_es_extremo() {
+        // Con marcador se admite recorte hasta el 30% de las palabras;
+        // por debajo (un fragmento suelto) huele a resumen y se descarta
+        // igualmente — el marcador no es un cheque en blanco.
+        let input = "la reunión es el jueves digo el viernes";
+        let fragmento = "el viernes";
+        assert_eq!(
+            guard_anti_truncacion(input, fragmento),
+            input,
+            "2/8 palabras (<30%) incluso con marcador se descarta"
+        );
+    }
+
+    #[test]
+    fn guard_nunca_devuelve_vacio_ni_se_rompe_con_input_vacio() {
+        // Output vacío → el input original (nunca perder el dictado).
+        let input = "el dictado completo de varias palabras";
+        assert_eq!(guard_anti_truncacion(input, ""), input);
+        // Input vacío → no hay nada que proteger: devuelve el output tal
+        // cual sin pánico (división por cero evitada).
+        assert_eq!(guard_anti_truncacion("", ""), "");
+        assert_eq!(guard_anti_truncacion("", "algo"), "algo");
+    }
+
+    #[test]
+    fn guard_pasa_output_igual_al_input() {
+        // Sin cambios (el LLM confirma el turno) → output == input, el
+        // ratio es 1.0 y el guard es no-op.
+        let input = "la reunión es el jueves a las cuatro";
+        assert_eq!(guard_anti_truncacion(input, input), input);
+    }
+
+    #[test]
+    fn word_count_cuenta_palabras_simples_y_compuestas() {
+        assert_eq!(word_count("El otro día"), 3);
+        assert_eq!(word_count(""), 0);
+        assert_eq!(word_count("   "), 0);
+        assert_eq!(word_count("a  b \t c"), 3);
     }
 
     #[test]
