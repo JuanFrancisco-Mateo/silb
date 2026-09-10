@@ -265,8 +265,17 @@ impl std::fmt::Display for BubbleHideTimeout {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+// PartialEq para los tests de degradación elegante (corrupta/vacía →
+// defaults comparables por valor).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Config {
+    /// `#[serde(default)]` en TODOS los campos (incluida la lista): un
+    /// config.json sin la clave `dictionary` (versiones antiguas, edición a
+    /// mano, escritura parcial) no debe tirar a la basera el resto de
+    /// ajustes del usuario — sin esto, el parse entero fallaba y TODO caía
+    /// a defaults (contradecía la promesa del README de ignorar solo lo
+    /// ausente). Requisito de robustez R2.
+    #[serde(default)]
     pub dictionary: Vec<DictionaryEntry>,
     pub model: Option<String>,
     /// Limpieza de muletillas (toggle «Limpiar muletillas» en Ajustes).
@@ -484,10 +493,21 @@ fn save_api_key_secret(value: Option<&str>) {
 fn save_api_key_secret(_value: Option<&str>) {}
 
 impl Config {
+    /// Parsea el contenido de config.json con degradación elegante: un JSON
+    /// corrupto, vacío o de una versión desconocida NO rompe el arranque —
+    /// cae a los defaults (los campos válidos que se reconozcan se mantienen
+    /// por el `#[serde(default)]` de cada campo). Extraída como función pura
+    /// para testear el comportamiento sin depender de %APPDATA%.
+    pub fn parse_or_default(raw: &str) -> Self {
+        serde_json::from_str(raw).unwrap_or_default()
+    }
+
     pub fn load() -> Self {
         let path = config_path();
         let mut cfg: Self = match std::fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+            // Corrupto/vacío/versión anterior → defaults; nunca un pánico
+            // ni un arranque roto (requisito de robustez).
+            Ok(raw) => Self::parse_or_default(&raw),
             Err(_) => Self::default(),
         };
         // La key nueva vive en Credential Manager; el campo legado del JSON
@@ -1471,5 +1491,42 @@ mod tests {
         let s = p.to_string_lossy();
         assert!(s.contains("whispr-open"), "{s}");
         assert!(s.ends_with("dictionary.json"), "{s}");
+    }
+
+    #[test]
+    fn config_corrupta_vacia_y_antigua_nunca_rompen_el_arranque() {
+        // Requisito de robustez: cualquier config.json dañado cae a defaults
+        // sin pánico ni arranque roto. Casos: vacío, corrupto a mitad de
+        // escritura (corte de luz), basura total, y un JSON válido con
+        // claves de una versión futura desconocida.
+        assert_eq!(Config::parse_or_default(""), Config::default());
+        assert_eq!(
+            Config::parse_or_default("{ \"model\": \"sm"),
+            Config::default(),
+            "JSON cortado a medias → defaults"
+        );
+        assert_eq!(
+            Config::parse_or_default("esto no es json en absoluto"),
+            Config::default()
+        );
+        assert_eq!(
+            Config::parse_or_default("\u{0}\u{0}\u{0}"),
+            Config::default(),
+            "bytes nulos (fichero truncado por corte de luz) → defaults"
+        );
+        // Claves desconocidas se ignoran y las conocidas se respetan.
+        let futura = Config::parse_or_default(
+            r#"{"model":"tiny","claves_del_futuro":{"x":1}}"#,
+        );
+        assert_eq!(futura.selected_model(), Model::Tiny);
+        // Una config SIN la clave `dictionary` (versión antigua, edición a
+        // mano) conserva el resto de ajustes: el parse no falla entero.
+        let sin_dictionary = Config::parse_or_default(r#"{"model":"base"}"#);
+        assert_eq!(
+            sin_dictionary.selected_model(),
+            Model::Base,
+            "un campo ausente no tira el resto de la config"
+        );
+        assert!(sin_dictionary.dictionary.is_empty());
     }
 }

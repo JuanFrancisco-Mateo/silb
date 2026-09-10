@@ -16,8 +16,9 @@ iced_winit = { version = "0.13", features = ["program"] }
 
 # Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
 # clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
-# del registro) y geometry de ventanas (posicion/esquina/tamano por winapi).
-winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi"] }
+# del registro), geometry de ventanas (posicion/esquina/tamano por winapi) y
+# guard de instancia única (CreateMutexW, ver src/single_instance.rs).
+winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi", "synchapi", "errhandlingapi"] }
 
 # Bandeja del sistema: icono en el tray de Windows + menú contextual
 # (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el

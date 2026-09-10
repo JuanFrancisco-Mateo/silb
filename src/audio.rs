@@ -4,9 +4,19 @@
 //! para transcripción.
 
 use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+
+/// Tope de duración de un turno de dictado. Motivo (requisito de robustez,
+/// «dictado muy largo sin agotar memoria»): el buffer crece linealmente con
+/// el tiempo (a 48 kHz estéreo→mono son ~230 MB de f32 por hora), así que se
+/// corta por arriba en 2 h — margen sobrado para una nota y memoria acotada
+/// (~460 MB peor caso antes de remuestrear). La app además auto-detiene el
+/// turno al llegar al tope (el Poll lo vigila), de modo que el audio capturado
+/// hasta ese momento NO se pierde: se transcribe igual.
+pub const MAX_RECORDING_SECS: u64 = 2 * 60 * 60;
 
 /// Lista los dispositivos de entrada disponibles (para el selector de la UI).
 pub fn input_devices() -> Vec<String> {
@@ -24,6 +34,11 @@ pub struct AudioCapture {
     // CPAL ejecuta el callback en sus propios hilos. El Stream debe permanecer
     // en el hilo que lo creó en este target; por eso no se mueve a std::thread.
     stream: Option<cpal::Stream>,
+    /// Errores del stream avisados por cpal (dispositivo desconectado a
+    /// mitad de grabación, driver caído…). La UI lo drena en su Poll: sin
+    /// esto, un micro que muere dejaba la app «Grabando» para siempre con
+    /// un stream muerto que no acumulaba nada.
+    errors: mpsc::Receiver<String>,
 }
 
 impl AudioCapture {
@@ -52,8 +67,17 @@ impl AudioCapture {
         let rate = config.sample_rate().0;
         let samples = Arc::new(Mutex::new(Vec::new()));
         let level = Arc::new(AtomicU32::new(0));
-        let stream = build_stream(&device, &config, Arc::clone(&samples), Arc::clone(&level))
-            .map_err(|error| format!("error creando stream: {error}"))?;
+        // Canal de errores: el callback de cpal corre en su propio hilo y no
+        // puede tocar la UI; el mensaje viaja hasta el Poll de la app.
+        let (err_tx, err_rx) = mpsc::channel();
+        let stream = build_stream(
+            &device,
+            &config,
+            Arc::clone(&samples),
+            Arc::clone(&level),
+            err_tx,
+        )
+        .map_err(|error| format!("error creando stream: {error}"))?;
         stream
             .play()
             .map_err(|error| format!("error en stream.play(): {error}"))?;
@@ -63,6 +87,7 @@ impl AudioCapture {
             level,
             rate,
             stream: Some(stream),
+            errors: err_rx,
         })
     }
 
@@ -88,6 +113,13 @@ impl AudioCapture {
     /// Nivel del micrófono en 0..=1 (pico reciente), para el medidor.
     pub fn level(&self) -> f32 {
         self.level.load(Ordering::Relaxed) as f32 / 1000.0
+    }
+
+    /// Error del stream pendiente de atender (micro desconectado, driver
+    /// caído…). `Some(mensaje)` = la app debe cortar el turno YA con el
+    /// audio grabado hasta ese momento.
+    pub fn take_stream_error(&self) -> Option<String> {
+        self.errors.try_recv().ok()
     }
 }
 
@@ -124,20 +156,40 @@ pub(crate) fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
     output
 }
 
+/// Mensaje accionable (español, sin jerga de driver) para un error del
+/// stream a mitad de grabación. El detalle técnico queda en el log; el
+/// usuario solo necesita saber QUÉ pasó y que lo grabado no se pierde.
+pub fn friendly_stream_error(_raw: &str) -> String {
+    "el micrófono se desconectó o dejó de responder a mitad de la grabación".to_string()
+}
+
 fn build_stream(
     device: &cpal::Device,
     config: &cpal::SupportedStreamConfig,
     samples: Arc<Mutex<Vec<f32>>>,
     level: Arc<AtomicU32>,
+    err_tx: mpsc::Sender<String>,
 ) -> Result<cpal::Stream, String> {
-    let error_callback = |error| crate::log!("audio", "error en el stream: {error}");
+    // Tope duro de muestras acumuladas (memoria acotada pase lo que pase,
+    // incluso si el hilo de la UI se atasca y no llega a auto-detener el
+    // turno por tiempo). Calculado con el sample rate NATIVO: el buffer
+    // guarda muestras a ese rate y solo se remuestrea al parar.
+    let max_samples = (config.sample_rate().0 as usize) * MAX_RECORDING_SECS as usize;
+    // El callback de error corre en un hilo de cpal: log + aviso por canal
+    // (quien decida qué hacer con el turno es la UI en su Poll).
+    let error_callback = move |error: cpal::StreamError| {
+        crate::log!("audio", "error en el stream: {error}");
+        let _ = err_tx.send(friendly_stream_error(&error.to_string()));
+    };
     let channels = config.channels() as usize;
 
     match config.sample_format() {
         cpal::SampleFormat::F32 => device
             .build_input_stream(
                 &config.config(),
-                move |data: &[f32], _| push_f32(data, channels, &samples, &level),
+                move |data: &[f32], _| {
+                    push_f32(data, channels, &samples, &level, max_samples)
+                },
                 error_callback,
                 None,
             )
@@ -148,7 +200,7 @@ fn build_stream(
                 move |data: &[i16], _| {
                     let converted: Vec<f32> =
                         data.iter().map(|sample| *sample as f32 / 32768.0).collect();
-                    push_f32(&converted, channels, &samples, &level);
+                    push_f32(&converted, channels, &samples, &level, max_samples);
                 },
                 error_callback,
                 None,
@@ -162,7 +214,7 @@ fn build_stream(
                         .iter()
                         .map(|sample| *sample as f32 / 32768.0 - 1.0)
                         .collect();
-                    push_f32(&converted, channels, &samples, &level);
+                    push_f32(&converted, channels, &samples, &level, max_samples);
                 },
                 error_callback,
                 None,
@@ -173,8 +225,16 @@ fn build_stream(
 }
 
 /// Convierte a mono promediando canales, acumula en el buffer y actualiza el
-/// pico reciente del medidor.
-fn push_f32(data: &[f32], channels: usize, samples: &Arc<Mutex<Vec<f32>>>, level: &Arc<AtomicU32>) {
+/// pico reciente del medidor. El buffer nunca supera `max_samples`: llegado
+/// el tope se deja de acumular (la app corta el turno por tiempo y transcribe
+/// lo que haya).
+fn push_f32(
+    data: &[f32],
+    channels: usize,
+    samples: &Arc<Mutex<Vec<f32>>>,
+    level: &Arc<AtomicU32>,
+    max_samples: usize,
+) {
     if data.is_empty() {
         return;
     }
@@ -188,11 +248,20 @@ fn push_f32(data: &[f32], channels: usize, samples: &Arc<Mutex<Vec<f32>>>, level
     );
 
     let mut guard = samples.lock().unwrap_or_else(|error| error.into_inner());
+    if guard.len() >= max_samples {
+        return;
+    }
     if channels <= 1 {
-        guard.extend_from_slice(data);
+        // Tope EXACTO: se añade solo lo que cabe (el chunk de cpal puede
+        // sobrepasar el tope por menos de un chunk — aquí se recorta).
+        let room = max_samples - guard.len();
+        guard.extend_from_slice(&data[..room.min(data.len())]);
         return;
     }
     for chunk in data.chunks(channels) {
+        if guard.len() >= max_samples {
+            break;
+        }
         let sum: f32 = chunk.iter().sum();
         guard.push(sum / chunk.len() as f32);
     }
@@ -238,5 +307,47 @@ mod tests {
 
         let already = resample_to_16k(&dc, 16_000);
         assert_eq!(already, dc);
+    }
+
+    #[test]
+    fn push_f32_acota_el_buffer_al_tope_de_memoria() {
+        // Requisito: un dictado larguísimo no puede agotar la memoria. El
+        // buffer se corta en `max_samples` aunque sigan llegando callbacks.
+        let samples = Arc::new(Mutex::new(Vec::new()));
+        let level = Arc::new(AtomicU32::new(0));
+        let chunk = vec![0.3f32; 1000];
+        // Tope simulado de 2500 muestras: dos pushes llenan, el tercero no
+        // puede crecer más allá del tope.
+        let cap = 2500usize;
+        for _ in 0..5 {
+            push_f32(&chunk, 1, &samples, &level, cap);
+        }
+        let guard = samples.lock().unwrap_or_else(|e| e.into_inner());
+        assert_eq!(
+            guard.len(),
+            cap,
+            "el buffer se detiene exactamente en el tope"
+        );
+        // El medidor sigue vivo tras el tope (el usuario ve que el micro
+        // sigue sonando aunque el turno ya esté cortado).
+        assert!(level.load(Ordering::Relaxed) > 0);
+    }
+
+    #[test]
+    fn error_de_stream_se_explica_en_espanol_sin_jerga() {
+        let msg = friendly_stream_error("device type is no longer available");
+        assert!(msg.contains("micrófono"), "el mensaje nombra al culpable");
+        assert!(
+            !msg.contains("available"),
+            "sin jerga del driver en la cara del usuario"
+        );
+    }
+
+    #[test]
+    fn tope_de_grabacion_es_holgado_y_acotado() {
+        // 2 h: margen de sobra para una nota hablada y memoria acotada
+        // (~460 MB peor caso a 16 kHz f32; a 48 kHz nativos se remuestrea al
+        // parar, así que el tope nativo equivale a 2 h de audio real).
+        assert_eq!(MAX_RECORDING_SECS, 2 * 60 * 60);
     }
 }

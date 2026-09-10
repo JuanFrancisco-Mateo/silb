@@ -56,12 +56,35 @@ impl Default for InjectSettings {
 }
 
 /// Resultado de la inyección: distinguir el éxito real de «omitida por
-/// filtro» (un aviso, no un error técnico).
+/// filtro» (un aviso, no un error técnico) y de «no había ventana activa».
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InjectOutcome {
     Injected,
     /// La ventana activa (título) no pasó el filtro configurado.
     Skipped(String),
+    /// No había NINGUNA ventana con el foco al inyectar (escritorio al
+    /// descubierto, transición entre apps). Pegar a ciegas no tiene
+    /// destino: mejor avisar y dejar el texto en el portapapeles (lo copia
+    /// la app al recibir este resultado).
+    NoForegroundWindow,
+}
+
+impl InjectOutcome {
+    /// Línea de feedback para la UI: español, corta y accionable (requisito
+    /// de robustez — ningún resultado se queda mudo).
+    pub fn notice(&self) -> String {
+        match self {
+            InjectOutcome::Injected => "Texto escrito en la app activa ✓".to_string(),
+            InjectOutcome::Skipped(_) => {
+                "Inyección omitida: la app activa no coincide con el filtro de ventana"
+                    .to_string()
+            }
+            InjectOutcome::NoForegroundWindow => {
+                "No había ninguna ventana activa: el texto quedó copiado en el portapapeles"
+                    .to_string()
+            }
+        }
+    }
 }
 
 /// True si el título de la ventana activa pasa el filtro (substring,
@@ -73,6 +96,24 @@ pub fn window_matches_filter(title: &str, filter: Option<&str>) -> bool {
     }
 }
 
+/// Copia `text` al portapapeles (best-effort, para cuando la inyección no
+/// puede hacerse: sin ventana activa, app destino que no acepta pegado…).
+/// El texto nunca se pierde si el usuario puede pegarlo a mano donde quiera.
+#[cfg(target_os = "windows")]
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use arboard::Clipboard;
+    let mut clipboard =
+        Clipboard::new().map_err(|err| format!("no se pudo abrir el portapapeles: {err}"))?;
+    clipboard
+        .set_text(text.to_owned())
+        .map_err(|err| format!("no se pudo copiar el texto al portapapeles: {err}"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
+    Err("el portapapeles solo está disponible en Windows".to_string())
+}
+
 #[cfg(target_os = "windows")]
 pub fn inject_text_into_active_app(
     text: &str,
@@ -81,17 +122,23 @@ pub fn inject_text_into_active_app(
     use arboard::Clipboard;
     use enigo::{Direction, Enigo, Key, Keyboard, Settings};
 
+    // Sin NINGUNA ventana con el foco no hay dónde pegar: no se simula
+    // teclado a ciegas (el Ctrl+V iría a ninguna parte o al escritorio).
+    // El texto queda a disposición por el portapapeles (lo copia la app).
+    let Some(title) = foreground_window_title() else {
+        crate::log!("inject", "no hay ventana con el foco; inyección omitida");
+        return Ok(InjectOutcome::NoForegroundWindow);
+    };
+
     // Filtro por ventana activa ANTES de tocar portapapeles/teclado: si la
     // app con foco no coincide con `window_filter`, el turno no se inyecta.
-    if let Some(title) = foreground_window_title() {
-        if !window_matches_filter(&title, opts.window_filter.as_deref()) {
-            crate::log!(
-                "inject",
-                "ventana activa «{title}» no pasa el filtro «{}»; inyección omitida",
-                opts.window_filter.as_deref().unwrap_or_default()
-            );
-            return Ok(InjectOutcome::Skipped(title));
-        }
+    if !window_matches_filter(&title, opts.window_filter.as_deref()) {
+        crate::log!(
+            "inject",
+            "ventana activa «{title}» no pasa el filtro «{}»; inyección omitida",
+            opts.window_filter.as_deref().unwrap_or_default()
+        );
+        return Ok(InjectOutcome::Skipped(title));
     }
 
     // Retardo configurable: deja que la app destino asiente el foco.
@@ -110,20 +157,25 @@ pub fn inject_text_into_active_app(
             enigo
                 .key(Key::Control, Direction::Press)
                 .map_err(|err| format!("no se pudo simular la pulsación de Ctrl: {err}"))?;
-            enigo
-                .key(Key::V, Direction::Click)
-                .map_err(|err| format!("no se pudo simular Ctrl+V: {err}"))?;
-            enigo
-                .key(Key::Control, Direction::Release)
-                .map_err(|err| format!("no se pudo soltar Ctrl: {err}"))?;
+            // Ctrl+V con garantía de soltar: si el Click falla y devolvemos
+            // el error sin más, el usuario se quedaría con Ctrl PRESIONADO
+            // (corrompería todo lo que teclee después). Se suelta SIEMPRE,
+            // incluso en error, y solo entonces se reporta el fallo.
+            let clicked = enigo.key(Key::V, Direction::Click);
+            let released = enigo.key(Key::Control, Direction::Release);
+            clicked.map_err(|err| format!("no se pudo simular Ctrl+V: {err}"))?;
+            released.map_err(|err| format!("no se pudo soltar Ctrl tras el pegado: {err}"))?;
             Ok(InjectOutcome::Injected)
         }
         InjectFormat::Type => {
             let mut enigo = Enigo::new(&Settings::default())
                 .map_err(|err| format!("no se pudo inicializar el simulador de teclado: {err}"))?;
-            enigo
-                .text(text)
-                .map_err(|err| format!("no se pudo teclear el texto: {err}"))?;
+            // Modo teclear: un fallo a mitad deja la nota escrita A MEDIOS
+            // en la app destino. No se puede deshacer desde aquí; el mensaje
+            // le dice al usuario cómo salir del paso (Ctrl+Z en la destino).
+            enigo.text(text).map_err(|err| {
+                format!("no se pudo teclear el texto (puede haber quedado a medias; Ctrl+Z en la app destino lo deshace): {err}")
+            })?;
             Ok(InjectOutcome::Injected)
         }
     }
@@ -192,6 +244,20 @@ mod tests {
     fn labels_de_formato() {
         assert_eq!(InjectFormat::Paste.label(), "Pegar (Ctrl+V)");
         assert_eq!(InjectFormat::Type.label(), "Teclear");
+    }
+
+    #[test]
+    fn cada_resultado_de_inyeccion_tiene_su_aviso_en_espanol() {
+        // Requisito de robustez: ningún resultado se queda mudo; los tres
+        // casos terminan en una frase corta y accionable para la UI.
+        assert_eq!(
+            InjectOutcome::Injected.notice(),
+            "Texto escrito en la app activa ✓"
+        );
+        let skipped = InjectOutcome::Skipped("Bloc de notas".into()).notice();
+        assert!(skipped.contains("filtro"), "{skipped}");
+        let no_window = InjectOutcome::NoForegroundWindow.notice();
+        assert!(no_window.contains("portapapeles"), "{no_window}");
     }
 
     #[cfg(not(target_os = "windows"))]

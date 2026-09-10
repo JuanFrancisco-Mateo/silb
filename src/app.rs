@@ -166,6 +166,11 @@ pub enum Message {
     Toggle,
     StartRecording,
     StopRecording,
+    /// El stream de audio murió a mitad de grabación (micro desconectado,
+    /// driver caído). Llega desde el Poll al drenar el canal de errores de
+    /// `AudioCapture`: el turno se corta YA y se transcribe lo grabado hasta
+    /// ese momento (nunca se pierde) con un aviso visible.
+    AudioDeviceLost(String),
     TranscriptionDone(Result<String, String>),
     ModelSelected(Model),
     ToggleCleanup(bool),
@@ -400,6 +405,21 @@ pub struct WhisprApp {
     startup_label: String,
     /// Tick de animación del spinner de carga (lo avanza el Poll a 10 Hz).
     startup_tick: u32,
+    // ── Robustez de grabación ────────────────────────────────────────────
+    /// Cuándo empezó el turno en curso (`None` = no se está grabando). El
+    /// Poll lo vigila: al llegar a `audio::MAX_RECORDING_SECS` el turno se
+    /// detiene solo (memoria acotada en dictados maratonianos) y el audio
+    /// grabado hasta ahí se transcribe con normalidad.
+    recording_started: Option<std::time::Instant>,
+    /// El turno en curso terminó porque el micrófono murió a mitad (el
+    /// mensaje de `AudioDeviceLost`). La transcripción resultante se
+    /// acompaña de un aviso claro en vez de aparecer como si nada.
+    device_lost: bool,
+    /// Nota pendiente de mostrar cuando llegue la transcripción del turno
+    /// (p. ej. el aviso del tope de duración). `apply_pipeline` limpia
+    /// `last_correction` al procesar un turno normal, así que la nota se
+    /// aplica DESPUÉS, al recibir `TranscriptionDone`.
+    pending_turn_note: Option<String>,
 }
 
 impl WhisprApp {
@@ -504,6 +524,9 @@ impl WhisprApp {
             llm_phase_cancel: None,
             startup_label: "Preparando la app…".to_string(),
             startup_tick: 0,
+            recording_started: None,
+            device_lost: false,
+            pending_turn_note: None,
         };
 
         // Hilo de arranque: descarga si hace falta + carga whisper en cache
@@ -552,16 +575,73 @@ impl WhisprApp {
     fn inject_into_active(&mut self, text: &str) {
         match inject_text_into_active_app(text, &self.config.inject_settings()) {
             Ok(InjectOutcome::Injected) => {
-                self.last_correction = Some("Texto escrito en la app activa ✓".to_string());
+                self.last_correction = Some(InjectOutcome::Injected.notice());
             }
-            Ok(InjectOutcome::Skipped(_title)) => {
-                self.last_correction = Some(
-                    "Inyección omitida: la app activa no coincide con el filtro de ventana"
-                        .to_string(),
-                );
+            Ok(InjectOutcome::Skipped(_)) => {
+                self.last_correction = Some(InjectOutcome::Skipped(String::new()).notice());
+            }
+            Ok(InjectOutcome::NoForegroundWindow) => {
+                // Sin ninguna ventana con el foco no hay dónde pegar: el
+                // turno no se pierde — queda en el portapapeles para que el
+                // usuario lo pegue donde quiera (requisito de robustez).
+                if let Err(e) = crate::inject::copy_to_clipboard(text) {
+                    crate::log!("inject", "sin ventana activa y sin portapapeles: {e}");
+                }
+                self.last_correction = Some(InjectOutcome::NoForegroundWindow.notice());
             }
             Err(e) => self.status = Status::Error(format!("Inyección: {e}")),
         }
+    }
+
+    /// Núcleo de fin de turno, compartido por la parada voluntaria
+    /// (`StopRecording`: atajo, botón, burbuja o tope de duración) y la
+    /// forzosa (`AudioDeviceLost`: micro desconectado a mitad). Recoge el
+    /// audio acumulado y lo manda al hilo de transcripción; si no se oyó
+    /// nada, el turno termina limpio con un aviso visible (nunca un
+    /// silencio confuso ni un estado colgado).
+    fn finish_recording(&mut self) -> Task<Message> {
+        let Some(mut capture) = self.audio.take() else {
+            return Task::none();
+        };
+        self.recording_started = None;
+        let samples = capture.stop();
+        if samples.is_empty() {
+            self.pending_inject = false;
+            self.status = Status::Idle;
+            // Sin audio no hay transcripción que esperar: el aviso se pone
+            // aquí y ya (0 s de grabación, doble pulsación del atajo, o
+            // micro muerto antes de oír nada).
+            self.last_correction = Some(if self.device_lost {
+                self.device_lost = false;
+                "El micrófono se desconectó antes de que se oyera nada; revisa el micro y vuelve a dictar.".to_string()
+            } else {
+                "No se oyó nada: comprueba el micrófono, acércate y repite el dictado.".to_string()
+            });
+            return Task::none();
+        }
+
+        let model = self.config.selected_model();
+        // El diccionario viaja como initial_prompt: sesga el
+        // reconocedor hacia jerga/nombres/siglas ANTES de transcribir.
+        let dictionary = self.config.dictionary.clone();
+        // Parámetros de inferencia ajustados en Ajustes. Se clonan
+        // aquí para mover al hilo de transcripción sin necesidad de
+        // un Arc.
+        let inference = crate::transcribe::InferenceParams {
+            language: self.config.language().map(str::to_string),
+            beam_size: self.config.beam_size() as i32,
+            n_threads: self.config.n_threads() as i32,
+        };
+        let (tx, rx) = mpsc::channel();
+        self.transcribe_rx = Some(rx);
+        self.status = Status::Transcribing;
+
+        std::thread::spawn(move || {
+            let result = transcribe_samples(samples, model, dictionary, inference);
+            let _ = tx.send(result);
+        });
+
+        Task::none()
     }
 
     /// Despachador unificado del resultado LLM (t_78d9e1fa). Llega por
@@ -1239,50 +1319,41 @@ impl WhisprApp {
                     Ok(capture) => {
                         self.audio = Some(capture);
                         self.status = Status::Recording;
+                        // Marcador de inicio para el tope de duración del
+                        // turno (el Poll lo vigila).
+                        self.recording_started = Some(std::time::Instant::now());
+                        self.device_lost = false;
                         // La sesión y `last_turn` sobreviven entre turnos:
                         // las correcciones multi-turno y la corrección IA
                         // necesitan ver el dictado anterior.
                         show
                     }
                     Err(e) => {
+                        // Sin micro (o ocupado): error visible y estado
+                        // consistente — el siguiente intento funciona sin
+                        // reiniciar (requisito de robustez).
+                        self.recording_started = None;
                         self.status = Status::Error(e);
                         Task::none()
                     }
                 }
             }
             Message::StopRecording => {
-                let Some(mut capture) = self.audio.take() else {
-                    return Task::none();
-                };
-                let samples = capture.stop();
-                if samples.is_empty() {
-                    self.pending_inject = false;
-                    self.status = Status::Idle;
+                // Parada voluntaria (atajo, botón, burbuja o tope de
+                // duración): el turno termina como dictado normal.
+                self.device_lost = false;
+                self.finish_recording()
+            }
+            Message::AudioDeviceLost(reason) => {
+                // El stream murió a mitad (micro desconectado): se corta el
+                // turno YA con el audio acumulado hasta ese momento — NUNCA
+                // se pierde lo ya dicho — y la transcripción lleva un aviso.
+                if self.audio.is_none() {
                     return Task::none();
                 }
-
-                let model = self.config.selected_model();
-                // El diccionario viaja como initial_prompt: sesga el
-                // reconocedor hacia jerga/nombres/siglas ANTES de transcribir.
-                let dictionary = self.config.dictionary.clone();
-                // Parámetros de inferencia ajustados en Ajustes. Se clonan
-                // aquí para mover al hilo de transcripción sin necesidad de
-                // un Arc.
-                let inference = crate::transcribe::InferenceParams {
-                    language: self.config.language().map(str::to_string),
-                    beam_size: self.config.beam_size() as i32,
-                    n_threads: self.config.n_threads() as i32,
-                };
-                let (tx, rx) = mpsc::channel();
-                self.transcribe_rx = Some(rx);
-                self.status = Status::Transcribing;
-
-                std::thread::spawn(move || {
-                    let result = transcribe_samples(samples, model, dictionary, inference);
-                    let _ = tx.send(result);
-                });
-
-                Task::none()
+                crate::log!("audio", "turno cortado por fallo del stream: {reason}");
+                self.device_lost = true;
+                self.finish_recording()
             }
             Message::TranscriptionDone(result) => {
                 self.transcribe_rx = None;
@@ -1295,10 +1366,35 @@ impl WhisprApp {
                         let (processed, rule_corrected) = self.apply_pipeline(&raw);
                         if processed.is_empty() && raw.trim().is_empty() {
                             self.status = Status::Idle;
+                            // Turno vacío (hubo audio pero no se transcribió
+                            // nada): aviso útil en vez de silencio confuso.
+                            // Si además el micro murió a mitad, el aviso lo
+                            // dice (requisito de robustez).
+                            self.last_correction = Some(if self.device_lost {
+                                "El micrófono se desconectó y no se llegó a oír nada; revisa el micro y vuelve a dictar.".to_string()
+                            } else {
+                                "No se oyó nada: comprueba el micrófono, acércate y repite el dictado.".to_string()
+                            });
+                            self.device_lost = false;
                             // Turno vacío: igualmente «terminado» → armar el
                             // auto-ocultar si está configurado.
                             self.arm_bubble_hide_timeout();
                             return Task::none();
+                        }
+                        // Aviso de micro perdido a mitad (si procede): se
+                        // pone ya, antes del enrutado — si hay corrección IA,
+                        // su propio feedback puede reemplazarlo después.
+                        if self.device_lost {
+                            self.last_correction = Some(
+                                "El micrófono se desconectó a mitad: se transcribió lo que se oyó hasta ese momento.".to_string(),
+                            );
+                            self.device_lost = false;
+                        }
+                        // Nota pendiente del turno (p. ej. tope de duración
+                        // maratoniano): tiene prioridad sobre el aviso de
+                        // micro porque explica el corte.
+                        if let Some(note) = self.pending_turn_note.take() {
+                            self.last_correction = Some(note);
                         }
 
                         // Corrección IA (spec §3 + §3.5, t_78d9e1fa): el sistema decide en
@@ -1526,7 +1622,9 @@ impl WhisprApp {
                                 let _ = tx.send(Ok(format!("__PROGRESS__{d}:{t}")));
                             })
                             .map(|_| "__DOWNLOAD_OK__".to_string())
-                            .map_err(|e| e);
+                            // Error de descarga con causa accionable, no la
+                            // cadena cruda de ureq (requisito de robustez).
+                            .map_err(|e| download_failure_message(model, &e));
                             let _ = tx.send(result);
                         });
                     }
@@ -2037,6 +2135,40 @@ impl WhisprApp {
                             self.bubble_hidden = true;
                             return window::change_mode(id, window::Mode::Hidden);
                         }
+                    }
+                }
+
+                // ── Robustez de grabación ────────────────────────────────
+                // 1) El stream puede morir a mitad de turno (micro
+                //    desconectado, driver caído): el canal de errores lo
+                //    cuenta aquí y el turno se corta con lo grabado.
+                // 2) Un turno maratoniano se detiene solo al tope
+                //    (`audio::MAX_RECORDING_SECS`): memoria acotada y el
+                //    audio grabado hasta ahí se transcribe con normalidad.
+                if let Some(audio) = &self.audio {
+                    if let Some(reason) = audio.take_stream_error() {
+                        return self.update(Message::AudioDeviceLost(reason));
+                    }
+                }
+                if let Some(started) = self.recording_started {
+                    if started.elapsed()
+                        >= Duration::from_secs(crate::audio::MAX_RECORDING_SECS)
+                    {
+                        crate::log!(
+                            "audio",
+                            "tope de {} s de grabación: el turno se detiene solo",
+                            crate::audio::MAX_RECORDING_SECS
+                        );
+                        // El aviso viaja como nota pendiente: se muestra al
+                        // llegar la transcripción (apply_pipeline limpia
+                        // last_correction en el camino y se comería un aviso
+                        // puesto ya).
+                        self.pending_turn_note = Some(format!(
+                            "Dictado larguísimo: parado a las {} h para no agotar la memoria; \
+                             lo grabado hasta ahí se transcribe normal.",
+                            crate::audio::MAX_RECORDING_SECS / 3600
+                        ));
+                        return self.update(Message::StopRecording);
                     }
                 }
 
@@ -2734,10 +2866,7 @@ impl WhisprApp {
             .align_y(iced::Alignment::Center)
             .into()
         } else if let Some(corr) = &self.last_correction {
-            let color = if corr.starts_with("Esperando")
-                || corr.contains("no disponible")
-                || corr.contains("no sé qué corregir")
-            {
+            let color = if feedback_is_warning(corr) {
                 t.warn
             } else {
                 t.ok
@@ -3627,6 +3756,20 @@ fn llm_status_ui(enabled: bool, status: &LlmStatus, model: &str) -> LlmStatusUi 
     }
 }
 
+/// ¿La línea de feedback (`last_correction`) es un AVISO (ámbar) o una
+/// confirmación (verde)? Función pura y testeada: la clasificación decide
+/// el color que el usuario ve, así que no puede vivir escondida en la
+/// vista. Avisos: esperas, problemas del corrector, micro desconectado,
+/// turnos vacíos y el tope de grabación.
+fn feedback_is_warning(feedback: &str) -> bool {
+    feedback.starts_with("Esperando")
+        || feedback.contains("no disponible")
+        || feedback.contains("no sé qué corregir")
+        || feedback.contains("No se oyó nada")
+        || feedback.contains("micrófono")
+        || feedback.contains("Dictado larguísimo")
+}
+
 /// Etiqueta legible del idioma para el `pick_list`. La opción "auto"
 /// representa autodetección; cualquier valor en `Option<String>` (incluido
 /// None → default "es") se mapea a la cadena que el `pick_list` espera.
@@ -3753,10 +3896,25 @@ fn transcribe_samples(
             "modelo {} no está descargado, descargando…",
             model.id()
         );
-        crate::transcribe::ensure_model(model, |_, _| {})?;
+        crate::transcribe::ensure_model(model, |_, _| {})
+            .map_err(|e| download_failure_message(model, &e))?;
     }
     let prompt = crate::transcribe::build_initial_prompt(&dictionary);
     crate::transcribe::transcribe_cached(&samples, model, &inference, prompt.as_deref())
+}
+
+/// Mensaje de fallo de descarga para `Status::Error`: causa clasificada y
+/// accionable (requisito de robustez), con el detalle técnico solo en el
+/// log — nunca la cadena cruda de ureq/fs en la cara del usuario.
+fn download_failure_message(model: Model, raw: &str) -> String {
+    let hint = crate::transcribe::friendly_download_error(raw);
+    crate::log!("transcribe", "fallo descargando {}: {raw}", model.id());
+    format!(
+        "No se pudo descargar el modelo de voz ({}): {}. \
+         Revisa la conexión o el disco y reintenta.",
+        model.label(),
+        hint
+    )
 }
 
 // ---------------------------------------------------------------------------
@@ -3792,7 +3950,7 @@ fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicB
         }
     };
     crate::log!("startup", "modelo de voz en: {}", path.display());
-    match crate::transcribe::preload(model) {
+    match preload_with_recovery(model, &tx) {
         Ok(()) => {
             let _ = tx.send(StartupEvent::WhisperReady);
             run_llm_phase(cfg, tx, cancel);
@@ -3805,6 +3963,37 @@ fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicB
             )));
         }
     }
+}
+
+/// Carga el contexto whisper del modelo con UNA recuperación ante fichero
+/// dañado: si el modelo está en disco pero no carga (truncado por una copia
+/// manual, descarga antigua interrumpida, corrupción), se borra, se
+/// re-descarga limpio (con eventos de progreso) y se re-intenta una única
+/// vez. Sin esto, «Reintentar» de la pantalla de error volvía a entregar el
+/// mismo fichero dañado una y otra vez: bucle infinito de fallo (requisito
+/// de robustez del arranque).
+fn preload_with_recovery(model: Model, tx: &Sender<StartupEvent>) -> Result<(), String> {
+    let first = crate::transcribe::preload(model);
+    if first.is_ok() {
+        return Ok(());
+    }
+    let err = first.unwrap_err();
+    let path = crate::transcribe::model_path(model);
+    if !path.is_file() {
+        // Sin fichero en disco el fallo es ambiental (CUDA, memoria, …):
+        // re-descargar no arregla nada, se reporta el error tal cual.
+        return Err(err);
+    }
+    crate::log!(
+        "startup",
+        "el modelo {} está en disco pero no carga: se borra y re-descarga por si está truncado",
+        model.id()
+    );
+    let _ = std::fs::remove_file(&path);
+    crate::transcribe::ensure_model(model, |downloaded, total| {
+        let _ = tx.send(StartupEvent::WhisperProgress { downloaded, total });
+    })?;
+    crate::transcribe::preload(model)
 }
 
 /// Fase LLM del arranque (o del toggle de corrección IA en caliente):
@@ -4001,6 +4190,62 @@ mod tests {
             "deja claro que no bloquea: {reason}"
         );
         assert!(reason.contains("no respondió o rechazó"));
+    }
+
+    /// Robustez: los avisos de la línea de feedback (micro desconectado,
+    /// turno vacío, tope de grabación) se pintan ámbar, no verde — un
+    /// «todo bien» verde sobre un micro muerto es mentira visual.
+    #[test]
+    fn feedback_de_robustez_se_clasifica_como_aviso() {
+        assert!(feedback_is_warning(
+            "El micrófono se desconectó a mitad: se transcribió lo que se oyó hasta ese momento."
+        ));
+        assert!(feedback_is_warning("No se oyó nada: comprueba el micrófono."));
+        assert!(feedback_is_warning(
+            "Dictado larguísimo: parado a las 2 h para no agotar la memoria."
+        ));
+        assert!(feedback_is_warning("Esperando el resto de la corrección…"));
+        // Confirmaciones: verde.
+        assert!(!feedback_is_warning("Texto escrito en la app activa ✓"));
+        assert!(!feedback_is_warning("Corrección IA aplicada: «4» → «2»"));
+    }
+
+    /// Robustez: el error de descarga de modelo que llega a `Status::Error`
+    /// lleva causa clasificada y accionable, no la cadena cruda de ureq.
+    #[test]
+    fn mensaje_de_fallo_de_descarga_es_accionable_y_sin_jerga() {
+        let msg = download_failure_message(
+            Model::Small,
+            "no se pudo descargar el modelo: ...: Dns Failed: resolve failure",
+        );
+        assert!(msg.contains("Small"), "nombra el modelo: {msg}");
+        assert!(msg.contains("sin conexión"), "clasifica la causa: {msg}");
+        assert!(
+            !msg.contains("Dns Failed"),
+            "sin jerga de la cadena de crates: {msg}"
+        );
+        assert!(msg.contains("Revisa"), "accionable: {msg}");
+    }
+
+    /// Robustez del arranque: `preload_with_recovery` con un modelo SIN
+    /// fichero en disco devuelve el error de whisper tal cual (el fallo es
+    /// ambiental, no del fichero: re-descargar no haría nada) y no toca la
+    /// red. Solo se ejecuta si el usuario no tiene el modelo small
+    /// descargado (si lo tiene, cargarlo de verdad es lento y no es cosa
+    /// de un test). La ruta de recuperación completa (fichero corrupto →
+    /// borrar → re-descargar) se prueba por piezas: `model_file_is_valid`,
+    /// `existing_model_plan` y `sweep_part_files` en transcribe.rs.
+    #[test]
+    fn preload_sin_fichero_falla_claro_y_sin_red() {
+        if crate::transcribe::model_exists(Model::Small) {
+            return; // el modelo real del usuario no se toca en un test
+        }
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let result = preload_with_recovery(Model::Small, &tx);
+        assert!(
+            result.is_err(),
+            "sin fichero en disco, cargar el contexto debe fallar con error"
+        );
     }
 
     /// Los nombres del selector de proveedor (requisito 10/09/2026) son

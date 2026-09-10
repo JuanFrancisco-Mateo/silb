@@ -133,8 +133,22 @@ fn rules(fillers: &FillerWords) -> Vec<CleanupRule> {
 
     entries
         .iter()
-        .map(|(_, pattern)| CleanupRule {
-            pattern: Regex::new(&format!("(?iu){pattern}")).expect("patrón de cleanup inválido"),
+        // Cero `expect` en rutas con input del usuario (requisito de
+        // robustez): el patrón incrusta la muletilla del usuario (escapada
+        // por `escape_regexp`, pero por si un caso futuro se escapa), una
+        // regla que no compila se descarta con log en vez de tumbar el
+        // turno con un pánico. Las reglas fijas están cubiertas por tests.
+        .filter_map(|(name, pattern)| {
+            match Regex::new(&format!("(?iu){pattern}")) {
+                Ok(pattern) => Some(CleanupRule { pattern }),
+                Err(e) => {
+                    crate::log!(
+                        "cleanup",
+                        "regla «{name}» con patrón inválido ({e}); se descarta"
+                    );
+                    None
+                }
+            }
         })
         .collect()
 }
@@ -265,6 +279,29 @@ mod tests {
             cleaned("Vamos a empezar, eh, con la reunión"),
             ("Vamos a empezar, con la reunión".into(), vec!["eh".into()])
         );
+    }
+
+    /// Requisito de robustez: texto con acentos, emoji, mayúsculas y saltos
+    /// de línea no rompe la limpieza. Los saltos se normalizan a un espacio
+    /// (el transcript es un flujo hablado, no un documento) y los emoji
+    /// (que no son `\p{L}`) pasan intactos sin disparar las reglas de
+    /// repetición.
+    #[test]
+    fn acentos_emoji_y_saltos_de_linea_sobreviven_a_la_limpieza() {
+        let (text, removed) =
+            cleaned("Hola José, qué tal\n\nLa reunión es a las 4 en punto ✓");
+        assert!(text.contains("José"), "acentos intactos: {text}");
+        assert!(text.contains("qué tal"));
+        assert!(text.contains("✓"), "el emoji sobrevive: {text}");
+        assert!(
+            !text.contains('\n'),
+            "los saltos se normalizan a espacio (flujo hablado): {text:?}"
+        );
+        assert!(removed.is_empty(), "nada que quitar en texto limpio");
+        // Repetición con emoji en medio NO se colapsa (emoji no es palabra):
+        // el texto llega raro pero la regla no puede mentir sobre él.
+        let (raro, _) = cleaned("hola 😊 hola");
+        assert_eq!(raro, "hola 😊 hola");
     }
 
     #[test]

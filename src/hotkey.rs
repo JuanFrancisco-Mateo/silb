@@ -83,9 +83,18 @@ fn parse_shortcut(shortcut: &str) -> HotKey {
 }
 
 fn default_hotkey() -> HotKey {
-    DEFAULT_SHORTCUT
-        .parse::<HotKey>()
-        .expect("el atajo por defecto siempre es válido")
+    // Fuente de verdad: la constante de arriba (validada por tests). El
+    // parse de una constante no puede fallar en la práctica, pero el
+    // requisito de robustez veta pánicos en el arranque: si una
+    // actualización del crate cambiara el formato aceptado, se construye
+    // el MISMO atajo por API (infalible) en vez de tumbar el proceso.
+    DEFAULT_SHORTCUT.parse::<HotKey>().unwrap_or_else(|_| {
+        crate::log!(
+            "hotkey",
+            "el default «{DEFAULT_SHORTCUT}» dejó de parsear; se construye por API"
+        );
+        HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD)
+    })
 }
 
 /// Etiqueta canónica Windows-style («Ctrl+Shift+D») a partir del atajo
@@ -167,6 +176,19 @@ mod tests {
         assert_eq!(a.id(), b.id());
         // Distinto atajo → distinto id: los eventos se filtran por él.
         assert_ne!(a.id(), parse_shortcut("Alt+Space").id());
+    }
+
+    #[test]
+    fn fallback_por_api_es_el_mismo_atajo_que_el_default_parseado() {
+        // Requisito de robustez: default_hotkey() ya no puede pánico. Si el
+        // parse de la constante llegara a romperse (cambio de crate), la
+        // construcción por API debe producir EXACTAMENTE el mismo atajo
+        // (misma etiqueta y mismo id) para que la UI y el filtrado de
+        // eventos no cambien de comportamiento.
+        let por_api = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
+        let por_parse = DEFAULT_SHORTCUT.parse::<HotKey>().unwrap();
+        assert_eq!(por_api.id(), por_parse.id());
+        assert_eq!(hotkey_label(por_api), hotkey_label(por_parse));
     }
 
     #[test]
