@@ -1539,7 +1539,23 @@ impl WhisprApp {
             Message::CorrectionProviderChanged(provider) => {
                 self.config.correction_provider = Some(provider);
                 self.save_config();
-                Task::none()
+                // El indicador de estado debe reflejar el proveedor ACTIVO
+                // (requisito 10/09/2026): se re-ejecuta la fase LLM contra
+                // el nuevo endpoint — local: verifica/arranca el server;
+                // remoto: probe con la API key, «inactiva» si no responde.
+                // Si hay una fase en vuelo con la config antigua se cancela
+                // y se reemplaza (sus eventos caen al dropear el rx).
+                if !self.config.ai_correction_enabled() || self.is_starting() {
+                    return Task::none();
+                }
+                if self.startup_rx.is_some() {
+                    if let Some(cancel) = &self.llm_phase_cancel {
+                        cancel.store(true, Ordering::SeqCst);
+                    }
+                }
+                self.last_correction =
+                    Some("Comprobando el nuevo proveedor de corrección…".to_string());
+                return self.spawn_llm_startup();
             }
             Message::ToggleAiCorrection(on) => {
                 self.config.ai_correction_enabled = Some(on);
@@ -2997,8 +3013,10 @@ impl WhisprApp {
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
             text(
-                "Dónde corre la IA: Local (llama.cpp en tu equipo, sin internet — \
-                 recomendado), Cloud (OpenAI y similares) o Custom (tu propio endpoint)."
+                "Quién corrige lo que dictas: Local — llama.cpp, el que viene \
+                 con la app (sin internet, recomendado) · Custom LLM — tu \
+                 propio endpoint OpenAI-compatible · Cloud — OpenAI. \
+                 Por defecto: Local."
             )
             .size(fs.xxs)
             .color(t.dim),
@@ -3044,6 +3062,41 @@ impl WhisprApp {
             )
             .size(fs.xxs)
             .color(t.dim),
+            // API key: solo tiene sentido con un proveedor que la exija
+            // (Custom — opcional si el server no la pide — y Cloud,
+            // obligatoria). Con Local el server local no la usa, así que
+            // el campo no se muestra para no confundir. Persistencia en
+            // Credential Manager de Windows, NUNCA en config.json.
+            if self.config.correction_provider() != CorrectionProvider::Default {
+                column![
+                    row![
+                        text("API key")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        text_input(
+                            "opcional (Custom) · obligatoria (Cloud)",
+                            self.config.llm_api_key.as_deref().unwrap_or("")
+                        )
+                        .on_input(Message::LlmApiKeyChanged)
+                        .secure(true)
+                        .style(theme::text_input)
+                        .width(Length::Fill),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+                    text(
+                        "Clave del endpoint si la exige (Custom: opcional · \
+                         Cloud: obligatoria). Se guarda en el Administrador \
+                         de credenciales de Windows, nunca en la config."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
+                ]
+                .spacing(theme::SPACE_1)
+            } else {
+                Column::new()
+            },
             row![
                 text("Server LLM")
                     .size(fs.sm)
@@ -3259,29 +3312,6 @@ impl WhisprApp {
                     .align_y(iced::Alignment::Center),
                     // ── Detalles técnicos de la corrección IA ───────────────
                     text("Corrección IA (técnico)").size(fs.sm).color(t.dim),
-                    row![
-                        text("API key")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        text_input(
-                            "solo para cloud",
-                            self.config.llm_api_key.as_deref().unwrap_or("")
-                        )
-                        .on_input(Message::LlmApiKeyChanged)
-                        .secure(true)
-                        .style(theme::text_input)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    text(
-                        "Solo para proveedores cloud: la clave del servicio. \
-                         Se guarda en el Administrador de credenciales de \
-                         Windows, nunca en la config."
-                    )
-                    .size(fs.xxs)
-                    .color(t.dim),
                     // Timeout: slider 1..=120 s (25 por defecto). Clamp del lado del
                     // getter: ≤0 cae al default; el slider nunca emite 0.
                     row![
@@ -3762,9 +3792,19 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
         return;
     }
     if !crate::llm::is_local_endpoint(&llm.base_url) {
-        // Cloud/custom remoto: no hay server local que levantar; los
-        // errores de conexión ya se muestran al dictar (hint del log).
-        let _ = tx.send(StartupEvent::LlmReady { launched: false });
+        // Custom/Cloud remoto: no hay server local que levantar, pero SÍ
+        // se comprueba que el endpoint responde (con la API key si la
+        // hay; sin ella un 401 falsearía «caído»). El chip de estado
+        // refleja así el proveedor activo: si el endpoint está caído o
+        // rechaza la petición, la corrección se desactiva con aviso
+        // visible y el dictado sigue funcionando a texto bruto.
+        if crate::llm::server_alive_auth(&llm.base_url, llm.api_key.as_deref()) {
+            let _ = tx.send(StartupEvent::LlmReady { launched: false });
+        } else {
+            let _ = tx.send(StartupEvent::LlmDisabled(remote_endpoint_reason(
+                &llm.base_url,
+            )));
+        }
         return;
     }
 
@@ -3841,6 +3881,17 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     }
 }
 
+/// Razón visible cuando un endpoint remoto (proveedor Custom o Cloud)
+/// no responde o rechaza la petición. El dictado NUNCA se bloquea: la
+/// corrección se desactiva con este aviso y el turno se inserta a texto
+/// bruto (spec §3.5.4).
+fn remote_endpoint_reason(base_url: &str) -> String {
+    format!(
+        "el endpoint {base_url} no respondió o rechazó la petición; \
+         el dictado sigue funcionando sin corrección"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3900,5 +3951,38 @@ mod tests {
             rx.try_recv().is_err(),
             "la fase cancelada emite un único evento terminal"
         );
+    }
+
+    /// Proveedor Custom/Cloud remoto caído (requisito 10/09/2026): la
+    /// razón visible del chip nombra el endpoint y deja claro que el
+    /// dictado NUNCA se bloquea (degrada a texto bruto).
+    #[test]
+    fn endpoint_remoto_caido_desactiva_con_aviso_que_no_bloquea() {
+        let reason = remote_endpoint_reason("https://api.ejemplo.com/v1");
+        assert!(reason.contains("api.ejemplo.com"), "nombra el endpoint");
+        assert!(
+            reason.contains("el dictado sigue funcionando sin corrección"),
+            "deja claro que no bloquea: {reason}"
+        );
+        assert!(reason.contains("no respondió o rechazó"));
+    }
+
+    /// Los nombres del selector de proveedor (requisito 10/09/2026) son
+    /// autoexplicativos: Local = llama.cpp que viene con la app (default),
+    /// Custom = endpoint OpenAI-compatible, Cloud = OpenAI.
+    #[test]
+    fn etiquetas_de_proveedor_dicen_exactamente_lo_que_hacen() {
+        let local = CorrectionProvider::Default.label();
+        assert!(local.contains("Local"));
+        assert!(local.contains("llama.cpp"));
+        assert!(local.contains("viene con la app"));
+
+        let custom = CorrectionProvider::Custom.label();
+        assert!(custom.contains("Custom LLM"));
+        assert!(custom.contains("OpenAI-compatible"));
+
+        let cloud = CorrectionProvider::Cloud.label();
+        assert!(cloud.contains("Cloud"));
+        assert!(cloud.contains("OpenAI"));
     }
 }
