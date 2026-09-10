@@ -293,6 +293,12 @@ pub struct Config {
     /// 25 s (en el límite de los ~4-6 s esperados + margen para endpoints
     /// remotos Groq/Gemini; spec §3.4). Valores ≤ 0 caen al default.
     pub llm_timeout_secs: Option<u64>,
+    /// Ruta del ejecutable del server LLM local (`llama-server.exe`) que la
+    /// app lanza al arrancar cuando el endpoint local no responde. `None` =
+    /// autodetección por rutas comunes (D:\LlamaCPP, junto al exe de la app,
+    /// %LOCALAPPDATA%\LlamaCPP, PATH). Configurable en Ajustes avanzados
+    /// (ampliación de alcance 10/09/2026: en otro PC la ruta será distinta).
+    pub llama_server_path: Option<String>,
     /// Umbral de sensibilidad del clasificador correctivo (spec §2:
     /// «el umbral debe favorecer la precisión sobre el recall»). Rango
     /// 0..=100; default 50 (= conducta previa: todo lo que pasa la regla
@@ -591,6 +597,20 @@ impl Config {
             Some(t) if t > 0 => Some(t),
             _ => None,
         }
+    }
+
+    /// Ruta explícita del server LLM (`llama-server.exe`) elegida en
+    /// Ajustes. Cadena en blanco/ausente = autodetección (el hueco vacío
+    /// de un campo borrado no se persiste como ruta inválida).
+    ///
+    /// La RESOLUCIÓN final (config → rutas comunes → PATH) vive en
+    /// `llm::resolve_server_path`, que además valida que el fichero exista:
+    /// aquí solo devolvemos lo que pidió el usuario.
+    pub fn llama_server_path(&self) -> Option<&str> {
+        self.llama_server_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
     }
 
     /// Umbral del clasificador (0..=100). Default 50 (= conducta previa:
@@ -1280,6 +1300,39 @@ mod tests {
         let raw = serde_json::to_string(&original).unwrap();
         let loaded: Config = serde_json::from_str(&raw).unwrap();
         assert_eq!(loaded.correction_provider(), CorrectionProvider::Cloud);
+    }
+
+    #[test]
+    fn llama_server_path_roundtrip_y_legacy() {
+        // Default: autodetección (None) — sin campo no hay ruta fija.
+        assert_eq!(Config::default().llama_server_path(), None);
+        // Ruta explícita → se persiste y se relee.
+        let cfg = Config {
+            llama_server_path: Some("D:\\LlamaCPP\\llama-server.exe".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            cfg.llama_server_path(),
+            Some("D:\\LlamaCPP\\llama-server.exe")
+        );
+        let raw = serde_json::to_string(&cfg).unwrap();
+        let leida: Config = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            leida.llama_server_path(),
+            Some("D:\\LlamaCPP\\llama-server.exe")
+        );
+        // Config legacy (sin el campo) se deserializa → None (autodetección).
+        let legacy: Config = serde_json::from_str(r#"{ "dictionary": [] }"#).unwrap();
+        assert_eq!(legacy.llama_server_path(), None);
+        // Campo en blanco → None (autodetección; no persiste basura).
+        assert_eq!(
+            Config {
+                llama_server_path: Some("   ".into()),
+                ..Default::default()
+            }
+            .llama_server_path(),
+            None
+        );
     }
 
     #[test]

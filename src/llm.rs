@@ -9,6 +9,7 @@
 //! PITFALL ureq sin feature `json`: no existe `into_json()`; se lee el cuerpo
 //! como texto (`into_string`) y se parsea con serde_json (dependencia directa).
 
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use serde::Serialize;
@@ -510,73 +511,250 @@ pub fn port_from_base_url(base_url: &str) -> u16 {
         .unwrap_or(8081)
 }
 
-/// Traduce una ruta Windows del modelo (p. ej. de la búsqueda por raíces)
-/// a su equivalente WSL (/mnt/<letra>/…) para cargarla con el llama-server
-/// de WSL. Las rutas de LM Studio (C:\Users\…\.lmstudio\models) son
-/// accesibles desde WSL vía el mount 9p de /mnt/c y se cargan igual.
-/// Cualquier ruta no-Windows (UNC, etc.) no es traducible: devuelve None.
+/// Lanza el servidor LLM local como proceso NATIVO de Windows. El binario
+/// es `llama-server.exe` (D:\LlamaCPP, o la ruta configurada en Ajustes):
+/// build CUDA 13 con cublas64_13.dll junto al exe. Descartado el intento
+/// previo de lanzarlo vía `wsl.exe` (server ELF de WSL): un server WSL
+/// lanzado con la app queda huérfano al salir (bug t_9fbc886f) y atar el
+/// ciclo de vida de un server de escritorio a WSL es frágil.
+///
+/// Detalles críticos del spawn (verificados con el binario real):
+/// - `current_dir` = directorio del exe: el binario es un stub que carga
+///   `llama-server-impl.dll` y sus dependencias (cublas64_13.dll, ggml-*)
+///   desde ese directorio; lanzarlo con otro cwd puede fallar en la carga
+///   (STATUS_ENTRYPOINT_NOT_FOUND).
+/// - `CREATE_NO_WINDOW`: server sin consola (la app es GUI).
+/// - stdout/stderr redirigidos a `llama-server.log` junto a la config: sin
+///   consola los writes a stdout fallarían y el log permite diagnosticar
+///   arranques fallidos del server.
+///
+/// El PID del proceso lanzado se registra en un global atómico
+/// (`LAUNCHED_SERVER_PID`): al salir, la app termina SOLO ese PID
+/// (`kill_launched_server`), nunca un server ajeno que ya escuchara en el
+/// puerto antes de abrir la app. Devuelve el PID del proceso lanzado.
 #[cfg(target_os = "windows")]
-pub fn win_to_wsl_path(path: &std::path::Path) -> Option<String> {
-    use std::path::Component;
-    let mut parts: Vec<String> = Vec::new();
-    let mut seen_prefix = false;
-    for comp in path.components() {
-        match comp {
-            Component::Prefix(p) => {
-                seen_prefix = true;
-                let raw = p.as_os_str().to_string_lossy().to_string();
-                let drive = raw.trim_end_matches(':').to_ascii_lowercase();
-                if drive.len() != 1 || !drive.as_bytes()[0].is_ascii_alphabetic() {
-                    return None; // UNC u otro prefijo no mapeable
-                }
-                parts.push(format!("/mnt/{drive}"));
-            }
-            Component::Normal(s) => parts.push(s.to_string_lossy().to_string()),
-            Component::RootDir | Component::CurDir | Component::ParentDir => {}
-        }
-    }
-    // Sin prefijo de unidad no hay ruta Windows que traducir (p. ej. un
-    // nombre de fichero relativo «modelo.gguf»).
-    if !seen_prefix || parts.is_empty() {
-        return None;
-    }
-    Some(parts.join("/"))
-}
-
-/// Lanza el servidor LLM local. En esta máquina el `llama-server.exe` de
-/// D:\LlamaCPP (stub de 9 KB + llama-server-impl.dll) NO arranca desde un
-/// spawn sin consola (verificado 3×: rc=0xC0000139 o proceso muerto sin
-/// output). El server fiable es el ELF de WSL (`$HOME/.local/bin/llama-
-/// server`), que se lanza con `wsl.exe`: el localhost forwarding de WSL2
-/// hace que `http://127.0.0.1:<port>` de la app llegue al server de WSL
-/// (comprobado: Windows ve el listener vía wslrelay). El modelo se carga
-/// desde el mount /mnt/c (el mismo GGUF que resolvería la búsqueda por
-/// raíces Windows). Sin ventana de consola: wsl.exe con CREATE_NO_WINDOW.
-#[cfg(target_os = "windows")]
-pub fn launch_server(model: &std::path::Path, port: u16) -> Result<(), String> {
+pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) -> Result<u32, String> {
     use std::os::windows::process::CommandExt;
+    use std::process::{Command, Stdio};
     const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-    let wsl_model = win_to_wsl_path(model)
-        .ok_or_else(|| format!("ruta del modelo no traducible a WSL: {}", model.display()))?;
-    // El stub ELF necesita libllama-server-impl.so: se pasa LD_LIBRARY_PATH
-    // explícito (un `wsl.exe -e sh -c` NO hereda ~/.local/bin del PATH del
-    // usuario: verificado).
-    let script = format!(
-        "LD_LIBRARY_PATH=$HOME/.local/bin exec \"$HOME/.local/bin/llama-server\" \
-         -m \"{wsl_model}\" --host 127.0.0.1 --port {port} -ngl 99 --flash-attn on"
+    if !exe.is_file() {
+        return Err(format!(
+            "no existe el ejecutable del server LLM: {}",
+            exe.display()
+        ));
+    }
+    let cwd = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let args = build_server_args(model, port);
+    let log_path = crate::config::config_path()
+        .parent()
+        .map(|p| p.join("llama-server.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("llama-server.log"));
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("no se pudo abrir el log del server ({log_path:?}): {e}"))?;
+
+    let child = Command::new(exe)
+        .args(&args)
+        .current_dir(cwd)
+        .creation_flags(CREATE_NO_WINDOW)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file.try_clone().map_err(|e| format!("log del server: {e}"))?))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+        .map_err(|e| format!("no se pudo lanzar {}: {e}", exe.display()))?;
+
+    let pid = child.id();
+    LAUNCHED_SERVER_PID.store(pid, Ordering::SeqCst);
+    crate::log!(
+        "llm",
+        "server LLM lanzado (pid {pid}, {}): {}",
+        exe.display(),
+        args.join(" ")
     );
-    let mut cmd = std::process::Command::new("wsl.exe");
-    cmd.args(["-e", "sh", "-c", script.as_str()]);
-    cmd.creation_flags(CREATE_NO_WINDOW);
-    cmd.spawn()
-        .map(|_| ())
-        .map_err(|e| format!("no se pudo lanzar wsl.exe (server LLM de WSL): {e}"))
+    Ok(pid)
 }
 
 #[cfg(not(target_os = "windows"))]
-pub fn launch_server(_model: &std::path::Path, _port: u16) -> Result<(), String> {
+pub fn launch_server(
+    _exe: &std::path::Path,
+    _model: &std::path::Path,
+    _port: u16,
+) -> Result<u32, String> {
     Err("arranque automático del servidor LLM solo disponible en Windows".to_string())
+}
+
+/// Argumentos del `llama-server.exe` para el dictado. Flags de referencia
+/// de la instalación local (verificados con el binario real y los .bats de
+/// D:\LlamaCPP): `-ngl 99` + `--flash-attn on` (GPU, la RTX 4070 de
+/// Juanfri), `-ctk/-ctv q8_0` (cache KV cuantizada, 8.1 GB VRAM libres) y
+/// `-c 8192` (contexto holgado para el turno + corrección, sin pagar la
+/// RAM/VRAM de los 128K de los .bats). `--host 127.0.0.1` = solo loopback:
+/// un server de dictado no debe exponerse a la red.
+///
+/// Función pura y testeable: el spawn usa exactamente esta lista.
+fn build_server_args(model: &std::path::Path, port: u16) -> Vec<String> {
+    vec![
+        "-m".to_string(),
+        model.to_string_lossy().into_owned(),
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        port.to_string(),
+        "-ngl".to_string(),
+        "99".to_string(),
+        "--flash-attn".to_string(),
+        "on".to_string(),
+        "-ctk".to_string(),
+        "q8_0".to_string(),
+        "-ctv".to_string(),
+        "q8_0".to_string(),
+        "-c".to_string(),
+        "8192".to_string(),
+    ]
+}
+
+/// PID del server LLM lanzado por ESTA instancia de la app (0 = ninguno).
+/// Lo escribe `launch_server` (hilo de arranque) y lo lee
+/// `kill_launched_server` (hilo de UI al salir): un `AtomicU32` evita
+/// cualquier carrera de canal entre el arranque y el «Salir».
+static LAUNCHED_SERVER_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// PID registrado por esta instancia (tests y log de diagnóstico).
+pub fn launched_server_pid() -> u32 {
+    LAUNCHED_SERVER_PID.load(Ordering::SeqCst)
+}
+
+/// Termina el server LLM que ESTA instancia lanzó, si lo lanzó. NO toca
+/// servers ajenos: (a) si nunca lanzamos nada el PID es 0 y no se hace
+/// nada; (b) aunque el PID se hubiera reutilizado por otro proceso, se
+/// verifica por nombre de imagen (`llama-server.exe`) antes de matar.
+/// Devuelve `true` si había un server propio y se terminó.
+///
+/// Se llama en TODOS los caminos de salida de la app (tray «Salir» y
+/// cierre de la burbuja) ANTES de `iced::exit()`.
+pub fn kill_launched_server() -> bool {
+    let pid = LAUNCHED_SERVER_PID.swap(0, Ordering::SeqCst);
+    if pid == 0 {
+        return false;
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use winapi::shared::minwindef::FALSE;
+        use winapi::um::handleapi::CloseHandle;
+        use winapi::um::processthreadsapi::{OpenProcess, TerminateProcess};
+        use winapi::um::winbase::QueryFullProcessImageNameW;
+        use winapi::um::winnt::{PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_TERMINATE};
+
+        unsafe {
+            let handle = OpenProcess(
+                PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE,
+                FALSE,
+                pid,
+            );
+            if handle.is_null() {
+                crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (OpenProcess)");
+                return false;
+            }
+            // Salvaguarda contra la reutilización de PIDs: solo terminamos
+            // un proceso que efectivamente se llame llama-server.exe.
+            let mut buf: Vec<u16> = Vec::with_capacity(512);
+            let mut size: u32 = 512;
+            let ok = QueryFullProcessImageNameW(
+                handle,
+                0,
+                buf.as_mut_ptr(),
+                &mut size,
+            ) != 0;
+            let is_ours = if ok {
+                buf.set_len(size as usize);
+                String::from_utf16_lossy(&buf)
+                    .split(&['/', '\\'][..])
+                    .next_back()
+                    .map(|name| name.eq_ignore_ascii_case("llama-server.exe"))
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+            if is_ours {
+                if TerminateProcess(handle, 1) != 0 {
+                    crate::log!("llm", "server LLM propio (pid {pid}) terminado");
+                    CloseHandle(handle);
+                    return true;
+                }
+                crate::log!("llm", "no se pudo terminar el server LLM propio (pid {pid})");
+            } else {
+                crate::log!(
+                    "llm",
+                    "pid {pid} ya no es llama-server.exe (reutilizado): no se toca"
+                );
+            }
+            CloseHandle(handle);
+        }
+        false
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = pid;
+        false
+    }
+}
+
+/// Ruta del ejecutable `llama-server.exe` a usar: la configurada en
+/// Ajustes si existe en disco, o la primera de las rutas comunes que
+/// exista. `None` si no hay ningún candidato → el arranque lo reporta como
+/// `LlmDisabled` con aviso (el endpoint OpenAI-compatible editable sigue
+/// disponible como alternativa).
+pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    if let Some(explicit) = cfg.llama_server_path() {
+        let p = PathBuf::from(explicit);
+        if p.is_file() {
+            return Some(p);
+        }
+        crate::log!(
+            "llm",
+            "ruta de server LLM configurada no existe ({}); buscando por defecto",
+            p.display()
+        );
+    }
+    resolve_server_path_with(&default_server_roots())
+}
+
+/// Candidatos de ruta del server LLM, en orden de preferencia:
+/// 1. `D:\LlamaCPP\llama-server.exe` (instalación histórica de Juanfri,
+///    build CUDA 13 con cublas64_13.dll) — y su gemelo `C:\LlamaCPP`.
+/// 2. Junto al exe de la app (distribución portable de la app + server).
+/// 3. `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` (instalación por usuario).
+/// 4. PATH de Windows (`llama-server.exe` en cualquier directorio del PATH).
+fn default_server_roots() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut roots: Vec<PathBuf> = Vec::new();
+    for drive in ['C', 'D'] {
+        roots.push(PathBuf::from(format!(r"{drive}:\LlamaCPP\llama-server.exe")));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.join("llama-server.exe"));
+        }
+    }
+    if let Some(local) = std::env::var_os("LOCALAPPDATA") {
+        roots.push(PathBuf::from(local).join("LlamaCPP").join("llama-server.exe"));
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            roots.push(dir.join("llama-server.exe"));
+        }
+    }
+    roots
+}
+
+/// Núcleo de la búsqueda del ejecutable (parametrizable para tests con
+/// rutas temporales): primer candidato existente, en orden.
+fn resolve_server_path_with(roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
+    roots
+        .iter()
+        .find(|p| p.is_file())
+        .map(Clone::clone)
 }
 
 /// Búsqueda del modelo LLM (fichero GGUF). Si `model_name` ya es una ruta
@@ -647,17 +825,15 @@ fn resolve_model_path_with<'a>(
     roots.iter().find_map(|root| walk(root, name, 6))
 }
 
-/// Lanza `llama-server` con el modelo y puerto dados. Flags de referencia de
-/// la instalación local (verificadas con el binario real): `-ngl 99` +
-/// `--flash-attn on` (GPU, la RTX 4070 de Juanfri). En Windows se lanza sin
-/// ventana de consola (CREATE_NO_WINDOW); el proceso queda huérfano de la
-/// app a propósito: un server vivo se reutiliza en el siguiente arranque
-/// (lo detecta `server_alive`), nunca se mata un proceso ajeno.
-
 /// Espera (con polling cada 400 ms) a que `/v1/models` responda. Devuelve
 /// `true` si el server quedó listo dentro del plazo, `false` si se agotó.
 /// Tiempos reales: un 0.8B Q8 carga en ~2-5 s en GPU; 60 s de margen cubren
 /// modelos grandes y descartes por puerto ocupado sin colgar la app.
+///
+/// Si el server lanzado por ESTA instancia no responde al plazo, `false`
+/// termina en `LlmDisabled` con aviso visible — el dictado sigue. El PID
+/// lanzado queda registrado igualmente: al salir se termina, no se deja un
+/// server zombie a medio cargar.
 pub fn wait_for_server(base_url: &str, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
@@ -1229,22 +1405,74 @@ mod tests {
 
     #[cfg(target_os = "windows")]
     #[test]
-    fn ruta_windows_se_traduce_a_wsl() {
-        use std::path::Path;
-        // C:\…\.lmstudio\models → /mnt/c/… (se cargará con el server de WSL).
-        let p = Path::new("C:/Users/usuario/.lmstudio/models/lmstudio-community/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q8_0.gguf");
-        assert_eq!(
-            win_to_wsl_path(p).as_deref(),
-            Some("/mnt/c/Users/usuario/.lmstudio/models/lmstudio-community/Qwen3.5-0.8B-GGUF/Qwen3.5-0.8B-Q8_0.gguf")
+    fn args_del_server_llevan_modelo_puerto_y_flags_gpu() {
+        // El spawn usa EXACTAMENTE build_server_args: aquí fijamos el
+        // contrato — modelo Windows como ruta nativa (sin traducción WSL),
+        // puerto, loopback y los flags de la RTX 4070 (orchestrator 10/09).
+        let model = std::path::Path::new(
+            r"C:\Users\usuario\.lmstudio\models\lmstudio-community\Qwen3.5-0.8B-GGUF\Qwen3.5-0.8B-Q8_0.gguf",
         );
-        // Otras unidades → /mnt/d, /mnt/e…
+        let args = build_server_args(model, 8081);
         assert_eq!(
-            win_to_wsl_path(Path::new("D:/LlamaCPP/models/x.gguf")).as_deref(),
-            Some("/mnt/d/LlamaCPP/models/x.gguf")
+            args,
+            vec![
+                "-m",
+                r"C:\Users\usuario\.lmstudio\models\lmstudio-community\Qwen3.5-0.8B-GGUF\Qwen3.5-0.8B-Q8_0.gguf",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8081",
+                "-ngl",
+                "99",
+                "--flash-attn",
+                "on",
+                "-ctk",
+                "q8_0",
+                "-ctv",
+                "q8_0",
+                "-c",
+                "8192",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
         );
-        // Sin prefijo de unidad → no traducible.
-        assert_eq!(win_to_wsl_path(Path::new("modelo.gguf")), None);
-        // UNC → no traducible.
-        assert_eq!(win_to_wsl_path(Path::new("//server/share/x.gguf")), None);
+    }
+
+    #[test]
+    fn resolve_server_path_elige_el_primer_candidato_existente() {
+        let dir = std::env::temp_dir().join(format!("whispr-server-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let exe = dir.join("llama-server.exe");
+        std::fs::write(&exe, b"stub").unwrap();
+        let otros = std::env::temp_dir().join(format!("whispr-server-otro-{}", std::process::id()));
+        std::fs::create_dir_all(&otros).unwrap();
+        let otro_exe = otros.join("llama-server.exe");
+        std::fs::write(&otro_exe, b"stub").unwrap();
+
+        // No existe el primero, sí el segundo → elige el segundo (orden).
+        let roots = vec![
+            dir.join("no-existe.exe"),
+            otro_exe.clone(),
+            exe.clone(),
+        ];
+        assert_eq!(
+            resolve_server_path_with(&roots).as_deref(),
+            Some(otro_exe.as_path())
+        );
+        // Ninguno existe → None.
+        let vacios: Vec<std::path::PathBuf> = vec![dir.join("nada.exe")];
+        assert_eq!(resolve_server_path_with(&vacios), None);
+        assert_eq!(resolve_server_path_with(&[]), None);
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&otros);
+    }
+
+    #[test]
+    fn kill_sin_server_lanzado_no_hace_nada() {
+        // Sin PID registrado, el path de salida no intenta matar nada
+        // (criterio: nunca tocar servers ajenos).
+        assert_eq!(launched_server_pid(), 0);
+        assert!(!kill_launched_server());
     }
 }
