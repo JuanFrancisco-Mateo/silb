@@ -11,7 +11,7 @@ use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
     button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row, scrollable,
-    slider, text, text_input, Column, Space, Text,
+    slider, text, text_editor, text_input, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
 
@@ -229,7 +229,20 @@ pub enum Message {
     CorrectionDone(Result<LlmResult, String>),
     /// Deshacer la última corrección IA aplicada (un nivel).
     UndoLastCorrection,
+    // ── Nota editable (requisito R3) ────────────────────────────────────
+    /// Acción del editor multilínea del transcript (teclear, borrar,
+    /// pegar, mover el cursor…). Se aplica al `Content` y se sincroniza
+    /// `transcript`/`last_turn`: editar a mano y seguir dictando no se
+    /// pisan.
+    TranscriptEdited(text_editor::Action),
+    /// Primer clic en «Limpiar»: ARMA la confirmación («Sí, borrar» /
+    /// «No»). Borrar la nota es destructivo y debe ser explícito.
+    ClearPressed,
+    /// Confirmación del borrado (segundo clic). Borra con backup para
+    /// «Deshacer borrado».
     ClearTranscript,
+    /// Restaura la nota borrada desde el backup del borrado.
+    UndoClearTranscript,
     CopyTranscript,
     InjectLast,
     AddEntry,
@@ -335,6 +348,30 @@ pub struct WhisprApp {
     /// Etiqueta canónica del atajo global registrado («Ctrl+Shift+D» o el
     /// `shortcut` de config.json) para los textos de la UI.
     hotkey_label: String,
+    /// Placeholder del editor de la nota (vive como campo porque la API
+    /// del editor pide un `&str` prestado por frame).
+    placeholder_text: String,
+    /// Editor multilínea del transcript (requisito R3: la nota se puede
+    /// corregir a mano). Es la vista viva del texto; `transcript` sigue
+    /// siendo la fuente de verdad del pipeline (inyección, correcciones,
+    /// copiado) y se sincroniza en cada acción de edición.
+    transcript_editor: text_editor::Content,
+    /// Momento del último «Copiar» con éxito: alimenta la confirmación
+    /// visual breve del botón («✓ Copiado», ~2 s, requisito R3).
+    copied_at: Option<std::time::Instant>,
+    /// El botón «Limpiar» está armado esperando la confirmación explícita
+    /// («Sí, borrar» / «No») — borrar la nota es destructivo y debe ser
+    /// una acción deliberada (requisito R3). Caduca a los 5 s.
+    clear_armed: bool,
+    clear_armed_at: Option<std::time::Instant>,
+    /// Backup (transcript, last_turn) del último borrado, para «Deshacer
+    /// borrado» (requisito R3: reversible).
+    cleared_backup: Option<(String, String)>,
+    /// Velocidad de descarga estimada (EMA de bytes/s) para el tiempo
+    /// restante del estado de descarga (requisito R4: MB + ETA, no solo %).
+    dl_rate: Option<f64>,
+    /// Última muestra de progreso (bytes, instante) para la EMA.
+    dl_last: Option<(u64, std::time::Instant)>,
     entry_from: String,
     entry_to: String,
     /// Muletilla en curso de escritura (Ajustes → Muletillas).
@@ -445,6 +482,9 @@ impl WhisprApp {
             }
         };
         let hotkey_label = hotkey.label();
+        // Placeholder del editor (se calcula ANTES del struct literal: la
+        // etiqueta se mueve dentro de él).
+        let placeholder_text = transcript_placeholder(&hotkey_label);
 
         // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando la
         // ventana exista llegará `Message::BubbleOpened` y se le aplicará
@@ -489,6 +529,14 @@ impl WhisprApp {
             hotkey_rx,
             hotkey,
             hotkey_label,
+            placeholder_text,
+            transcript_editor: text_editor::Content::new(),
+            copied_at: None,
+            clear_armed: false,
+            clear_armed_at: None,
+            cleared_backup: None,
+            dl_rate: None,
+            dl_last: None,
             entry_from: String::new(),
             entry_to: String::new(),
             filler_input: String::new(),
@@ -593,14 +641,62 @@ impl WhisprApp {
         }
     }
 
+    /// Sincroniza el editor multilínea con `self.transcript` tras un cambio
+    /// PROGRAMÁTICO del texto (turno nuevo, corrección, undo, borrado): se
+    /// reconstruye el contenido y el cursor va al final (el turno nuevo se
+    /// ve al instante, como el `anchor_bottom` del antiguo scrollable).
+    /// Las ediciones MANUALES no pasan por aquí (van por
+    /// `Message::TranscriptEdited`): así editar a mano y seguir dictando
+    /// no se pisan — el dictado añade al final del texto YA editado.
+    fn sync_editor_from_transcript(&mut self) {
+        self.transcript_editor = text_editor::Content::with_text(&self.transcript);
+        // Cursor al final del documento: mantiene lo nuevo a la vista.
+        self.transcript_editor
+            .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
+    }
+
+    /// Registra una muestra de progreso de descarga: actualiza el estado
+    /// (bytes descargados/total) y la velocidad estimada (EMA al 30 %) que
+    /// alimenta el «quedan ~X» del hero y de la pantalla de carga. Una
+    /// descarga NUEVA (bytes que retroceden) reinicia el tracker.
+    fn note_download_progress(&mut self, downloaded: u64, total: u64) {
+        if let Status::Downloading { model, .. } = &self.status {
+            self.status = Status::Downloading {
+                model: *model,
+                downloaded,
+                total,
+            };
+        }
+        let now = std::time::Instant::now();
+        match self.dl_last {
+            // Muestra válida solo si avanza y ha pasado medio segundo (las
+            // ráfagas de mensajes instantáneos miden velocidad infinita).
+            Some((prev_d, prev_t)) if downloaded >= prev_d => {
+                let dt = now.duration_since(prev_t).as_secs_f64();
+                if dt >= 0.5 {
+                    let inst = (downloaded - prev_d) as f64 / dt;
+                    self.dl_rate = Some(match self.dl_rate {
+                        Some(prev) => prev * 0.7 + inst * 0.3,
+                        None => inst,
+                    });
+                    self.dl_last = Some((downloaded, now));
+                }
+            }
+            // Primera muestra o descarga nueva: aún sin velocidad fiable.
+            _ => {
+                self.dl_last = Some((downloaded, now));
+                self.dl_rate = None;
+            }
+        }
+    }
+
     /// Núcleo de fin de turno, compartido por la parada voluntaria
     /// (`StopRecording`: atajo, botón, burbuja o tope de duración) y la
     /// forzosa (`AudioDeviceLost`: micro desconectado a mitad). Recoge el
     /// audio acumulado y lo manda al hilo de transcripción; si no se oyó
     /// nada, el turno termina limpio con un aviso visible (nunca un
     /// silencio confuso ni un estado colgado).
-    fn finish_recording(&mut self) -> Task<Message> {
-        let Some(mut capture) = self.audio.take() else {
+    fn finish_recording(&mut self) -> Task<Message> {        let Some(mut capture) = self.audio.take() else {
             return Task::none();
         };
         self.recording_started = None;
@@ -757,6 +853,7 @@ impl WhisprApp {
                     &after,
                 ) {
                     self.transcript = t;
+                    self.sync_editor_from_transcript();
                 } else {
                     self.last_correction =
                         Some("La corrección IA ya no aplica al último turno".to_string());
@@ -902,6 +999,7 @@ impl WhisprApp {
             &self.transcript,
             &clean,
         );
+        self.sync_editor_from_transcript();
         self.last_turn = clean.clone();
         let removed = self.removed_fillers_summary();
         let summary = if input == clean {
@@ -1004,6 +1102,7 @@ impl WhisprApp {
                     crate::domain::corrective::replace_last_turn(&self.transcript, &target, &after)
                 {
                     self.transcript = t;
+                    self.sync_editor_from_transcript();
                 } else {
                     self.last_correction =
                         Some("La corrección IA ya no aplica al último turno".to_string());
@@ -1205,7 +1304,10 @@ impl WhisprApp {
                 ),
             },
             Status::Recording => MicUi {
-                color: t.accent,
+                // accent_text (no accent): «Grabando…» es texto normal
+                // (fs.md) sobre tarjeta; el violeta de marca mide ~4.2:1
+                // ahí (ver tests de contraste en theme.rs).
+                color: t.accent_text,
                 hint_color: t.dim,
                 label: "Grabando…".to_string(),
                 hint: "Suelta el atajo o pulsa para transcribir".to_string(),
@@ -1226,23 +1328,19 @@ impl WhisprApp {
                 model,
                 downloaded,
                 total,
-            } => {
-                let pct = if *total > 0 {
-                    (*downloaded as f64 / *total as f64 * 100.0) as u32
-                } else {
-                    0
-                };
-                MicUi {
-                    color: t.warn,
-                    hint_color: t.dim,
-                    label: if *total > 0 {
-                        format!("Descargando {}… {}%", model.label(), pct)
-                    } else {
-                        format!("Descargando {}…", model.label())
-                    },
-                    hint: "Primera vez con este modelo: se descarga una sola vez".to_string(),
-                }
-            }
+            } => MicUi {
+                color: t.warn,
+                hint_color: t.dim,
+                // Requisito R4: tamaño descargado/total + tiempo restante
+                // (medido con la EMA de velocidad), no solo un porcentaje.
+                label: download_progress_label(
+                    model.label(),
+                    *downloaded,
+                    *total,
+                    self.dl_rate,
+                ),
+                hint: "Primera vez con este modelo: se descarga una sola vez".to_string(),
+            },
             Status::Error(e) => MicUi {
                 color: t.err,
                 hint_color: t.err,
@@ -1575,6 +1673,9 @@ impl WhisprApp {
                                     &processed,
                                 );
                             }
+                            // La nota es editable (R3): todo cambio del
+                            // pipeline se refleja en el editor al instante.
+                            self.sync_editor_from_transcript();
                             self.last_turn = processed.clone();
                         }
                         self.status = Status::Idle;
@@ -1848,26 +1949,80 @@ impl WhisprApp {
                 if let Some((transcript, last_turn)) = self.undo_state.take() {
                     self.transcript = transcript;
                     self.last_turn = last_turn;
+                    self.sync_editor_from_transcript();
                     self.last_correction = Some("Corrección IA deshecha ↩".to_string());
                 }
                 Task::none()
             }
+            // ── Nota editable (requisito R3) ──────────────────────────────
+            Message::TranscriptEdited(action) => {
+                // Editar a mano: se aplica al editor y `transcript`
+                // (fuente de verdad del pipeline) se actualiza en la misma
+                // acción. `Content::text()` añade un '\n' final de cortesía
+                // que NO es del usuario: se recorta para no acumular saltos.
+                self.transcript_editor.perform(action);
+                let edited = self.transcript_editor.text();
+                let edited = edited.trim_end_matches('\n').to_string();
+                if edited != self.transcript {
+                    self.transcript = edited;
+                    // El último turno sigue apuntando al final de la nota:
+                    // la corrección cross-turn y «Escribir en app» operan
+                    // sobre lo último que el usuario vio/tocó.
+                    self.last_turn = last_turn_from_transcript(&self.transcript);
+                    self.save_config();
+                }
+                Task::none()
+            }
+            Message::ClearPressed => {
+                // Armar/desarmar la confirmación de borrado (acción
+                // destructiva = explícita; caduca a los 5 s vía Poll).
+                self.clear_armed = !self.clear_armed;
+                self.clear_armed_at = self.clear_armed.then(std::time::Instant::now);
+                Task::none()
+            }
             Message::ClearTranscript => {
+                // Segundo clic («Sí, borrar»): borra CON backup para
+                // deshacer (requisito R3: reversible).
+                self.clear_armed = false;
+                self.clear_armed_at = None;
+                if !self.transcript.is_empty() || !self.last_turn.is_empty() {
+                    self.cleared_backup =
+                        Some((self.transcript.clone(), self.last_turn.clone()));
+                }
                 self.transcript.clear();
                 self.last_turn.clear();
                 self.session.reset();
-                self.last_correction = None;
-                // Un undo apuntando a un transcript ya borrado sería un
-                // resucitar fantasma: se descarta junto con el borrado.
+                self.sync_editor_from_transcript();
+                self.last_correction = Some("Nota borrada".to_string());
+                // Un undo de corrección apuntando a un transcript ya
+                // borrado sería un resucitar fantasma: se descarta.
                 self.undo_state = None;
                 // Un diff pendiente cuyo target ya no existe: idem.
                 self.pending_diff = None;
                 Task::none()
             }
+            Message::UndoClearTranscript => {
+                // Restaurar la nota borrada (backup del borrado).
+                if let Some((transcript, last_turn)) = self.cleared_backup.take() {
+                    self.transcript = transcript;
+                    self.last_turn = last_turn;
+                    self.sync_editor_from_transcript();
+                    self.last_correction = Some("Borrado deshecho ↩".to_string());
+                }
+                Task::none()
+            }
             Message::CopyTranscript => {
-                if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                    let _ = clipboard.set_text(self.transcript.clone());
-                    self.last_correction = Some("Transcript copiado al portapapeles ✓".to_string());
+                match crate::inject::copy_to_clipboard(&self.transcript) {
+                    Ok(()) => {
+                        // Confirmación visual breve en el propio botón
+                        // (requisito R3): «✓ Copiado» ~2 s vía Poll.
+                        self.copied_at = Some(std::time::Instant::now());
+                        self.last_correction =
+                            Some("Transcript copiado al portapapeles ✓".to_string());
+                    }
+                    Err(e) => {
+                        self.status = Status::Error(format!("Copiar: {e}"));
+                    }
                 }
                 Task::none()
             }
@@ -2172,6 +2327,24 @@ impl WhisprApp {
                     }
                 }
 
+                // ── Confirmaciones efímeras ─────────────────────────────
+                // «✓ Copiado» vive ~2 s en el botón; la confirmación de
+                // borrado armada caduca a los 5 s (un «¿Borrar?» olvidado
+                // no puede esperar para siempre).
+                if self
+                    .copied_at
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
+                {
+                    self.copied_at = None;
+                }
+                if self
+                    .clear_armed_at
+                    .is_some_and(|t| t.elapsed() >= Duration::from_secs(5))
+                {
+                    self.clear_armed = false;
+                    self.clear_armed_at = None;
+                }
+
                 // Atajo global: toggle al detectar press de NUESTRO atajo (se filtra
                 // por id: el canal es global y podría traer eventos ajenos).
                 let mut toggled = false;
@@ -2259,13 +2432,9 @@ impl WhisprApp {
                                 let mut it = rest.split(':');
                                 if let (Some(d), Some(t)) = (it.next(), it.next()) {
                                     if let (Ok(d), Ok(t)) = (d.parse::<u64>(), t.parse::<u64>()) {
-                                        if let Status::Downloading { model, .. } = &self.status {
-                                            self.status = Status::Downloading {
-                                                model: *model,
-                                                downloaded: d,
-                                                total: t,
-                                            };
-                                        }
+                                        // Mismo tracker de velocidad que la
+                                        // pantalla de carga (MB + ETA, R4).
+                                        self.note_download_progress(d, t);
                                     }
                                 }
                             }
@@ -2503,16 +2672,12 @@ impl WhisprApp {
     fn handle_startup_event(&mut self, event: StartupEvent) -> Task<Message> {
         match event {
             StartupEvent::WhisperProgress { downloaded, total } => {
-                self.startup_label = if total > 0 {
-                    let mb = |b: u64| b / (1024 * 1024);
-                    format!(
-                        "Descargando modelo de voz… {} / {} MB (primera vez)",
-                        mb(downloaded),
-                        mb(total).max(1)
-                    )
-                } else {
-                    "Descargando modelo de voz…".to_string()
-                };
+                // La velocidad estimada (EMA) se alimenta aquí: la pantalla
+                // de carga y el hero comparten el mismo cálculo (R4: tamaño
+                // + tiempo restante, no solo un porcentaje).
+                self.note_download_progress(downloaded, total);
+                self.startup_label =
+                    download_progress_label("modelo de voz", downloaded, total, self.dl_rate);
                 Task::none()
             }
             StartupEvent::WhisperReady => {
@@ -2786,30 +2951,19 @@ impl WhisprApp {
         .on_press(Message::Toggle)
         .style(theme::mic);
 
-        // ── Transcript: la zona central, scroll propio (tipo chat) ───────────
-        let transcript_empty = self.transcript.is_empty();
+        // ── Transcript: editor multilínea (requisito R3) ─────────────────────
+        // La nota se puede corregir a mano: un error de Whisper ya no
+        // obliga a re-dictar. El editor gestiona su propio scroll (sige al
+        // cursor); el dictado nuevo llega con el cursor al final
+        // (`sync_editor_from_transcript`).
         let transcript_card = container(
-            scrollable(
-                container(
-                    text(if transcript_empty {
-                        format!(
-                            "Pulsa {} o el botón del micrófono y empieza a hablar.",
-                            self.hotkey_label
-                        )
-                    } else {
-                        self.transcript.as_str().to_string()
-                    })
-                    .size(fs.md)
-                    .color(if transcript_empty { t.dim } else { t.text }),
-                )
-                .width(Length::Fill)
-                .padding(theme::SPACE_3),
-            )
-            .style(theme::scrollable)
-            // Sigue al final del texto: cada turno nuevo se ve al instante
-            // (como una conversación de chat).
-            .anchor_bottom()
-            .height(Length::Fill),
+            text_editor(&self.transcript_editor)
+                .placeholder(self.placeholder_text.as_str())
+                .on_action(Message::TranscriptEdited)
+                .size(fs.md)
+                .padding(theme::SPACE_3)
+                .height(Length::Fill)
+                .style(theme::text_editor),
         )
         .width(Length::Fill)
         .height(Length::Fill)
@@ -2821,13 +2975,40 @@ impl WhisprApp {
         } else {
             "Escribir en app"
         };
+        // Confirmación visual breve del copiado (requisito R3): «✓ Copiado»
+        // ~2 s en el propio botón (caduca en el Poll).
+        let copy_label: &str = if self.copied_at.is_some() {
+            "✓ Copiado"
+        } else {
+            "Copiar"
+        };
+        // Borrado explícito y reversible (requisito R3): primer clic ARMA
+        // la confirmación; el borrado real («Sí, borrar») lleva backup para
+        // deshacer. La confirmación caduca a los 5 s.
+        let clear_controls: Element<'_, Message> = if self.clear_armed {
+            row![
+                text("¿Borrar la nota?").size(fs.sm).color(t.warn),
+                button(ui_text("Sí, borrar"))
+                    .on_press(Message::ClearTranscript)
+                    .style(theme::primary),
+                button("No")
+                    .on_press(Message::ClearPressed)
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center)
+            .into()
+        } else {
+            button("Limpiar")
+                .on_press(Message::ClearPressed)
+                .style(theme::secondary)
+                .into()
+        };
         let actions = row![
-            button("Copiar")
+            button(ui_text(copy_label))
                 .on_press(Message::CopyTranscript)
                 .style(theme::secondary),
-            button("Limpiar")
-                .on_press(Message::ClearTranscript)
-                .style(theme::secondary),
+            clear_controls,
             if self.last_turn.is_empty() {
                 button(inject_label).style(theme::secondary)
             } else {
@@ -2836,7 +3017,8 @@ impl WhisprApp {
                     .style(theme::secondary)
             },
         ]
-        .spacing(theme::SPACE_2);
+        .spacing(theme::SPACE_2)
+        .align_y(iced::Alignment::Center);
 
         // ── Feedback textual ────────────────────────────────────────────────
         // Con undo disponible, el feedback lleva el botón «Deshacer» (spec
@@ -2886,6 +3068,15 @@ impl WhisprApp {
                         .style(theme::secondary),
                 );
             }
+            // Reversibilidad del borrado (requisito R3): junto al aviso
+            // «Nota borrada» vive el deshacer específico del borrado.
+            if self.cleared_backup.is_some() {
+                row_el = row_el.push(
+                    button(ui_text("↩ Deshacer borrado"))
+                        .on_press(Message::UndoClearTranscript)
+                        .style(theme::secondary),
+                );
+            }
             row_el.into()
         } else if !self.removed_fillers.is_empty() {
             text(format!(
@@ -2912,6 +3103,22 @@ impl WhisprApp {
             transcript_card.into()
         };
 
+        // ── Pie de confianza (requisito R4): siempre visible, discreto ─────
+        // Promesa HONESTA: la transcripción es siempre local, pero si el
+        // usuario activó la corrección en la nube, el texto corregido SÍ
+        // sale (así lo elige y así se le dice — jamás una promesa falsa).
+        let trust_line = trust_footer_line(
+            self.config.ai_correction_enabled()
+                && matches!(
+                    self.config.correction_provider(),
+                    CorrectionProvider::Cloud
+                ),
+        );
+        let footer = container(text(trust_line).size(fs.xxs).color(t.dim))
+            .width(Length::Fill)
+            .align_x(iced::alignment::Horizontal::Center)
+            .padding(theme::SPACE_1);
+
         let mut content = column![header, llm_chip, hero, middle]
             .spacing(theme::SPACE_3)
             .padding(theme::SPACE_3);
@@ -2920,6 +3127,9 @@ impl WhisprApp {
         if !self.settings_open {
             content = content.push(actions).push(feedback);
         }
+        // El pie de confianza va SIEMPRE (también dentro de Ajustes): la
+        // promesa de privacidad no desaparece al abrir un panel.
+        content = content.push(footer);
 
         container(content)
             .width(Length::Fill)
@@ -3770,6 +3980,84 @@ fn feedback_is_warning(feedback: &str) -> bool {
         || feedback.contains("Dictado larguísimo")
 }
 
+/// Último turno a partir de la nota editada a mano (requisito R3): la
+/// última línea con contenido. El dictado añade al final, así que «lo
+/// último que vio/tocó el usuario» es la cola de la nota; si partió líneas
+/// a mano, la última línea ES lo último que dictó o corrigió.
+fn last_turn_from_transcript(transcript: &str) -> String {
+    transcript
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or("")
+        .trim()
+        .to_string()
+}
+
+/// Etiqueta completa del estado de descarga (requisito R4: tamaño
+/// descargado/total y tiempo restante, no solo un porcentaje). La usan el
+/// hero de la ventana principal y la pantalla de carga.
+fn download_progress_label(
+    what: &str,
+    downloaded: u64,
+    total: u64,
+    rate: Option<f64>,
+) -> String {
+    let mb = |b: u64| b / (1024 * 1024);
+    if total == 0 {
+        return format!("Descargando {what}… (tamaño desconocido)");
+    }
+    format!(
+        "Descargando {what}… {} / {} MB · {}",
+        mb(downloaded),
+        mb(total).max(1),
+        download_eta_text(downloaded, total, rate)
+    )
+}
+
+/// Tiempo restante legible a partir de la velocidad estimada. Sin velocidad
+/// fiable → «calculando tiempo…» (nada de un «∞ s» técnico). Formatos
+/// elegidos para no prometer exactitud donde no la hay: a partir de 90 min
+/// se dice «más de 1 h».
+fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
+    // Menos de 1 KB/s no es una velocidad: es el arranque de la conexión.
+    let Some(rate) = rate.filter(|r| *r > 1024.0) else {
+        return "calculando tiempo…".to_string();
+    };
+    let remaining = total.saturating_sub(downloaded) as f64;
+    let secs = remaining / rate;
+    if secs >= 5400.0 {
+        "quedan más de 1 h".to_string()
+    } else if secs >= 90.0 {
+        format!("quedan ~{} min", (secs / 60.0).round() as u64)
+    } else if secs >= 10.0 {
+        format!("quedan ~{} s", secs.round() as u64)
+    } else {
+        "casi listo".to_string()
+    }
+}
+
+    /// Placeholder del editor cuando la nota está vacía: cómo empezar. Se
+    /// guarda como campo (la API del editor pide un préstamo por el frame,
+    /// no un owned).
+    fn transcript_placeholder(hotkey_label: &str) -> String {
+        format!(
+            "Pulsa {hotkey_label} o el botón del micrófono y empieza a hablar.\n\
+             La nota se puede corregir a mano aquí."
+        )
+    }
+
+/// Línea del pie de confianza (requisito R4). HONESTA por encima de todo:
+/// con la corrección en la nube activada, el texto corregido SÍ sale del
+/// PC — y el pie lo dice en vez de prometer una privacidad falsa.
+fn trust_footer_line(cloud_correction_active: bool) -> &'static str {
+    if cloud_correction_active {
+        "Transcripción local · la corrección IA usa la nube"
+    } else {
+        "Transcripción local · nada sale de tu PC"
+    }
+}
+
 /// Etiqueta legible del idioma para el `pick_list`. La opción "auto"
 /// representa autodetección; cualquier valor en `Option<String>` (incluido
 /// None → default "es") se mapea a la cadena que el `pick_list` espera.
@@ -4246,6 +4534,97 @@ mod tests {
             result.is_err(),
             "sin fichero en disco, cargar el contexto debe fallar con error"
         );
+    }
+
+    // ── Nota editable (requisito R3) ────────────────────────────────────
+
+    /// Tras una edición manual, «lo último» es la última línea con
+    /// contenido: la corrección cross-turn y «Escribir en app» siguen
+    /// apuntando a lo que el usuario acaba de ver/tocar.
+    #[test]
+    fn last_turn_tras_edicion_manual_es_la_ultima_linea() {
+        assert_eq!(last_turn_from_transcript("hola mundo"), "hola mundo");
+        assert_eq!(
+            last_turn_from_transcript("primera línea\nsegunda línea"),
+            "segunda línea"
+        );
+        // Líneas vacías al final (saltos del usuario) no cuentan.
+        assert_eq!(
+            last_turn_from_transcript("turno bueno\n\n   \n"),
+            "turno bueno"
+        );
+        assert_eq!(last_turn_from_transcript(""), "");
+        assert_eq!(last_turn_from_transcript("\n \n"), "");
+    }
+
+    /// El editor sincronizado con Content::text() recorta el '\n' final de
+    /// cortesía de la API: sin esto, cada edición acumularía saltos falsos.
+    #[test]
+    fn la_edicion_manual_no_acumula_saltos_falsos() {
+        // El propio contrato de Content::text() añade '\n' al final: el
+        // handler de TranscriptEdited recorta ANTES de asignar transcript.
+        let content =
+            text_editor::Content::<iced::Renderer>::with_text("una línea");
+        let raw = content.text();
+        assert!(raw.ends_with('\n'), "la API añade el salto de cortesía");
+        assert_eq!(raw.trim_end_matches('\n'), "una línea");
+    }
+
+    // ── Descarga con MB y tiempo restante (requisito R4) ────────────────
+
+    #[test]
+    fn etiqueta_de_descarga_lleva_mb_y_eta() {
+        let total = 466 * 1024 * 1024u64;
+        let mitad = total / 2;
+        // Sin velocidad aún: calculando.
+        let sin_rate = download_progress_label("Small", mitad, total, None);
+        assert!(sin_rate.contains("233 / 466 MB"), "{sin_rate}");
+        assert!(sin_rate.contains("calculando tiempo"), "{sin_rate}");
+        // Con velocidad de ~10 MB/s: ~23 s restantes.
+        let con_rate = download_progress_label(
+            "Small",
+            mitad,
+            total,
+            Some(10.0 * 1024.0 * 1024.0),
+        );
+        assert!(con_rate.contains("quedan ~"), "{con_rate}");
+        assert!(con_rate.contains("23 s"), "{con_rate}");
+        // Total desconocido: sin inventar MB.
+        let desconocido = download_progress_label("Tiny", 5, 0, None);
+        assert!(desconocido.contains("tamaño desconocido"), "{desconocido}");
+    }
+
+    #[test]
+    fn eta_no_promete_exactitud_donde_no_la_hay() {
+        let total = 466 * 1024 * 1024u64;
+        let d = 0;
+        // Velocidad ridícula (~60 KB/s → ~2 h 15 min) → «más de 1 h», sin
+        // minutos falsos.
+        assert_eq!(
+            download_eta_text(d, total, Some(60_000.0)),
+            "quedan más de 1 h"
+        );
+        // Velocidad incapaz de medirse → calculando.
+        assert_eq!(download_eta_text(d, total, Some(500.0)), "calculando tiempo…");
+        assert_eq!(download_eta_text(d, total, None), "calculando tiempo…");
+        // Minutos normales redondeados.
+        let rate = total as f64 / 180.0; // 3 min exactos
+        assert_eq!(download_eta_text(0, total, Some(rate)), "quedan ~3 min");
+        // Ya descargado todo: casi listo.
+        assert_eq!(download_eta_text(total, total, Some(rate)), "casi listo");
+    }
+
+    /// El pie de confianza es honesto (R4): con la corrección en la nube
+    /// activa NO promete «nada sale de tu PC».
+    #[test]
+    fn pie_de_confianza_no_miente_con_la_nube_activa() {
+        assert_eq!(
+            trust_footer_line(false),
+            "Transcripción local · nada sale de tu PC"
+        );
+        let con_nube = trust_footer_line(true);
+        assert!(con_nube.contains("nube"), "{con_nube}");
+        assert!(!con_nube.contains("nada sale"), "{con_nube}");
     }
 
     /// Los nombres del selector de proveedor (requisito 10/09/2026) son

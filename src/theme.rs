@@ -9,7 +9,7 @@ use iced::border::Radius;
 use iced::theme::Palette;
 use iced::widget::{
     button, checkbox as check, container, pick_list as pick, progress_bar, rule,
-    scrollable as scroll, text_input as input,
+    scrollable as scroll, text_editor as editor, text_input as input,
 };
 use iced::{Background, Border, Color, Shadow, Theme};
 
@@ -30,9 +30,17 @@ pub const TEXT: Color = rgb!(0xF7, 0xF6, 0xF3);
 pub const DIM: Color = rgb!(0x9A, 0x9A, 0xA3);
 pub const ACCENT: Color = rgb!(0x7C, 0x6C, 0xFF); // violeta único
 pub const ACCENT_HOVER: Color = rgb!(0x8F, 0x82, 0xFF);
+// Variante de acento SEGURA como color de texto normal: #7C6CFF sobre la
+// tarjeta grafito queda en ~4.2:1 (por debajo del AA 4.5:1 de WCAG para
+// texto pequeño). #8F82FF (y #6652F2 en claro) miden ≥ 4.5:1 sobre fondo Y
+// tarjeta en ambos modos (tests en este módulo). El violeta de marca se
+// reserva para rellenos, elementos grandes (≥ 3:1) y estados.
+pub const ACCENT_TEXT: Color = rgb!(0x8F, 0x82, 0xFF);
 pub const OK: Color = rgb!(0x3F, 0xB9, 0x5F);
 pub const WARN: Color = rgb!(0xF5, 0xA6, 0x23);
-pub const ERR: Color = rgb!(0xE5, 0x4B, 0x4B);
+// Rojo medido para AA sobre tarjeta oscura: #E54B4F quedaba en ~4.2:1; este
+// pasa 4.5:1 sobre fondo y tarjeta (ver test de contraste).
+pub const ERR: Color = rgb!(0xEB, 0x57, 0x57);
 pub const BORDER: Color = rgb!(0x2E, 0x30, 0x38);
 
 pub const BG_LIGHT: Color = rgb!(0xF6, 0xF5, 0xF2);
@@ -40,11 +48,56 @@ pub const SURFACE_LIGHT: Color = rgb!(0xFF, 0xFF, 0xFF);
 pub const SURFACE_ALT_LIGHT: Color = rgb!(0xEB, 0xEB, 0xEF);
 pub const TEXT_LIGHT: Color = rgb!(0x17, 0x18, 0x1C);
 pub const DIM_LIGHT: Color = rgb!(0x6B, 0x6B, 0x76);
-pub const ACCENT_HOVER_LIGHT: Color = rgb!(0x66, 0x52, 0xF2);
-pub const OK_LIGHT: Color = rgb!(0x2F, 0x9E, 0x53);
-pub const WARN_LIGHT: Color = rgb!(0xD9, 0x8E, 0x0B);
+// Hover del acento en claro: más CLARO que el acento (a diferencia del
+// oscuro, cuyo hover sube de luminancia). Motivo medido: la tinta de los
+// botones primarios (#17181C) sobre un hover oscuro (#6652F2) daba 3.42:1
+// (< AA); sobre #9A8CFF mide 6.4:1. El hover más claro es además el patrón
+// natural en modo claro.
+pub const ACCENT_HOVER_LIGHT: Color = rgb!(0x9A, 0x8C, 0xFF);
+// Acento-texto en modo claro (mismo rol que ACCENT_TEXT en oscuro): mide
+// ≥ 4.5:1 sobre fondo claro y sobre tarjeta blanca. NO es el hover: son
+// requisitos de contraste distintos (texto sobre fondo vs tinta sobre
+// relleno) y cada uno necesita su tono.
+pub const ACCENT_TEXT_LIGHT: Color = rgb!(0x66, 0x52, 0xF2);
+// Verde y ámbar oscurecidos para AA en claro: los de antes (#2F9E53,
+// #D98E0B) quedaban en ~3.1:1 y ~2.7:1 sobre blanco (texto pequeño < 4.5).
+pub const OK_LIGHT: Color = rgb!(0x1F, 0x7A, 0x3E);
+pub const WARN_LIGHT: Color = rgb!(0x8F, 0x63, 0x00);
 pub const ERR_LIGHT: Color = rgb!(0xC9, 0x3E, 0x3E);
 pub const BORDER_LIGHT: Color = rgb!(0xD9, 0xD9, 0xE0);
+
+/// Tinta para texto sobre un botón RELLENO de acento (p. ej. «Aplicar»):
+/// un casi-negro grafito que mide ≥ 4.5:1 sobre #7C6CFF en ambos modos
+/// (el fondo del modo NO se puede usar aquí: en claro daría ~3.5:1).
+pub const INK_ON_ACCENT: Color = rgb!(0x17, 0x18, 0x1C);
+
+// ─────────────────────── Contraste WCAG (medido, no estimado) ────────────────
+// Fórmulas de WCAG 2.1: luminancia relativa + ratio (1..21). Públicas porque
+// los tests de accesibilidad de la UI (R4) miden con ellas los pares REALES
+// de tokens que usa la app; ajustar un color sin re-medir queda prohibido
+// por los propios tests.
+
+/// Luminancia relativa WCAG de un color opaco (0..1).
+fn relative_luminance(c: Color) -> f64 {
+    let channel = |v: f32| {
+        let v = v.clamp(0.0, 1.0) as f64;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+}
+
+/// Ratio de contraste WCAG (1..21). AA texto normal ≥ 4.5; texto grande y
+/// componentes gráficos ≥ 3.
+pub fn contrast_ratio(fg: Color, bg: Color) -> f64 {
+    let l1 = relative_luminance(fg);
+    let l2 = relative_luminance(bg);
+    let (hi, lo) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
+    (hi + 0.05) / (lo + 0.05)
+}
 
 /// Paleta semántica resuelta por modo (dark/light).
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -56,6 +109,9 @@ pub struct UiPalette {
     pub dim: Color,
     pub accent: Color,
     pub accent_hover: Color,
+    /// Acento apto para TEXTO normal (AA ≥ 4.5:1 sobre bg y surface).
+    /// Usar `accent` para rellenos y elementos grandes (≥ 3:1).
+    pub accent_text: Color,
     pub ok: Color,
     pub warn: Color,
     pub err: Color,
@@ -70,6 +126,7 @@ pub const DARK: UiPalette = UiPalette {
     dim: DIM,
     accent: ACCENT,
     accent_hover: ACCENT_HOVER,
+    accent_text: ACCENT_TEXT,
     ok: OK,
     warn: WARN,
     err: ERR,
@@ -84,6 +141,7 @@ pub const LIGHT: UiPalette = UiPalette {
     dim: DIM_LIGHT,
     accent: ACCENT, // acento único: mismo violeta en ambos modos
     accent_hover: ACCENT_HOVER_LIGHT,
+    accent_text: ACCENT_TEXT_LIGHT,
     ok: OK_LIGHT,
     warn: WARN_LIGHT,
     err: ERR_LIGHT,
@@ -267,7 +325,9 @@ pub fn flat(theme: &Theme) -> container::Style {
     }
 }
 
-/// Botón primario (acción principal): fondo acento violeta, texto del color de fondo.
+/// Botón primario (acción principal): fondo acento violeta, texto con la
+/// tinta medida para AA sobre el acento (ver `INK_ON_ACCENT`: usar el color
+/// de fondo del modo dejaba el claro en ~3.5:1).
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
     let bg = match status {
@@ -276,7 +336,7 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     };
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color: t.bg,
+        text_color: INK_ON_ACCENT,
         border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
         shadow: Shadow::default(),
     }
@@ -321,16 +381,36 @@ pub fn mic_card(theme: &Theme, state: Color) -> container::Style {
     }
 }
 
-/// Campo de texto: fondo alt, borde acento al enfocar.
+/// Campo de texto: fondo alt, borde acento al enfocar. El foco se dibuja
+/// con 1.5 px de acento (requisito de accesibilidad: el foco de teclado
+/// debe VERSR, no inferirse).
 pub fn text_input(theme: &Theme, status: input::Status) -> input::Style {
     let t = tokens(theme);
-    let border_color = match status {
-        input::Status::Focused => t.accent,
-        _ => t.border,
+    let (border_color, border_width) = match status {
+        input::Status::Focused => (t.accent, 1.5),
+        _ => (t.border, 1.0),
     };
     input::Style {
         background: Background::Color(t.surface_alt),
-        border: border(border_color, 1.0, RADIUS_SM),
+        border: border(border_color, border_width, RADIUS_SM),
+        icon: t.dim,
+        placeholder: t.dim,
+        value: t.text,
+        selection: with_alpha(t.accent, 0.35),
+    }
+}
+
+/// Editor multilínea del transcript (requisito R3): mismo lenguaje visual
+/// que el campo de texto, con anillo de foco visible (1.5 px de acento).
+pub fn text_editor(theme: &Theme, status: editor::Status) -> editor::Style {
+    let t = tokens(theme);
+    let (border_color, border_width) = match status {
+        editor::Status::Focused => (t.accent, 1.5),
+        _ => (t.border, 1.0),
+    };
+    editor::Style {
+        background: Background::Color(t.surface),
+        border: border(border_color, border_width, RADIUS_MD),
         icon: t.dim,
         placeholder: t.dim,
         value: t.text,
@@ -516,5 +596,82 @@ mod tests {
         );
         assert_eq!(with_alpha(BG, 0.2).a, 0.2);
         assert_eq!(with_alpha(BG, 0.2).r, BG.r, "RGB intacto");
+    }
+
+    // ── Contraste WCAG medido (requisito R4: medido, no estimado) ─────────
+    //
+    // Se miden los pares REALES de la UI: cada color de texto de la paleta
+    // contra el fondo de ventana Y contra la tarjeta (los textos viven en
+    // ambos). Si un test falla, el token se ajusta y se vuelve a medir:
+    // cambiar un color sin pasar por aquí queda prohibido.
+
+    /// AA texto normal (≥ 4.5:1) para todos los colores usados como texto.
+    #[test]
+    fn contraste_aa_de_todo_el_texto_en_ambos_modos() {
+        for (nombre, p) in [("dark", &DARK), ("light", &LIGHT)] {
+            for (fondo_name, fondo) in [("bg", p.bg), ("surface", p.surface)] {
+                for (color_name, fg) in [
+                    ("text", p.text),
+                    ("dim", p.dim),
+                    ("accent_text", p.accent_text),
+                    ("ok", p.ok),
+                    ("warn", p.warn),
+                    ("err", p.err),
+                ] {
+                    let ratio = contrast_ratio(fg, fondo);
+                    assert!(
+                        ratio >= 4.5,
+                        "{nombre}/{fondo_name}: {color_name} mide {ratio:.2}:1 (< 4.5 AA)"
+                    );
+                }
+            }
+        }
+    }
+
+    /// AA texto grande y componentes gráficos (≥ 3:1): el violeta de marca
+    /// como texto GRANDE (hero/spinner, ≥ 24 px) y la tinta de los botones
+    /// rellenos de acento (que sí es texto normal → exije 4.5).
+    #[test]
+    fn contraste_de_acento_grande_y_botones_rellenos() {
+        for (nombre, p) in [("dark", &DARK), ("light", &LIGHT)] {
+            for (fondo_name, fondo) in [("bg", p.bg), ("surface", p.surface)] {
+                let ratio = contrast_ratio(p.accent, fondo);
+                assert!(
+                    ratio >= 3.0,
+                    "{nombre}/{fondo_name}: accent grande mide {ratio:.2}:1 (< 3)"
+                );
+            }
+            // Texto de botón primario: tinta fija sobre relleno de acento
+            // (y su hover, que también es un fondo posible).
+            let sobre_acento = contrast_ratio(INK_ON_ACCENT, p.accent);
+            let sobre_hover = contrast_ratio(INK_ON_ACCENT, p.accent_hover);
+            assert!(
+                sobre_acento >= 4.5 && sobre_hover >= 4.5,
+                "{nombre}: tinta sobre acento {sobre_acento:.2}:1 / hover {sobre_hover:.2}:1"
+            );
+        }
+    }
+
+    /// Sanity del cálculo contra los valores publicados de WCAG: negro sobre
+    /// blanco = 21:1 exacto; #767676 sobre blanco = 4.54:1 (el gris mínimo
+    /// AA citado por el W3C).
+    #[test]
+    fn ratio_de_contraste_cae_con_los_valores_conocidos() {
+        assert!((contrast_ratio(Color::BLACK, Color::WHITE) - 21.0).abs() < 0.01);
+        let gris = rgb!(0x76, 0x76, 0x76);
+        let ratio = contrast_ratio(gris, Color::WHITE);
+        assert!(
+            (ratio - 4.54).abs() < 0.05,
+            "#767676 sobre blanco debe medir ~4.54:1, mide {ratio:.3}"
+        );
+    }
+
+    /// La tinta de los botones y el acento-texto son tokens independientes
+    /// del modo: un cambio de tema no puede romper el contraste por descuido.
+    #[test]
+    fn tokens_de_acceso_no_cambian_con_el_modo() {
+        assert_eq!(DARK.accent_text, ACCENT_TEXT);
+        assert_eq!(LIGHT.accent_text, ACCENT_TEXT_LIGHT);
+        assert_eq!(INK_ON_ACCENT, rgb!(0x17, 0x18, 0x1C));
     }
 }
