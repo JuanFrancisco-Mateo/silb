@@ -182,6 +182,16 @@ pub enum Message {
     /// Timeout HTTP en segundos (1..=120). Sale del slider; el getter
     /// lo pasa a `LlmConfig::timeout_secs` y `ureq::timeout`.
     LlmTimeoutChanged(u32),
+    /// Ruta del ejecutable del server LLM (`llama-server.exe`) tecleada en
+    /// Ajustes. Vacío = autodetección por rutas comunes.
+    LlmServerPathChanged(String),
+    /// Abre el diálogo nativo «Examinar…» para elegir `llama-server.exe`.
+    LlmServerPathBrowse,
+    /// Resultado del diálogo de archivo (None = cancelado). Persiste la
+    /// ruta elegida en config.json.
+    LlmServerPathPicked(Option<String>),
+    /// Vuelve a la autodetección (borra la ruta explícita de config.json).
+    LlmServerPathReset,
     /// Umbral del clasificador (0..=100). 0 = clasificador pasivo
     /// (atajo equivalente al toggle maestro apagado); 100 =
     /// imposible que enrute; default 50 = conducta previa.
@@ -1484,6 +1494,51 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            Message::LlmServerPathChanged(s) => {
+                // Vacío → None (autodetección); con ruta → se trimea y
+                // persiste tal cual (la validación de existencia la hace
+                // `resolve_server_path` al lanzar, no al teclear).
+                let trimmed = s.trim();
+                self.config.llama_server_path = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                self.save_config();
+                Task::none()
+            }
+            Message::LlmServerPathBrowse => {
+                // Diálogo nativo de Windows (rfd) desde el hilo de UI. Se
+                // filtra por llama-server.exe; el resultado (ruta o None
+                // si se canceló) vuelve como mensaje.
+                Task::perform(
+                    async {
+                        rfd::FileDialog::new()
+                            .set_title("Elegir el ejecutable del server LLM")
+                            .add_filter("llama-server", &["exe"])
+                            .pick_file()
+                            .map(|p| p.to_string_lossy().into_owned())
+                    },
+                    Message::LlmServerPathPicked,
+                )
+            }
+            Message::LlmServerPathPicked(path) => {
+                if let Some(p) = path {
+                    self.config.llama_server_path = Some(p);
+                    self.save_config();
+                    crate::log!(
+                        "llm",
+                        "server LLM configurado: {}",
+                        self.config.llama_server_path.as_deref().unwrap_or("")
+                    );
+                }
+                Task::none()
+            }
+            Message::LlmServerPathReset => {
+                self.config.llama_server_path = None;
+                self.save_config();
+                Task::none()
+            }
             Message::LlmThresholdChanged(v) => {
                 self.config.llm_classifier_threshold = Some(v as u8);
                 self.save_config();
@@ -1838,7 +1893,11 @@ impl WhisprApp {
                                 return self.update(Message::ToggleMainWindow);
                             }
                             Ok(ev) if ev.id == crate::tray::MENU_QUIT_ID => {
-                                crate::log!("tray", "«Salir» desde la bandeja");
+                                crate::log!(
+                                    "tray",
+                                    "«Salir» desde la bandeja → terminando server LLM propio"
+                                );
+                                crate::llm::kill_launched_server();
                                 self.persist_config();
                                 self.config_save_deadline = None;
                                 return iced::exit();
@@ -2111,7 +2170,11 @@ impl WhisprApp {
             // y sí termina la app. También cubre el caso de que la principal
             // aún no se haya registrado (cierre antes de WindowOpened).
             Message::WindowCloseRequested(id) => {
-                crate::log!("tray", "cierre de ventana {id} → salir");
+                crate::log!(
+                    "tray",
+                    "cierre de ventana {id} → salir; terminando server LLM propio"
+                );
+                crate::llm::kill_launched_server();
                 self.persist_config();
                 self.config_save_deadline = None;
                 iced::exit()
@@ -2954,6 +3017,32 @@ impl WhisprApp {
                     ]
                     .spacing(theme::SPACE_2)
                     .align_y(iced::Alignment::Center),
+                    // Ruta del server LLM local (`llama-server.exe`): la que
+                    // la app lanza al arrancar si el endpoint local no
+                    // responde. Vacío = autodetección (D:\LlamaCPP, junto al
+                    // exe de la app, %LOCALAPPDATA%\LlamaCPP, PATH). Si el
+                    // campo está vacío, el placeholder muestra la ruta que se
+                    // resolvería ahora mismo.
+                    row![
+                        text("Server LLM")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .width(Length::Fixed(96.0)),
+                        text_input(
+                            &auto_server_placeholder(&self.config),
+                            self.config.llama_server_path.as_deref().unwrap_or(""),
+                        )
+                        .on_input(Message::LlmServerPathChanged)
+                        .style(theme::text_input)
+                        .width(Length::Fill),
+                        button("Examinar…")
+                            .on_press(Message::LlmServerPathBrowse)
+                            .style(theme::secondary),
+                        button(ui_text("✕"))
+                            .on_press(Message::LlmServerPathReset),
+                    ]
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
                     row![
                         text("API key")
                             .size(fs.sm)
@@ -3176,6 +3265,18 @@ fn ui_text<'a>(content: impl Into<String>) -> Text<'a> {
     text(content.into()).shaping(Shaping::Advanced)
 }
 
+/// Placeholder del campo «Server LLM» de Ajustes: muestra la ruta que se
+/// resolvería AHORA MISMO si el usuario la dejara vacía (autodetección), o
+/// un aviso si no hay ningún candidato. Informativo: no valida nada.
+fn auto_server_placeholder(cfg: &Config) -> String {
+    match crate::llm::resolve_server_path(cfg) {
+        Some(p) => format!("auto: {}", p.display()),
+        None => {
+            "auto: no encontrado — usa «Examinar…» o un endpoint".to_string()
+        }
+    }
+}
+
 /// Etiqueta legible del idioma para el `pick_list`. La opción "auto"
 /// representa autodetección; cualquier valor en `Option<String>` (incluido
 /// None → default "es") se mapea a la cadena que el `pick_list` espera.
@@ -3392,14 +3493,27 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>) {
     };
 
     let port = crate::llm::port_from_base_url(&llm.base_url);
+    let Some(server_bin) = crate::llm::resolve_server_path(&cfg) else {
+        // Sin ejecutable no hay server local que levantar: la corrección se
+        // desactiva con aviso. El usuario puede configurar la ruta en
+        // Ajustes avanzados («Server LLM») o usar un endpoint
+        // OpenAI-compatible editable (proveedor Custom/Cloud).
+        let _ = tx.send(StartupEvent::LlmDisabled(format!(
+            "no se encontró el ejecutable del server LLM (llama-server.exe). \
+             Configúralo en Ajustes avanzados o usa un endpoint OpenAI-compatible. \
+             El dictado sigue funcionando."
+        )));
+        return;
+    };
     crate::log!(
         "startup",
-        "lanzando server LLM de WSL (wsl.exe): -m {} --port {}",
+        "lanzando server LLM ({}): -m {} --port {}",
+        server_bin.display(),
         model_path.display(),
         port
     );
-    match crate::llm::launch_server(&model_path, port) {
-        Ok(()) => {
+    match crate::llm::launch_server(&server_bin, &model_path, port) {
+        Ok(_pid) => {
             if crate::llm::wait_for_server(&llm.base_url, Duration::from_secs(60)) {
                 crate::log!("startup", "server LLM listo (lanzado por la app)");
                 let _ = tx.send(StartupEvent::LlmReady { launched: true });

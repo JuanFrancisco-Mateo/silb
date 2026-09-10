@@ -17,7 +17,7 @@ iced_winit = { version = "0.13", features = ["program"] }
 # Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
 # clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
 # del registro) y geometry de ventanas (posicion/esquina/tamano por winapi).
-winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred"] }
+winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi"] }
 
 # Bandeja del sistema: icono en el tray de Windows + menú contextual
 # (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el
@@ -39,6 +39,10 @@ crossbeam-channel = "0.5"
 
 # Descarga de modelos + config
 ureq = { version = "2.12", features = ["tls"] }
+
+# Selector de archivos nativo (Ajustes → ruta del server LLM «Examinar…»):
+# diálogo de Windows sin webview. Solo se toca desde el UI thread.
+rfd = "0.15"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
