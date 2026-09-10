@@ -17,14 +17,35 @@ el texto se escribe donde esté tu cursor.
   relleno antes de la inyección; las muletillas (inequívocas, solo antes de
   pausa, solo al inicio) son configurables desde Ajustes → Muletillas y se
   pueden desactivar por completo.
+- **Corrección IA** (opcional, sin levantar nada a mano): un LLM revisa tu
+  dictado y arregla las auto-correcciones habladas («que calor en murcia
+  **digo cartagena**» → «que calor en cartagena») y las correcciones
+  cross-turn («no no lo último está mal, es 2 en vez de 4»). Local por
+  defecto (llama.cpp, sin internet), con proveedores alternativos Custom
+  (cualquier endpoint OpenAI-compatible) y Cloud (OpenAI). Documentado en
+  `docs/CORRECCION-VOZ.md` (diseño) y `docs/SETUP.md` (configuración).
 - **Diccionario personal** (jerga, siglas, nombres propios) persistente.
-- **Rectificaciones habladas**: "no, quería decir X" corrige el último turno.
+- **Rectificaciones habladas**: «no, quería decir X» corrige el último turno.
 
-## Requisitos (solo para compilar)
+## Requisitos
+
+**Para compilar** (solo eso):
 
 - Rust MSVC toolchain (Windows) + Visual Studio Build Tools (MSVC, cmake) —
   whisper-rs compila whisper.cpp en C desde el primer build.
 - Windows 10/11. El binario no necesita nada instalado para ejecutarse.
+
+**Para ejecutar**:
+
+- Nada obligatorio. En el primer arranque la app descarga el modelo de voz de
+  Whisper que elijas a `%APPDATA%\whispr-open\models`.
+- La **corrección IA local es opcional**: solo si quieres el corrector «de fábrica»
+  necesitas tener `llama-server.exe` y un modelo GGUF (ver `docs/SETUP.md`).
+  La app **autodetecta** el server (`D:\LlamaCPP`, junto al exe de la app,
+  `%LOCALAPPDATA%\LlamaCPP`, PATH) y el modelo (LM Studio, `D:\LlamaCPP\models`,
+  `D:\models`) — y si no los encuentra, la corrección se desactiva con un aviso
+  y el dictado sigue funcionando. La ruta del server es **configurable** en
+  Ajustes → Corrección IA → Server LLM (botón «Examinar…»).
 
 ## Compilar y ejecutar
 
@@ -44,15 +65,63 @@ cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe run --
 La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda en
 `target\release\whispr-open.exe`.
 
+### Primer arranque
+
+1. La app abre con la **pantalla de carga** y hace todo sola: descarga el
+   modelo de voz (con progreso) si falta y lo precarga, y lanza el server LLM
+   local si la corrección IA está activada y el endpoint no responde.
+2. El chip de estado (visible siempre en la ventana principal) te dice si la
+   corrección IA está lista: `● Corrección IA: activa · <modelo>` (verde),
+   `○ … inactiva — <motivo>` (ámbar: dictar funciona igual, sin corregir) o
+   `○ … apagada` (gris: actívala en Ajustes).
+3. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar) y habla. Al soltar, el texto
+   se transcribe y se escribe en la app con foco.
+
 ## Uso
+
+### Guía rápida
 
 1. Arranca la app. La primera vez que dictes con un modelo, se descarga solo
    (~75 MB tiny / ~142 MB base / ~466 MB small) a `%APPDATA%\whispr-open\models`.
 2. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar), habla, y vuelve a pulsar para
    transcribir.
-3. Si "Autoinyectar" está activo, el texto se escribe en la app que tenga el foco.
-   Si no, lo verás en la ventana y puedes usar "Escribir en app" / "Copiar".
+3. Si «Autoinyectar» está activo, el texto se escribe en la app que tenga el foco.
+   Si no, lo verás en la ventana y puedes usar «Escribir en app» / «Copiar».
 4. En Configuración: modelo de Whisper, apariencia, corrección IA y diccionario.
+
+### Opciones explicadas (mismo texto que la UI)
+
+**Corrección IA** (primer nivel de Ajustes):
+
+- *Corrección IA*: «Una IA revisa y corrige lo que dictas» — «Al terminar un
+  turno, la IA lo revisa y corrige («digo X», «no, era Y»…). Si el servidor de
+  IA no está disponible, el dictado se inserta entero, sin corregir.»
+- *Proveedor*: «Quién corrige lo que dictas: Local — llama.cpp, el que viene
+  con la app (sin internet, recomendado) · Custom LLM — tu propio endpoint
+  OpenAI-compatible · Cloud — OpenAI. Por defecto: Local.»
+- *Endpoint LLM*: «Dirección del servidor de IA (API compatible con OpenAI).
+  Local: http://127.0.0.1:8081/v1.»
+- *Modelo IA*: «El modelo que corrige. Debe estar en tu servidor local o ser
+  uno de los que ofrece la nube.»
+- *API key* (solo Custom/Cloud): «Clave del endpoint si la exige (Custom:
+  opcional · Cloud: obligatoria). Se guarda en el Administrador de credenciales
+  de Windows, nunca en la config.»
+- *Server LLM*: «Ejecutable llama-server.exe que la app lanza al arrancar.
+  Vacío = autodetección (D:\LlamaCPP, junto a la app…). Solo indícalo aquí si
+  la app no lo encuentra sola.»
+
+**Ajustes avanzados** (técnico, colapsado por defecto):
+
+- *Calidad de transcripción (beam size)*, rango 1–8, recomendado 5: «Calidad de
+  transcripción (beam size) vs velocidad: 1 = la más rápida, 8 = la más fiel.»
+- *Núcleos de CPU*, rango 1–16, recomendado 4: «Núcleos de CPU que usa Whisper
+  al transcribir. Sube si el equipo va justo de velocidad; baja para dejar
+  recursos al resto.»
+- *Espera máx. (s)* del corrector, rango 1–120, recomendado 25: «Espera máxima
+  de la IA antes de dar el turno por definitivo: si lo supera, se inserta sin
+  corregir.»
+- *Sensibilidad* del clasificador (0–100, default 50): subirla = más
+  conservador (menos llamadas al LLM, más dictado normal por defecto).
 
 Modelo de transcripción: `es` por defecto (los modelos base de whisper.cpp son
 multilingües; el idioma se puede cambiar a `auto`, `es`, `en`, `fr`, `de`, `it`
@@ -69,14 +138,19 @@ permite:
 | `inject_format` | `"paste"` (portapapeles + Ctrl+V) o `"type"` (tecleo directo, sin tocar el portapapeles) | `"paste"` |
 | `inject_delay_ms` | retardo en ms antes de pegar/teclear (`0` = sin retardo) | `40` |
 | `inject_window_filter` | solo inyecta si el título de la ventana activa lo contiene (substring, sin distinguir mayúsculas) | (sin filtro: cualquier app) |
-| `correction_provider` | `default`, `cloud` o `custom` | `default` |
-| `llm_base_url` | endpoint OpenAI-compatible | local `http://127.0.0.1:8081/v1` |
+| `correction_provider` | `"default"` (Local, llama.cpp — el que viene con la app), `"cloud"` (OpenAI) o `"custom"` (endpoint OpenAI-compatible) | `"default"` |
+| `llm_base_url` | endpoint OpenAI-compatible (Cambiar de proveedor usa el mismo campo) | local `http://127.0.0.1:8081/v1` |
 | `llm_model` | identificador del modelo corrector | `ornith-1.0-9b` |
 | `llm_timeout_secs` | timeout de la corrección HTTP | `25` |
+| `llm_classifier_threshold` | sensibilidad del clasificador 0–100 (subir = más conservador; 0 = pasivo) | `50` |
+| `ai_correction_confirm` | `true` = mostrar «Aplicar / Descartar» antes de aplicar la corrección | `false` |
+| `llama_server_path` | ruta del `llama-server.exe` local (vacío = autodetección) | (autodetección) |
+| `beam_size` | calidad de transcripción de whisper, 1–8 (1 = rápida, 8 = fiel) | `5` |
+| `n_threads` | núcleos del decoder de whisper, 1–16 | `4` |
 
-La API key no se guarda en texto plano en `config.json`: en Windows se almacena
-usando Credential Manager y se reutilizan las configuraciones antiguas durante
-la migración.
+La **API key no se guarda en texto plano en `config.json`**: en Windows se
+almacena en el **Credential Manager** (target `WhisprOpen/llm-api-key`) y se
+reutilizan las configuraciones antiguas durante la migración.
 
 Los valores inválidos o ausentes se ignoran con el default: la config nunca
 rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
@@ -85,7 +159,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 160 tests (dominio, config, audio, burbuja, UI)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 229 tests (dominio, config, audio, burbuja, UI, llm)
 ```
 
 ## Estructura
@@ -93,15 +167,24 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 160 tests (dominio, config, audio
 | Fichero | Contenido |
 |---|---|
 | `src/main.rs` | entrada Iced |
-| `src/app.rs` | UI + flujo de dictado |
+| `src/app.rs` | UI + flujo de dictado + routing del corrector IA + ciclo de vida del server |
 | `src/domain/*.rs` | lógica pura (limpieza fija, corrección, diccionario) |
+| `src/domain/corrective.rs` | clasificadores (cross-turn e in-turn) + diff — sin I/O |
+| `src/llm.rs` | cliente LLM OpenAI-compatible (ureq), prompts, guard anti-truncación, server nativo |
 | `src/audio.rs` | captura de micrófono (cpal) |
 | `src/transcribe.rs` | modelos + whisper.cpp |
 | `src/inject.rs` | escritura en app activa |
 | `src/hotkey.rs` | atajo global |
-| `src/config.rs` | configuración persistente |
+| `src/config.rs` | configuración persistente + Credential Manager |
+| `docs/CORRECCION-VOZ.md` | especificación y diseño final del corrector IA |
+| `docs/SETUP.md` | cómo configurar Local / Custom / Cloud |
+| `docs/EMPAQUETADO.md` · `docs/ROADMAP.md` · `docs/UI-FUTURA.md` | empaquetado y hoja de ruta |
 
 ## Historial de versiones
 
 - **0.2.0** (rama `native-iced`): reescritura a escritorio nativo. Adiós web.
+- 0.2.0 → 10/09/2026: corrección IA completa — server LLM nativo
+  autogestionado (la app lo lanza y lo cierra), ciclo de vida de memoria con el
+  toggle, guard anti-truncación, proveedores Local/Custom/Cloud con API key en
+  Credential Manager, y UX transparente (chip de estado y opciones explicadas).
 - 0.1.0 (rama `main`): prototipo web (React + Tauri v2 + Whisper WASM), 40 tests.
