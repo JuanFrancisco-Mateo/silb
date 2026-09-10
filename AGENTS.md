@@ -19,10 +19,14 @@ Leer este archivo ANTES de tocar nada.
   campos de `whisper_full_params` cambiados). API 0.16:
   `SamplingStrategy`, `state.get_segment(i) -> Option<WhisperSegment>`, `seg.to_str()`.
 - Modelos GGML (whisper.cpp, de HF ggerganov) en `%APPDATA%/whispr-open/models/`.
+- REGLA DE PRODUCTO: el server LLM NUNCA se lanza desde WSL (wsl.exe). TODO
+  arranque lo hace la app con el binario NATIVO Windows
+  `D:\\LlamaCPP\\llama-server.exe` (build Clang 20/CUDA 13, cublas64_13.dll en
+  el mismo dir).
 
 ## Definición de "done" (criterios innegociables)
 
-1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → 39 tests verdes.
+1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → 234 tests verdes.
 2. `... cargo.exe check` → sin errores (warnings tolerados).
 3. Commit en git por fase lógica, mensaje en español.
 
@@ -44,6 +48,7 @@ Leer este archivo ANTES de tocar nada.
 
 ## No hacer
 
+- No lanzar el server LLM vía WSL/wsl.exe desde el código (ver Entorno).
 - No volver a introduce web frontend ni Tauri (es el objetivo de la rama native-iced).
 - No tocar la rama `main` desde aquí (versión web legada, se mantiene como referencia).
 - No tocar hardware ni cron del sistema.
