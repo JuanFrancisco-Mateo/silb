@@ -2,7 +2,9 @@
 //! limpieza de muletillas, diccionario personal, selector de modelo e
 //! inyección en la app activa.
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::Arc;
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyEvent;
@@ -388,6 +390,11 @@ pub struct WhisprApp {
     /// Canal de eventos del hilo de arranque (se drena en el Poll; None al
     /// terminar o si no hay arranque en curso).
     startup_rx: Option<Receiver<StartupEvent>>,
+    /// Token de cancelación de la fase LLM en vuelo (toggle off en caliente):
+    /// cuando el usuario apaga la corrección IA, la fase que esté lanzando o
+    /// esperando al server debe abortar sin dejar modelo cargado. Cada fase
+    /// nueva recibe su propio `AtomicBool` compartido con su hilo.
+    llm_phase_cancel: Option<Arc<AtomicBool>>,
     /// Texto de la línea de estado de la pantalla de carga («Cargando modelo
     /// de voz…», «Preparando corrección IA…», …).
     startup_label: String,
@@ -487,6 +494,7 @@ impl WhisprApp {
             startup: StartupPhase::Loading,
             llm_status: LlmStatus::Unknown,
             startup_rx: None,
+            llm_phase_cancel: None,
             startup_label: "Preparando la app…".to_string(),
             startup_tick: 0,
         };
@@ -497,8 +505,13 @@ impl WhisprApp {
         // pantalla de carga se ve desde el primer frame.
         let (startup_tx, startup_rx) = mpsc::channel();
         let startup_config = app.config.clone();
-        std::thread::spawn(move || run_startup_thread(startup_config, startup_tx));
+        let startup_cancel = Arc::new(AtomicBool::new(false));
+        let startup_cancel_thread = startup_cancel.clone();
+        std::thread::spawn(move || {
+            run_startup_thread(startup_config, startup_tx, startup_cancel_thread)
+        });
         app.startup_rx = Some(startup_rx);
+        app.llm_phase_cancel = Some(startup_cancel);
 
         (app, Task::batch([bubble_task, font_task]))
     }
@@ -987,12 +1000,75 @@ impl WhisprApp {
     /// Relanza la fase LLM en background (toggle de corrección IA activado
     /// en caliente tras un arranque sin server). Eventos por `startup_rx`;
     /// el Poll los procesa igual que los del arranque inicial.
+    ///
+    /// Cada fase recibe un token de cancelación nuevo (`llm_phase_cancel`):
+    /// si el usuario la apaga mientras la fase está en vuelo, el token se
+    /// pone a true y el hilo aborta en su siguiente punto de control (sin
+    /// lanzar server, o terminando el PID que él mismo lanzó).
     fn spawn_llm_startup(&mut self) -> Task<Message> {
         let (startup_tx, startup_rx) = mpsc::channel();
         let startup_config = self.config.clone();
-        std::thread::spawn(move || run_llm_phase(startup_config, startup_tx));
+        let cancel = Arc::new(AtomicBool::new(false));
+        let cancel_thread = cancel.clone();
+        std::thread::spawn(move || run_llm_phase(startup_config, startup_tx, cancel_thread));
         self.startup_rx = Some(startup_rx);
+        self.llm_phase_cancel = Some(cancel);
         Task::none()
+    }
+
+    /// Apaga la corrección IA en caliente y deja la máquina de estados
+    /// coherente (ciclo de vida 10/09/2026, requisito «descargar el modelo
+    /// al desactivar»):
+    ///
+    /// 1. Corrección LLM pendiente → degrada a texto bruto (spec: nunca
+    ///    perder texto; el turno se inyecta tal cual, sin esperar al LLM).
+    /// 2. Propuesta de diff en confirmación pendiente → se descarta (el
+    ///    texto bruto del target ya está en el transcript).
+    /// 3. Fase LLM en vuelo → cancelada: no debe lanzar un server después
+    ///    de haberse apagado (el token la aborta en su punto de control y
+    ///    termina su propio PID si ya lo lanzó).
+    /// 4. Server lanzado por ESTA app → terminado (modelo descargado de
+    ///    RAM/VRAM). Un server ajeno (ya corría antes de abrir la app) NO
+    ///    se toca: `kill_launched_server` solo mata el PID que registró
+    ///    `launch_server`.
+    fn disable_ai_correction_now(&mut self) {
+        // 1) Corrección en vuelo → texto bruto.
+        if self.llm_rx.is_some() || self.llm_pending.is_some() {
+            if let Some(p) = self.llm_pending.take() {
+                crate::log!(
+                    "llm",
+                    "corrección IA apagada con corrección en vuelo: degrada a texto bruto"
+                );
+                self.restore_pending_as_dictation(Some(p));
+            }
+            self.llm_rx = None;
+        }
+        // 2) Propuesta de diff pendiente → descartada (el texto bruto queda).
+        if self.pending_diff.take().is_some() {
+            crate::log!(
+                "llm",
+                "corrección IA apagada con propuesta pendiente: descartada, texto bruto intacto"
+            );
+        }
+        if self.status == Status::Correcting {
+            self.status = Status::Idle;
+        }
+        // 3) Cancelar la fase LLM en vuelo.
+        if let Some(cancel) = &self.llm_phase_cancel {
+            cancel.store(true, Ordering::SeqCst);
+        }
+        // 4) Descargar el modelo: terminar solo el server que lanzó la app.
+        let killed = crate::llm::kill_launched_server();
+        crate::log!(
+            "llm",
+            "corrección IA desactivada por el usuario (server propio terminado: {killed})"
+        );
+        self.llm_status = LlmStatus::Disabled(String::new());
+        self.last_correction = Some(if killed {
+            "Corrección IA desactivada — modelo LLM descargado de memoria ✓".to_string()
+        } else {
+            "Corrección IA desactivada".to_string()
+        });
     }
 
     pub(crate) fn config_is_dark(&self) -> bool {
@@ -1468,11 +1544,33 @@ impl WhisprApp {
             Message::ToggleAiCorrection(on) => {
                 self.config.ai_correction_enabled = Some(on);
                 self.save_config();
+                if !on {
+                    // Apagar en caliente (ciclo de vida 10/09/2026): la
+                    // corrección pendiente degrada a texto bruto y el modelo
+                    // LLM se descarga de memoria — solo el server que lanzó
+                    // esta app; un server ajeno no se toca.
+                    self.disable_ai_correction_now();
+                    return Task::none();
+                }
                 // Activar la corrección en caliente tras un arranque sin
                 // server: relanzar la fase LLM (verificar/arrancar llama-
-                // server) para que el toggle prometa algo que funciona. Si el
-                // server no levanta, LlmDisabled muestra el motivo visible.
-                if on && !matches!(self.llm_status, LlmStatus::Ready { .. }) && !self.is_starting()
+                // server y esperar a que /v1/models responda) para que el
+                // toggle prometa algo que funciona. Si el server no levanta,
+                // LlmDisabled muestra el motivo visible.
+                //
+                // Se evita duplicar una fase SANA en vuelo (startup_rx Some);
+                // si la que hay está cancelada (off reciente en caliente),
+                // se reemplaza por una nueva sin esperar a que el hilo viejo
+                // muera (su token la aborta en el siguiente punto de control).
+                let in_flight_cancelled = self
+                    .llm_phase_cancel
+                    .as_ref()
+                    .map(|c| c.load(Ordering::SeqCst))
+                    .unwrap_or(false);
+                if on
+                    && !matches!(self.llm_status, LlmStatus::Ready { .. })
+                    && !self.is_starting()
+                    && (self.startup_rx.is_none() || in_flight_cancelled)
                 {
                     return self.spawn_llm_startup();
                 }
@@ -2181,8 +2279,13 @@ impl WhisprApp {
                 self.startup_tick = 0;
                 let (startup_tx, startup_rx) = mpsc::channel();
                 let startup_config = self.config.clone();
-                std::thread::spawn(move || run_startup_thread(startup_config, startup_tx));
+                let startup_cancel = Arc::new(AtomicBool::new(false));
+                let startup_cancel_thread = startup_cancel.clone();
+                std::thread::spawn(move || {
+                    run_startup_thread(startup_config, startup_tx, startup_cancel_thread)
+                });
                 self.startup_rx = Some(startup_rx);
+                self.llm_phase_cancel = Some(startup_cancel);
                 Task::none()
             }
             // Cierre de la ventana principal → se oculta a la bandeja (la app
@@ -3600,7 +3703,7 @@ fn transcribe_samples(
 /// Fase whisper del arranque: descarga el modelo si falta (con progreso) y
 /// lo carga en el cache de contexto (prerroll: la primera pulsación del
 /// atajo no paga la carga). Luego delega en `run_llm_phase` si aplica.
-fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>) {
+fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>) {
     let model = cfg.selected_model();
     if !crate::transcribe::model_exists(model) {
         crate::log!(
@@ -3626,7 +3729,7 @@ fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>) {
     match crate::transcribe::preload(model) {
         Ok(()) => {
             let _ = tx.send(StartupEvent::WhisperReady);
-            run_llm_phase(cfg, tx);
+            run_llm_phase(cfg, tx, cancel);
         }
         Err(e) => {
             crate::log!("startup", "no se pudo cargar el contexto whisper: {e}");
@@ -3643,7 +3746,14 @@ fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>) {
 /// lanza llama-server con el modelo configurado y espera a que quede listo
 /// (máx. 60 s). Cualquier fallo → `LlmDisabled(motivo visible)` — el
 /// dictado sigue funcionando sin corrección.
-fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>) {
+fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>) {
+    // Punto de control 1: si el usuario apagó la corrección mientras la fase
+    // estaba en vuelo (toggle off en caliente), abortar antes de tocar nada —
+    // sin lanzar server, sin resolver rutas, con un único evento terminal.
+    if cancel.load(Ordering::SeqCst) {
+        let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
+        return;
+    }
     let llm = cfg.llm_settings();
 
     if !cfg.ai_correction_enabled() {
@@ -3694,8 +3804,25 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>) {
         port
     );
     match crate::llm::launch_server(&server_bin, &model_path, port) {
-        Ok(_pid) => {
+        Ok(pid) => {
+            // Punto de control 2: cancelación justo tras lanzar — el server
+            // recién creado se termina (por su PID propio, no el slot global:
+            // otra fase pudo reemplazarlo) y no se espera a que cargue el
+            // modelo.
+            if cancel.load(Ordering::SeqCst) {
+                crate::llm::terminate_server_pid(pid);
+                let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
+                return;
+            }
             if crate::llm::wait_for_server(&llm.base_url, Duration::from_secs(60)) {
+                // Punto de control 3: cancelación mientras el server cargaba
+                // el modelo — si la corrección ya está apagada, el modelo no
+                // debe quedarse en memoria.
+                if cancel.load(Ordering::SeqCst) {
+                    crate::llm::terminate_server_pid(pid);
+                    let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
+                    return;
+                }
                 crate::log!("startup", "server LLM listo (lanzado por la app)");
                 let _ = tx.send(StartupEvent::LlmReady { launched: true });
             } else {
@@ -3750,5 +3877,28 @@ mod tests {
         let ui = llm_status_ui(true, &LlmStatus::Unknown, "");
         assert_eq!(ui.kind, "dim");
         assert!(ui.label.contains("comprobando"));
+    }
+
+    /// Ciclo de vida 10/09/2026: una fase LLM cancelada en caliente (toggle
+    /// off mientras el server se lanza/carga) aborta SIN tocar nada — emite
+    /// un único `LlmDisabled` con razón vacía (desactivada por el usuario,
+    /// sin banner de error). Con el token ya puesto, la fase nunca llega a
+    /// resolver rutas ni a lanzar llama-server.
+    #[test]
+    fn fase_llm_cancelada_no_lanza_server() {
+        let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+        let (tx, rx) = std::sync::mpsc::channel();
+        run_llm_phase(Config::default(), tx, cancel);
+        match rx.try_recv() {
+            Ok(StartupEvent::LlmDisabled(reason)) => assert!(
+                reason.is_empty(),
+                "cancelación por usuario no debe mostrar banner, llegó {reason:?}"
+            ),
+            other => panic!("esperaba LlmDisabled(razón vacía), llegó {other:?}"),
+        }
+        assert!(
+            rx.try_recv().is_err(),
+            "la fase cancelada emite un único evento terminal"
+        );
     }
 }

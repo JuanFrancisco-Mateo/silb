@@ -724,16 +724,15 @@ pub fn launched_server_pid() -> u32 {
     LAUNCHED_SERVER_PID.load(Ordering::SeqCst)
 }
 
-/// Termina el server LLM que ESTA instancia lanzó, si lo lanzó. NO toca
-/// servers ajenos: (a) si nunca lanzamos nada el PID es 0 y no se hace
-/// nada; (b) aunque el PID se hubiera reutilizado por otro proceso, se
-/// verifica por nombre de imagen (`llama-server.exe`) antes de matar.
-/// Devuelve `true` si había un server propio y se terminó.
+/// Termina un PID concreto de server LLM, solo si el proceso sigue siendo
+/// `llama-server.exe` (salvaguarda contra la reutilización de PIDs).
+/// Devuelve `true` si era nuestro server y se terminó; `0` nunca se toca.
 ///
-/// Se llama en TODOS los caminos de salida de la app (tray «Salir» y
-/// cierre de la burbuja) ANTES de `iced::exit()`.
-pub fn kill_launched_server() -> bool {
-    let pid = LAUNCHED_SERVER_PID.swap(0, Ordering::SeqCst);
+/// Lo usan `kill_launched_server` (slot global de la app) y el hilo de la
+/// fase LLM al cancelarla en caliente (toggle off): el hilo mata el PID
+/// concreto que él lanzó, no lo que haya en el slot global (otra fase pudo
+/// reemplazarlo mientras tanto).
+pub fn terminate_server_pid(pid: u32) -> bool {
     if pid == 0 {
         return false;
     }
@@ -797,6 +796,23 @@ pub fn kill_launched_server() -> bool {
         let _ = pid;
         false
     }
+}
+
+/// Termina el server LLM que ESTA instancia lanzó, si lo lanzó. NO toca
+/// servers ajenos: (a) si nunca lanzamos nada el PID es 0 y no se hace
+/// nada; (b) aunque el PID se hubiera reutilizado por otro proceso, se
+/// verifica por nombre de imagen (`llama-server.exe`) antes de matar.
+/// Devuelve `true` si había un server propio y se terminó.
+///
+/// Se llama en TODOS los caminos de salida de la app (tray «Salir» y
+/// cierre de la burbuja) ANTES de `iced::exit()`, y en el toggle «off»
+/// de la corrección IA en caliente (descarga el modelo de memoria).
+pub fn kill_launched_server() -> bool {
+    let pid = LAUNCHED_SERVER_PID.swap(0, Ordering::SeqCst);
+    if pid == 0 {
+        return false;
+    }
+    terminate_server_pid(pid)
 }
 
 /// Ruta del ejecutable `llama-server.exe` a usar: la configurada en
@@ -1690,5 +1706,12 @@ mod tests {
         // (criterio: nunca tocar servers ajenos).
         assert_eq!(launched_server_pid(), 0);
         assert!(!kill_launched_server());
+    }
+
+    #[test]
+    fn terminate_server_pid_con_cero_no_hace_nada() {
+        // PID 0 (System Idle Process) jamás se toca: el guard corta antes de
+        // OpenProcess, por lo que tampoco puede matar un proceso ajeno.
+        assert!(!terminate_server_pid(0));
     }
 }
