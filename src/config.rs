@@ -384,9 +384,11 @@ pub struct Config {
     /// Los configs legacy que ya traían `fillers` vuelven a usarlos.
     pub fillers: Option<FillerWords>,
     /// Estado del panel «Ajustes avanzados» de la ventana de Ajustes
-    /// (colapsado/expandido). Decisión de diseño 09/09/2026: las opciones
-    /// técnicas (beam, hilos, LLM, inyección, fuente…) quedan ocultas tras
-    /// un panel que por defecto está colapsado. `None` = colapsado. Solo
+    /// (colapsado/expandido). Decisión de diseño 09/09/2026 (re-agrupado
+    /// 10/09/2026): lo técnico (beam, hilos, timeout, umbral, API key,
+    /// confirmar, fuente, inyección…) queda oculto tras un panel que por
+    /// defecto está colapsado; lo común (modelo, corrección IA, ruta del
+    /// server LLM) vive en primer nivel. `None` = colapsado. Solo
     /// afecta a la UI: no cambia ninguna opción de comportamiento.
     pub advanced_settings_open: Option<bool>,
 }
