@@ -74,12 +74,26 @@ fn escape_regexp(value: &str) -> String {
 /// Patrón de palabra completa, case-insensitive y con límites Unicode:
 /// el término no puede estar rodeado de letras, números ni marcas de
 /// combinación (sí puede estar rodeado de espacios, puntuación o límites del texto).
-fn to_word_pattern(value: &str) -> Regex {
+///
+/// `None` si el término del usuario no produce un patrón válido: el término
+/// se descarta con log en vez de tumbar el turno con un pánico (requisito
+/// de robustez: cero `expect` en rutas con input del usuario — el término
+/// va escapado, pero esto cubre cualquier caso futuro que se le escape).
+fn to_word_pattern(value: &str) -> Option<Regex> {
     let pattern = format!(
         r"(?iu)(?<![\p{{L}}\p{{M}}\p{{N}}]){}(?![\p{{L}}\p{{M}}\p{{N}}])",
         escape_regexp(value)
     );
-    Regex::new(&pattern).expect("patrón de diccionario inválido")
+    match Regex::new(&pattern) {
+        Ok(regex) => Some(regex),
+        Err(e) => {
+            crate::log!(
+                "dictionary",
+                "término «{value}» con patrón inválido ({e}); se descarta"
+            );
+            None
+        }
+    }
 }
 
 /// Aplica las entradas del diccionario sobre el texto, en orden.
@@ -103,7 +117,9 @@ pub fn apply_dictionary(text: &str, entries: &[DictionaryEntry]) -> DictionaryRe
             continue;
         }
 
-        let pattern = to_word_pattern(from);
+        let Some(pattern) = to_word_pattern(from) else {
+            continue;
+        };
         let matches = pattern.is_match(&result).unwrap_or(false);
         if !matches {
             continue;

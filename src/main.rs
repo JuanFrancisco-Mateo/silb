@@ -14,8 +14,21 @@ fn main() -> iced::Result {
         env!("CARGO_PKG_VERSION")
     );
 
-    // Multi-ventana de iced 0.13: `iced_winit::Program` renderiza una vista y
-    // un tema por window::Id. La ventana principal es la app completa; la
+    // Guard de instancia única (requisito de robustez): la segunda
+    // ejecución no registra atajo global (Windows lo denegaría a ciegas),
+    // no abre una segunda bandeja ni una segunda burbuja. Avisa con un
+    // cuadro nativo y sale limpia.
+    if !whispr_open::single_instance::acquire() {
+        whispr_open::log!(
+            "main",
+            "ya hay otra instancia corriendo: salgo sin tocar atajo ni bandeja"
+        );
+        whispr_open::single_instance::notify_second_instance();
+        return Ok(());
+    }
+
+    // Multi-ventana de iced 0.13: `iced_winit::Program` renderiza una vista
+    // y un tema por window::Id. La ventana principal es la app completa; la
     // burbuja flotante (whispr_open::bubble) se abre al iniciar.
     let mut main_window = iced::window::Settings::default();
     // Diseño vertical (portrait, tipo chat): alto > ancho. La burbuja

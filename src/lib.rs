@@ -22,6 +22,7 @@ pub mod hotkey;
 pub mod inject;
 pub mod llm;
 pub mod log;
+pub mod single_instance;
 pub mod theme;
 pub mod transcribe;
 pub mod tray;

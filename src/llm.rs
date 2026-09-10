@@ -903,40 +903,59 @@ pub fn kill_launched_server() -> bool {
 /// `LlmDisabled` con aviso (el endpoint OpenAI-compatible editable sigue
 /// disponible como alternativa).
 pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::PathBuf> {
-    use std::path::PathBuf;
     if let Some(explicit) = cfg.llama_server_path() {
-        let p = PathBuf::from(explicit);
-        if p.is_file() {
-            // Saneado (t_75732630): la ruta configurada DEBE ser
-            // `llama-server.exe`. Si apunta a un wrapper (p. ej.
-            // `llama.exe`) usamos el `llama-server.exe` hermano — así el
-            // proceso lanzado es matable por nombre al salir.
-            if let Some(fixed) = sanitize_server_exe(&p) {
-                if fixed != p {
-                    crate::log!(
-                        "llm",
-                        "ruta de server LLM «{}» no es {SERVER_EXE_NAME}: se usa {}",
-                        p.display(),
-                        fixed.display()
-                    );
-                }
-                return Some(fixed);
+        if let Some(fixed) = explicit_server_path(explicit) {
+            return Some(fixed);
+        }
+    }
+    resolve_server_path_with(&default_server_roots())
+}
+
+/// Decide SOLO sobre la ruta explícita de Ajustes («Server LLM»). Separada
+/// de las rutas de autodetección para poder testearla con ficheros temporales
+/// sin depender del disco real de la máquina (D:\LlamaCPP, PATH…).
+///
+/// - No existe en disco → `None` (el caller cae a la autodetección).
+/// - Existe pero no es `llama-server.exe` (ni tiene un hermano que lo sea)
+///   → `None` con log (se ignora y se autodetecta).
+/// - Existe y es (o se sanea a) `llama-server.exe` → `Some`.
+pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let p = PathBuf::from(explicit);
+    if !p.is_file() {
+        crate::log!(
+            "llm",
+            "ruta de server LLM configurada no existe ({}); buscando por defecto",
+            p.display()
+        );
+        return None;
+    }
+    // Saneado (t_75732630): la ruta configurada DEBE ser
+    // `llama-server.exe`. Si apunta a un wrapper (p. ej.
+    // `llama.exe`) usamos el `llama-server.exe` hermano — así el
+    // proceso lanzado es matable por nombre al salir.
+    match sanitize_server_exe(&p) {
+        Some(fixed) => {
+            if fixed != p {
+                crate::log!(
+                    "llm",
+                    "ruta de server LLM «{}» no es {SERVER_EXE_NAME}: se usa {}",
+                    p.display(),
+                    fixed.display()
+                );
             }
+            Some(fixed)
+        }
+        None => {
             crate::log!(
                 "llm",
                 "ruta de server LLM configurada ({}) no es {SERVER_EXE_NAME} ni hay \
                  {SERVER_EXE_NAME} junto a ella; se ignora y se autodetecta",
                 p.display()
             );
-        } else {
-            crate::log!(
-                "llm",
-                "ruta de server LLM configurada no existe ({}); buscando por defecto",
-                p.display()
-            );
+            None
         }
     }
-    resolve_server_path_with(&default_server_roots())
 }
 
 /// Candidatos de ruta del server LLM, en orden de preferencia:
@@ -1809,6 +1828,85 @@ mod tests {
         // (criterio: nunca tocar servers ajenos).
         assert_eq!(launched_server_pid(), 0);
         assert!(!kill_launched_server());
+    }
+
+    #[test]
+    fn ruta_explicita_rota_o_falsa_se_ignora_deterministicamente() {
+        // Requisito de robustez («ruta rota»): la ruta explícita de Ajustes
+        // se valida sola, sin depender del disco real de la máquina ni del
+        // PATH (por eso la decisión vive en `explicit_server_path`).
+        let dir = std::env::temp_dir().join(format!("whispr-explicit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // 1) No existe → None (el caller cae a autodetección).
+        assert_eq!(
+            explicit_server_path(&dir.join("no-esta.exe").to_string_lossy()),
+            None
+        );
+
+        // 2) Existe y ES llama-server.exe → se usa tal cual.
+        let buena = dir.join("llama-server.exe");
+        std::fs::write(&buena, b"stub").unwrap();
+        assert_eq!(
+            explicit_server_path(&buena.to_string_lossy()),
+            Some(buena.clone())
+        );
+
+        // 3) Wrapper (llama.exe) con hermano bueno → se sanea al hermano.
+        let _ = std::fs::write(dir.join("llama.exe"), b"wrapper");
+        assert_eq!(
+            explicit_server_path(&dir.join("llama.exe").to_string_lossy()),
+            Some(buena)
+        );
+
+        // 4) Wrapper SIN hermano → se ignora (None): nunca se lanza un exe
+        //    que no se pueda terminar limpiamente al salir.
+        let solo = std::env::temp_dir()
+            .join(format!("whispr-explicit-solo-{}", std::process::id()));
+        std::fs::create_dir_all(&solo).unwrap();
+        std::fs::write(solo.join("llama.exe"), b"stub").unwrap();
+        assert_eq!(
+            explicit_server_path(&solo.join("llama.exe").to_string_lossy()),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&solo);
+    }
+
+    #[test]
+    fn endpoint_que_responde_500_se_reporta_como_error_http() {
+        // Requisito de robustez: un endpoint VIVO pero roto (500, gateway
+        // caído…) debe degradarse a texto bruto con el mismo contrato de
+        // error que el endpoint caído (prefijo «HTTP:» para que la UI lo
+        // categorice). Se monta un server HTTP de mentira con std::net.
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind en puerto libre");
+        let port = listener.local_addr().expect("addr").port();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                // Consumir la petición (cabeceras) antes de responder para
+                // que el cliente no resetee la conexión al leer.
+                let mut buf = [0u8; 8192];
+                let _ = stream.read(&mut buf);
+                let _ = stream.write_all(
+                    b"HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                );
+            }
+        });
+        let cfg = LlmConfig {
+            provider: CorrectionProvider::Default,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            model: "fake".to_string(),
+            api_key: None,
+            timeout_secs: 5,
+        };
+        let err = correct("texto objetivo", "no, es 2", &cfg)
+            .expect_err("un 500 del endpoint debe fallar");
+        assert!(
+            err.starts_with("HTTP:"),
+            "el 500 debe llegar con prefijo HTTP (mismo contrato que el endpoint caído): {err:?}"
+        );
+        server.join().expect("el server de mentira termina");
     }
 
     #[test]
