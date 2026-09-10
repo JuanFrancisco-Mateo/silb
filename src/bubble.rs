@@ -326,7 +326,12 @@ impl WhisprApp {
             }
         };
 
-        // Indicador "REC": punto blanco centrado mientras se graba.
+        // Indicador central: punto blanco mientras se graba; «IA» (oscuro
+        // sobre ámbar) mientras el corrector LLM trabaja sobre el último
+        // turno (feedback en vivo del dictado: requisito UX 10/09/2026 —
+        // aunque la burbuja no tiene texto, la etiqueta IA dice que la
+        // corrección LLM está actuando y no que la app está colgada).
+        let correcting = matches!(self.bubble_status(), Status::Correcting);
         let center: Element<'static, Message> = if recording {
             container(text(""))
                 .width(Length::Fixed(16.0))
@@ -341,6 +346,23 @@ impl WhisprApp {
                     ..Default::default()
                 })
                 .into()
+        } else if correcting {
+            // Etiqueta pequeña sobre una pastilla oscura: legible sobre
+            // cualquier relleno (sólido ámbar, ring transparente, minimal).
+            container(
+                container(text("IA").size(10.0).color(Color::WHITE))
+                    .padding([2, 4])
+                    .style(|_| container::Style {
+                        background: Some(Background::Color(Color::from_rgb(0.10, 0.07, 0.16))),
+                        border: Border {
+                            color: Color::TRANSPARENT,
+                            width: 0.0,
+                            radius: (5.0).into(),
+                        },
+                        ..Default::default()
+                    }),
+            )
+            .into()
         } else {
             container(text("")).into()
         };

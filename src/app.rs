@@ -1056,8 +1056,8 @@ impl WhisprApp {
             Status::Correcting => MicUi {
                 color: t.warn,
                 hint_color: t.dim,
-                label: "Corrigiendo…".to_string(),
-                hint: "El modelo de corrección ajusta lo que dictaste".to_string(),
+                label: "Corrigiendo con IA…".to_string(),
+                hint: "La IA de corrección revisa lo que dictaste".to_string(),
             },
             Status::Downloading {
                 model,
@@ -2429,6 +2429,26 @@ impl WhisprApp {
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
 
+        // ── Estado del corrector IA (chip) ─────────────────────────────────
+        // Transparencia (requisito UX 10/09/2026): el usuario ve SIEMPRE si
+        // al dictar puede actuar la IA correctora y con qué modelo. Verde =
+        // activa, ámbar = se dicta sin corregir (motivo visible), gris =
+        // apagada a propósito o aún comprobando. Misma lógica pura que la
+        // línea de estado de Ajustes (`llm_status_ui`).
+        let llm_chip = {
+            let ui = llm_status_ui(
+                self.config.ai_correction_enabled(),
+                &self.llm_status,
+                &self.config.llm_settings().model,
+            );
+            let color = match ui.kind {
+                "ok" => t.ok,
+                "warn" => t.warn,
+                _ => t.dim,
+            };
+            ui_text(ui.label).size(fs.sm).color(color)
+        };
+
         // ── Hero: estado del micrófono (tira horizontal compacta) ────────────
         // En portrait el hero deja de ser una columna centrada y pasa a una
         // fila: punto de estado + label + hint a la derecha; la barra de
@@ -2608,7 +2628,7 @@ impl WhisprApp {
             transcript_card.into()
         };
 
-        let mut content = column![header, hero, middle]
+        let mut content = column![header, llm_chip, hero, middle]
             .spacing(theme::SPACE_3)
             .padding(theme::SPACE_3);
         // Las acciones y el feedback operan sobre el transcript: solo se
@@ -2715,7 +2735,7 @@ impl WhisprApp {
         let beam = self.config.beam_size();
         let threads = self.config.n_threads();
         let beam_row = row![
-            text(format!("Beam size: {beam}"))
+            text(format!("Calidad: {beam}"))
                 .size(fs.sm)
                 .color(t.text)
                 .width(Length::Fixed(120.0)),
@@ -2726,7 +2746,7 @@ impl WhisprApp {
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
         let threads_row = row![
-            text(format!("Hilos: {threads}"))
+            text(format!("Hilos de CPU: {threads}"))
                 .size(fs.sm)
                 .color(t.text)
                 .width(Length::Fixed(120.0)),
@@ -2750,11 +2770,13 @@ impl WhisprApp {
         };
 
         // ── Panel «Ajustes avanzados» (colapsado por defecto) ────────────
-        // Decisión de diseño (09/09/2026): las opciones técnicas (beam,
-        // hilos, fuente, corrección IA, inyección) quedan ocultas tras
-        // este interruptor; el estado expandido/colapsado se persiste en
-        // `config.advanced_settings_open` para que reabra como el usuario
-        // lo dejó.
+        // Decisión de diseño (09/09/2026, re-agrupado 10/09/2026): lo COMÚN
+        // (modelo, corrección IA, ruta del server LLM) queda a la vista en
+        // primer nivel; lo técnico (beam, hilos, timeout, umbral, API key,
+        // confirmar, fuente, inyección) queda oculto tras este interruptor
+        // con su explicación corta bajo cada opción. El estado
+        // expandido/colapsado se persiste en `config.advanced_settings_open`
+        // para que reabra como el usuario lo dejó.
         let advanced_open = self.config.advanced_open();
         let advanced_label = if advanced_open {
             "Ajustes avanzados ▾"
@@ -2811,6 +2833,141 @@ impl WhisprApp {
             text("Audio: normalizado automáticamente a 16 kHz")
                 .size(fs.sm)
                 .color(t.dim),
+            // ── Corrección IA (primer nivel; requisito UX 10/09/2026) ──────
+            // Lo COMÚN vive aquí: qué hace, su estado en vivo, el toggle, el
+            // proveedor, el endpoint, el modelo y la ruta del server local.
+            // Cada opción lleva su explicación corta bajo el control. Los
+            // detalles técnicos (timeout, umbral, API key, confirmar) quedan
+            // tras «Ajustes avanzados», también con explicación.
+            text("Corrección IA")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+            // Estado en vivo (misma lógica pura que el chip del estado
+            // principal): «Corrección IA: activa · <modelo>» o «inactiva —
+            // <motivo>». Nunca silencioso.
+            {
+                let ui = llm_status_ui(
+                    self.config.ai_correction_enabled(),
+                    &self.llm_status,
+                    &self.config.llm_settings().model,
+                );
+                let color = match ui.kind {
+                    "ok" => t.ok,
+                    "warn" => t.warn,
+                    _ => t.dim,
+                };
+                text(ui.label).size(fs.sm).color(color)
+            },
+            checkbox(
+                "Corrección IA: una IA revisa y corrige lo que dictas",
+                self.config.ai_correction_enabled(),
+            )
+            .on_toggle(Message::ToggleAiCorrection)
+            .style(theme::checkbox),
+            text(
+                "Al terminar un turno, la IA lo revisa y corrige («digo X», «no, \
+                 era Y»…). Si el servidor de IA no está disponible, el dictado \
+                 se inserta entero, sin corregir."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+            row![
+                text("Proveedor")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        CorrectionProvider::Default,
+                        CorrectionProvider::Cloud,
+                        CorrectionProvider::Custom,
+                    ]
+                    .to_vec(),
+                    Some(self.config.correction_provider()),
+                    Message::CorrectionProviderChanged,
+                )
+                .placeholder("Proveedor")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            text(
+                "Dónde corre la IA: Local (llama.cpp en tu equipo, sin internet — \
+                 recomendado), Cloud (OpenAI y similares) o Custom (tu propio endpoint)."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+            row![
+                text("Endpoint LLM")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                text_input(
+                    "http://127.0.0.1:8081/v1",
+                    self.config.llm_base_url.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmEndpointChanged)
+                .style(theme::text_input)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            text(
+                "Dirección del servidor de IA (API compatible con OpenAI). \
+                 Local: http://127.0.0.1:8081/v1."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+            row![
+                text("Modelo IA")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                text_input(
+                    "ornith-1.0-9b / gpt-4o-mini",
+                    self.config.llm_model.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmModelChanged)
+                .style(theme::text_input)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            text(
+                "El modelo que corrige. Debe estar en tu servidor local o ser \
+                 uno de los que ofrece la nube."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+            row![
+                text("Server LLM")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                text_input(
+                    &auto_server_placeholder(&self.config),
+                    self.config.llama_server_path.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmServerPathChanged)
+                .style(theme::text_input)
+                .width(Length::Fill),
+                button("Examinar…")
+                    .on_press(Message::LlmServerPathBrowse)
+                    .style(theme::secondary),
+                button(ui_text("✕"))
+                    .on_press(Message::LlmServerPathReset),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+            text(
+                "Ejecutable llama-server.exe que la app lanza al arrancar. \
+                 Vacío = autodetección (D:\\LlamaCPP, junto a la app…). Solo \
+                 indícalo aquí si la app no lo encuentra sola."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
             // ── Apariencia: tema, fuente y burbuja configurable ──────────────
             text("Apariencia")
                 .size(fs.lg)
@@ -2951,8 +3108,25 @@ impl WhisprApp {
             // avanzados». El estado se persiste en config.
             if advanced_open {
                 column![
+                    // Calidad de transcripción (beam size): equilibrio
+                    // calidad vs velocidad (requisito UX 10/09/2026: rango y
+                    // default marcados en la ayuda).
                     beam_row,
+                    text(
+                        "Calidad de transcripción (beam size) vs velocidad: \
+                         1 = la más rápida, 8 = la más fiel. Rango 1–8, \
+                         recomendado: 5."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
                     threads_row,
+                    text(
+                        "Núcleos de CPU que usa Whisper al transcribir. \
+                         Sube si el equipo va justo de velocidad; baja para \
+                         dejar recursos al resto. Rango 1–16, recomendado: 4."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
                     // Fuente: tamaño de letra global. Opción de apariencia
                     // avanzada (el tema sí queda a la vista).
                     row![
@@ -2980,96 +3154,8 @@ impl WhisprApp {
                     ]
                     .spacing(theme::SPACE_2)
                     .align_y(iced::Alignment::Center),
-                    checkbox(
-                        "Corrección IA: otro modelo corrige lo dictado",
-                        self.config.ai_correction_enabled(),
-                    )
-                    .on_toggle(Message::ToggleAiCorrection)
-                    .style(theme::checkbox),
-                    // ── Detalles de Corrección IA (spec CORRECCION-VOZ.md §3, §4) ────
-                    // Subsección dentro de Ajustes: aparece bajo el toggle maestro.
-                    // Permite elegir el proveedor y sus parámetros de conexión.
-                    // Si el toggle está off, los detalles se muestran igualmente
-                    // (informativos; el clasificador y la llamada al LLM no se
-                    // usan porque el gate `ai_correction_enabled()` corta antes).
-                    text("  Detalles").size(fs.sm).color(t.dim),
-                    row![
-                        text("Proveedor")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        pick_list(
-                            [
-                                CorrectionProvider::Default,
-                                CorrectionProvider::Cloud,
-                                CorrectionProvider::Custom,
-                            ]
-                            .to_vec(),
-                            Some(self.config.correction_provider()),
-                            Message::CorrectionProviderChanged,
-                        )
-                        .placeholder("Proveedor")
-                        .width(Length::Fill)
-                        .style(theme::pick_list),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    row![
-                        text("Endpoint LLM")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        text_input(
-                            "http://127.0.0.1:8081/v1",
-                            self.config.llm_base_url.as_deref().unwrap_or(""),
-                        )
-                        .on_input(Message::LlmEndpointChanged)
-                        .style(theme::text_input)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    row![
-                        text("Modelo")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        text_input(
-                            "ornith-1.0-9b / gpt-4o-mini",
-                            self.config.llm_model.as_deref().unwrap_or(""),
-                        )
-                        .on_input(Message::LlmModelChanged)
-                        .style(theme::text_input)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    // Ruta del server LLM local (`llama-server.exe`): la que
-                    // la app lanza al arrancar si el endpoint local no
-                    // responde. Vacío = autodetección (D:\LlamaCPP, junto al
-                    // exe de la app, %LOCALAPPDATA%\LlamaCPP, PATH). Si el
-                    // campo está vacío, el placeholder muestra la ruta que se
-                    // resolvería ahora mismo.
-                    row![
-                        text("Server LLM")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        text_input(
-                            &auto_server_placeholder(&self.config),
-                            self.config.llama_server_path.as_deref().unwrap_or(""),
-                        )
-                        .on_input(Message::LlmServerPathChanged)
-                        .style(theme::text_input)
-                        .width(Length::Fill),
-                        button("Examinar…")
-                            .on_press(Message::LlmServerPathBrowse)
-                            .style(theme::secondary),
-                        button(ui_text("✕"))
-                            .on_press(Message::LlmServerPathReset),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
+                    // ── Detalles técnicos de la corrección IA ───────────────
+                    text("Corrección IA (técnico)").size(fs.sm).color(t.dim),
                     row![
                         text("API key")
                             .size(fs.sm)
@@ -3086,10 +3172,17 @@ impl WhisprApp {
                     ]
                     .spacing(theme::SPACE_2)
                     .align_y(iced::Alignment::Center),
+                    text(
+                        "Solo para proveedores cloud: la clave del servicio. \
+                         Se guarda en el Administrador de credenciales de \
+                         Windows, nunca en la config."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
                     // Timeout: slider 1..=120 s (25 por defecto). Clamp del lado del
                     // getter: ≤0 cae al default; el slider nunca emite 0.
                     row![
-                        text("Timeout (s)")
+                        text("Espera máx. (s)")
                             .size(fs.sm)
                             .color(t.dim)
                             .width(Length::Fixed(96.0)),
@@ -3103,14 +3196,22 @@ impl WhisprApp {
                     ]
                     .spacing(theme::SPACE_2)
                     .align_y(iced::Alignment::Center),
+                    text(
+                        "Espera máxima de la IA antes de dar el turno por \
+                         definitivo: si lo supera, se inserta sin corregir. \
+                         Rango 1–120 s, recomendado: 25 s."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
                     // Umbral del clasificador: 0..=100. Default 50 (conducta
                     // previa); 0 = pasivo (atajo al toggle off); 80+ muy
-                    // conservador.
+                    // conservador. Etiqueta en lenguaje llano: «sensibilidad»
+                    // (requisito UX 10/09/2026: «umbral clasif.» no dice nada).
                     row![
-                        text("Umbral clasif.")
+                        text(format!("Sensibilidad: {}", self.config.llm_classifier_threshold()))
                             .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
+                            .color(t.text)
+                            .width(Length::Fixed(120.0)),
                         slider(
                             0..=100,
                             u32::from(self.config.llm_classifier_threshold()),
@@ -3121,12 +3222,26 @@ impl WhisprApp {
                     ]
                     .spacing(theme::SPACE_2)
                     .align_y(iced::Alignment::Center),
+                    text(
+                        "Con qué frecuencia se envía un turno a la IA: 50 = \
+                         casi siempre que hay una señal de corrección, 100 = \
+                         casi nunca. Rango 0–100, recomendado: 50."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
                     checkbox(
                         "Confirmar antes de aplicar",
                         self.config.ai_correction_confirm(),
                     )
                     .on_toggle(Message::LlmConfirmToggled)
                     .style(theme::checkbox),
+                    text(
+                        "Pide tu visto bueno (Aplicar/Descartar) antes de \
+                         modificar el texto. Recomendado si prefieres revisar \
+                         lo que corrige la IA."
+                    )
+                    .size(fs.xxs)
+                    .color(t.dim),
                     // Resumen de la inyección (formato/retardo/filtro de la
                     // ventana activa): informativo, configurable vía config.
                     text({
@@ -3301,6 +3416,45 @@ fn auto_server_placeholder(cfg: &Config) -> String {
         None => {
             "auto: no encontrado — usa «Examinar…» o un endpoint".to_string()
         }
+    }
+}
+
+/// Lectura del estado del corrector IA para la UI (chip del estado principal
+/// + línea de estado en Ajustes). Función pura y testeable: la transparencia
+/// sobre CUÁNDO se usa el LLM es un requisito UX (10/09/2026), así que la
+/// lógica de etiquetas no puede vivir solo dentro de la vista.
+///
+/// Estados visibles (ejemplos del requisito: «Corrección IA: activa con
+/// <modelo>» · «inactiva — servidor no encontrado»):
+/// - toggle apagado     → `dim`, invita a activarla (sin prometer modelo).
+/// - `Ready`            → `ok`, con el modelo en uso.
+/// - `Disabled(motivo)` → `warn`, motivo visible (nunca silencioso).
+/// - `Unknown`          → `dim`, «comprobando…» (arranque en curso).
+struct LlmStatusUi {
+    kind: &'static str,
+    label: String,
+}
+
+fn llm_status_ui(enabled: bool, status: &LlmStatus, model: &str) -> LlmStatusUi {
+    if !enabled {
+        return LlmStatusUi {
+            kind: "dim",
+            label: "○ Corrección IA: apagada — actívala en Ajustes".to_string(),
+        };
+    }
+    match status {
+        LlmStatus::Ready { .. } => LlmStatusUi {
+            kind: "ok",
+            label: format!("● Corrección IA: activa · {model}"),
+        },
+        LlmStatus::Disabled(reason) if !reason.is_empty() => LlmStatusUi {
+            kind: "warn",
+            label: format!("○ Corrección IA: inactiva — {reason}"),
+        },
+        _ => LlmStatusUi {
+            kind: "dim",
+            label: "○ Corrección IA: comprobando…".to_string(),
+        },
     }
 }
 
@@ -3527,7 +3681,7 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>) {
         // OpenAI-compatible editable (proveedor Custom/Cloud).
         let _ = tx.send(StartupEvent::LlmDisabled(format!(
             "no se encontró el ejecutable del server LLM (llama-server.exe). \
-             Configúralo en Ajustes avanzados o usa un endpoint OpenAI-compatible. \
+             Configúralo en Ajustes o usa un endpoint OpenAI-compatible. \
              El dictado sigue funcionando."
         )));
         return;
@@ -3557,5 +3711,44 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>) {
                 "no se pudo lanzar el servidor LLM: {e}. El dictado sigue funcionando."
             )));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Transparencia del corrector IA (requisito UX 10/09/2026): el chip del
+    /// estado debe decir SIEMPRE algo coherente con (toggle, estado del
+    /// server) y prometer el modelo solo cuando la corrección puede actuar.
+    #[test]
+    fn chip_muestra_modelo_solo_cuando_la_correccion_esta_activa() {
+        let ui = llm_status_ui(true, &LlmStatus::Ready { launched: false }, "ornith-1.0-9b");
+        assert_eq!(ui.kind, "ok");
+        assert!(ui.label.contains("activa"));
+        assert!(ui.label.contains("ornith-1.0-9b"));
+    }
+
+    #[test]
+    fn chip_dice_apagada_con_toggle_off_y_no_promete_modelo() {
+        let ui = llm_status_ui(false, &LlmStatus::Ready { launched: true }, "gpt-4o-mini");
+        assert_eq!(ui.kind, "dim");
+        assert!(ui.label.contains("apagada"));
+        assert!(!ui.label.contains("gpt-4o-mini"));
+    }
+
+    #[test]
+    fn chip_no_esconde_el_motivo_de_estar_inactiva() {
+        let ui =
+            llm_status_ui(true, &LlmStatus::Disabled("servidor no encontrado".into()), "");
+        assert_eq!(ui.kind, "warn");
+        assert!(ui.label.contains("servidor no encontrado"));
+    }
+
+    #[test]
+    fn chip_avisa_mientras_comprueba_el_server() {
+        let ui = llm_status_ui(true, &LlmStatus::Unknown, "");
+        assert_eq!(ui.kind, "dim");
+        assert!(ui.label.contains("comprobando"));
     }
 }
