@@ -7,6 +7,8 @@ use chrono::Local;
 use fancy_regex::Regex;
 use uuid::Uuid;
 
+/// Rectificación detectada: qué se dijo (`original`), qué debía decirse
+/// (`replacement`), la regla que casó (`reason`) y cuándo.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Correction {
     pub id: String,
@@ -16,12 +18,21 @@ pub struct Correction {
     pub created_at: String,
 }
 
+/// Texto resultante de aplicar las reglas de rectificación a un turno y, si
+/// casó alguna, la corrección detectada.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CorrectionResult {
     pub text: String,
     pub correction: Option<Correction>,
 }
 
+/// Turno ya procesado por la sesión multi-turno.
+///
+/// - `text`: lo que debe mostrarse e inyectarse (vacío si el turno es solo el
+///   arranque de una rectificación todavía sin completar).
+/// - `correction`: la rectificación aplicada, si la hubo.
+/// - `pending`: `true` cuando el turno quedó guardado esperando el resto de la
+///   frase correctiva; el siguiente turno lo completa.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CorrectionTurn {
     pub text: String,
@@ -198,6 +209,8 @@ pub fn apply_correction(input: &str) -> CorrectionResult {
     }
 }
 
+/// Añade `incoming` al final de `current` con un solo espacio y espacios
+/// normalizados. Un `incoming` vacío o en blanco deja el texto actual intacto.
 pub fn append_transcript(current: &str, incoming: &str) -> String {
     let next = normalize_spaces(incoming);
     if next.is_empty() {
@@ -206,6 +219,9 @@ pub fn append_transcript(current: &str, incoming: &str) -> String {
     normalize_spaces(&format!("{current} {next}"))
 }
 
+/// Sustituye la ÚLTIMA frase de `current` (lo que sigue a su último `.`, `!`
+/// o `?`) por `replacement`, capitalizado. Sin puntuación previa devuelve solo
+/// `replacement`: no había frase que reemplazar.
 pub fn replace_last_sentence(current: &str, replacement: &str) -> String {
     let next = capitalize_sentence(replacement);
     if next.is_empty() {
@@ -230,10 +246,20 @@ pub struct CorrectionSession {
 }
 
 impl CorrectionSession {
+    /// Sesión vacía, sin rectificación a medias.
     pub fn new() -> Self {
         Self::default()
     }
 
+    /// Procesa un turno dictado y dice qué hacer con él.
+    ///
+    /// Si había un arranque de rectificación guardado («no, era …») se le pega
+    /// este turno para completar la frase. Mientras siga sin completarse, el
+    /// arranque se mantiene pendiente y `text` vuelve vacío: el llamador debe
+    /// conservar el turno anterior, porque la rectificación lo sustituirá.
+    ///
+    /// `pending` de la respuesta indica si la sesión sigue esperando más texto;
+    /// `correction` solo viene rellena cuando la rectificación se aplicó.
     pub fn accept(&mut self, turn: &str) -> CorrectionTurn {
         let value = normalize_spaces(turn);
         if value.is_empty() {
@@ -308,10 +334,13 @@ impl CorrectionSession {
         }
     }
 
+    /// Descarta el arranque de rectificación pendiente (al borrar la nota o
+    /// al abandonar un turno a medias).
     pub fn reset(&mut self) {
         self.pending_turn.clear();
     }
 
+    /// True si la sesión guarda un arranque de rectificación a medias.
     pub fn has_pending_correction(&self) -> bool {
         !self.pending_turn.is_empty()
     }

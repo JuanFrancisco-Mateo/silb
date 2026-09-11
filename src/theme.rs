@@ -234,6 +234,8 @@ pub fn system_dark_mode() -> bool {
     }
 }
 
+/// Stub fuera de Windows: no hay registro del sistema que consultar; se asume
+/// oscuro, que es el tema por defecto de la app.
 #[cfg(not(target_os = "windows"))]
 pub fn system_dark_mode() -> bool {
     true

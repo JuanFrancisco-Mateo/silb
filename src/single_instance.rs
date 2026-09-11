@@ -66,6 +66,8 @@ pub fn acquire() -> bool {
     }
 }
 
+/// Stub fuera de Windows: sin mutex con nombre no hay guard de instancia
+/// única; `true` (esta instancia es la dueña) para no bloquear el arranque.
 #[cfg(not(target_os = "windows"))]
 pub fn acquire() -> bool {
     true
@@ -93,6 +95,7 @@ pub fn notify_second_instance() {
     }
 }
 
+/// Stub fuera de Windows (el aviso real es un `MessageBoxW`).
 #[cfg(not(target_os = "windows"))]
 pub fn notify_second_instance() {}
 

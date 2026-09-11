@@ -1244,6 +1244,9 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     Ok(pid)
 }
 
+/// Stub fuera de Windows: el server LLM es un binario nativo de Windows (regla
+/// del proyecto: nunca se arranca vía WSL), así que aquí no hay nada que
+/// lanzar; mismo contrato (`Err` con el motivo).
 #[cfg(not(target_os = "windows"))]
 pub fn launch_server(
     _exe: &std::path::Path,

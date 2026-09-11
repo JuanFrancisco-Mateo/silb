@@ -14,6 +14,9 @@ use global_hotkey::{GlobalHotKeyEvent, GlobalHotKeyManager};
 /// Atajo por defecto (también es el valor de `shortcut` ausente en config).
 pub const DEFAULT_SHORTCUT: &str = "Ctrl+Shift+D";
 
+/// Atajo global registrado en el sistema. Debe permanecer vivo mientras viva
+/// la app: si se cae, el atajo se desregistra. Si el registro falla se usa
+/// `stub`, de modo que los botones de la UI siguen funcionando sin atajo.
 pub struct HotkeyManager {
     // Se mantiene vivo mientras la app viva: si se cae, el atajo se desregistra.
     #[allow(dead_code)]
@@ -24,6 +27,9 @@ pub struct HotkeyManager {
 }
 
 impl HotkeyManager {
+    /// Registra `shortcut` en el sistema. `Err` con mensaje en español si el
+    /// formato no es válido o el atajo ya lo tiene otra app (el llamador
+    /// degrada a `stub` en vez de abortar el arranque).
     pub fn register(shortcut: &str) -> Result<Self, String> {
         let manager = GlobalHotKeyManager::new()
             .map_err(|e| format!("no se pudo iniciar el gestor de atajos: {e}"))?;

@@ -27,6 +27,9 @@ pub fn input_devices() -> Vec<String> {
     }
 }
 
+/// Captura de micrófono por turnos: el callback de CPAL (en sus propios
+/// hilos) acumula muestras f32 mono; aquí se expone el nivel reciente y los
+/// errores del stream a la UI.
 pub struct AudioCapture {
     samples: Arc<Mutex<Vec<f32>>>,
     level: Arc<AtomicU32>, // pico reciente en 0..=1000, para el medidor de la UI
