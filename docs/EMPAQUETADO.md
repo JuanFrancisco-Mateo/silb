@@ -4,7 +4,8 @@ Objetivo: convertir `target/release/whispr-open.exe` en distribuciones
 instalables y confiables para Windows 10/11.
 
 Estado al cierre de la **Fase 4 (R6, 11/09/2026)**: instalador Inno
-Setup funcional (23,77 MiB, sin admin, `%LOCALAPPDATA%\Programs\WhisprOpen`),
+Setup funcional (23,21 MiB tras Personalización III; sin admin,
+`%LOCALAPPDATA%\Programs\WhisprOpen`),
 icono `.ico` multirresolución (16/24/32/48/64/128/256, color `#7C6CFF`,
 fondo transparente) generado por código e incrustado en el `.exe` y en los
 accesos directos, variante portable = el propio `.exe` release (sin
@@ -55,10 +56,13 @@ Contenido del instalador:
 |---|---|
 | `target/release/whispr-open.exe` (sin icono) | 44.226.048 B (42,18 MiB) |
 | `target/release/whispr-open.exe` (con icono incrustado) | 44.854.272 B (42,77 MiB, +628 KB) |
-| `packaging/Output/whispr-open-0.2.0-setup.exe` | 23.769.034 B (22,67 MiB) |
+| `target/release/whispr-open.exe` (tras Personalización I+II+III, feat `image` activada) | 47.178.240 B (44,99 MiB) |
+| `packaging/Output/whispr-open-0.2.0-setup.exe` (R6 inicial, feat `image` desactivada) | 23.769.034 B (22,67 MiB) |
+| `packaging/Output/whispr-open-0.2.0-setup.exe` (tras Personalización III, feat `image` activa) | 24.332.697 B (23,21 MiB) |
 
-Compresión LZMA2/ultra64 reduce el binario de 42,77 MiB a 22,67 MiB
-(53 % del original). Objetivo ≤25 MiB: **CUMPLIDO**.
+Compresión LZMA2/ultra64 reduce el binario de ~45 MiB a ~23 MiB
+(~52 % del original). Objetivo ≤25 MiB: **CUMPLIDO** (margen 1,79 MiB
+incluso con la feature `image` activada tras Personalización III).
 
 ### 1.3 MSIX
 
@@ -271,8 +275,9 @@ de las variantes adicionales se puede activar poniendo
 
 Razones (medidas el 11/09/2026):
 
-1. **El binario ya cumple el objetivo de tamaño** (42,77 MiB; instalador
-   22,67 MiB tras LZMA, ver §1.2.1).
+1. **El binario ya cumple el objetivo de tamaño** (44,99 MiB con la
+   feature `image` activa tras Personalización III; instalador 23,21 MiB
+   tras LZMA, ver §1.2.1).
 2. **`opt-level="z"` ahorra 4,92 MiB (-11,0 %)** — pero penaliza el
    rendimiento: la app es GPU-bound en la transcripción (whisper.cpp +
    CUDA) y CPU-bound en el render (Iced 0.13); un -11 % en velocidad
@@ -333,6 +338,7 @@ Para quien no quiera ese coste de RAM, basta cambiar el modelo a
 - ⏳ Firma de código (pipeline listo; pendiente de certificado real).
 - ✅ La versión en todos los artefactos coincide con `Cargo.toml`
   (`0.2.0`).
-- ✅ El instalador (22,67 MiB) cumple el objetivo de ≤25 MiB.
+- ✅ El instalador (23,21 MiB tras Personalización III) cumple el
+  objetivo de ≤25 MiB.
 - ✅ El `.ico` multirresolución está versionado en el repo, validado por
   un test de Rust y un verificador externo Python.
