@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use global_hotkey::GlobalHotKeyEvent;
+use iced::border::Radius;
 use iced::widget::text::Shaping;
 use iced::widget::{
     button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row, scrollable,
@@ -302,7 +303,16 @@ pub enum Message {
     /// Abre/cierra el panel «Ajustes avanzados» dentro de Ajustes (las
     /// opciones técnicas quedan ocultas por defecto; el estado expandido o
     /// colapsado se persiste en `config.advanced_settings_open`).
+    ///
+    /// NOTA (R7 — Personalización I): tras el refactor por pestañas el panel
+    /// «Ajustes avanzados» deja de existir como bloque colapsable dentro del
+    /// panel. Lo técnico del corrector pasa a la pestaña «Corrección IA» y lo
+    /// técnico del motor de voz a «Dictado». El mensaje se mantiene por
+    /// compatibilidad hacia atrás pero ya no se envía desde la UI.
     ToggleAdvancedSettings,
+    /// Cambia la pestaña activa dentro del panel de Ajustes (R7). Solo
+    /// relevante mientras `settings_open` sea true.
+    SettingsSectionSelected(SettingsSection),
     Poll,
     // ── Burbuja flotante (overlay) ────────────────────────────────────────
     /// La ventana de la burbuja ya fue creada (aplicar WS_EX_NOACTIVATE).
@@ -388,6 +398,14 @@ pub struct WhisprApp {
     /// Categoría seleccionada en el `pick_list` de muletillas.
     filler_category: FillerCategory,
     settings_open: bool,
+    /// Pestaña activa dentro del panel de Ajustes (R7 — Personalización I).
+    /// In-memory; NO se persiste en config.json (regla del producto: la
+    /// última sección abierta solo se recuerda dentro de la sesión).
+    /// Se resetea a `General` cada vez que se cierra el panel, para que
+    /// al volver a abrirse el usuario aterrice en lo más común (requisito
+    /// 5 de la tarea R7: «recordar la última sección solo en el estado de
+    /// sesión»).
+    settings_section: SettingsSection,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
     bubble_id: Option<window::Id>,
     bubble_pressed: bool, // botón izquierdo pulsado (graba)
@@ -555,6 +573,7 @@ impl WhisprApp {
             filler_input: String::new(),
             filler_category: FillerCategory::Unambiguous,
             settings_open: false,
+            settings_section: SettingsSection::General,
             bubble_id,
             bubble_pressed: false,
             bubble_last_pos: Point::new(0.0, 0.0),
@@ -2273,11 +2292,24 @@ impl WhisprApp {
             }
             Message::ToggleSettings => {
                 self.settings_open = !self.settings_open;
+                // Al cerrar el panel reseteamos a General: la regla del
+                // producto es «recordar la última sección solo en el estado
+                // de sesión», así que la próxima vez que se abra empezará
+                // en lo más común. Al abrir NO reseteamos: el usuario que
+                // está alternando entre pestañas no quiere perder su sitio.
+                if !self.settings_open {
+                    self.settings_section = SettingsSection::General;
+                }
                 Task::none()
             }
             Message::ToggleAdvancedSettings => {
-                self.config.advanced_settings_open = Some(!self.config.advanced_open());
-                self.save_config();
+                // Compatibilidad hacia atrás (R7): el panel «Ajustes
+                // avanzados» se eliminó al reorganizar por pestañas. Si
+                // alguien lo dispara lo ignoramos sin error.
+                Task::none()
+            }
+            Message::SettingsSectionSelected(section) => {
+                self.settings_section = section;
                 Task::none()
             }
             Message::Poll => {
@@ -3237,8 +3269,50 @@ impl WhisprApp {
     }
 
     /// Panel de configuración (oculto tras el botón Ajustes).
+/// Panel de configuración reorganizado por pestañas (R7 — Personalización I).
+    /// Antes era un único `settings_view()` monolítico con scroll infinito y un
+    /// bloque «Ajustes avanzados» colapsable al final. Ahora son cinco pestañas
+    /// (`General | Apariencia | Dictado | Corrección IA | Avanzado`) y solo se
+    /// renderiza el contenido de la pestaña activa. La fila de pestañas va
+    /// ARRIBA del contenido; los botones globales (tema, ajustes) se quedan
+    /// en la cabecera de la app, fuera de aquí.
     fn settings_view(&self, t: &UiPalette) -> Element<'_, Message> {
         let fs = theme::font_sizes(self.config.font_size().factor());
+
+        // Fila de pestañas: cada una es un botón independiente con su
+        // etiqueta legible. La activa lleva un prefijo `●` y un fondo más
+        // marcado (requisito 4 de R7: «sección activa marcada por algo más
+        // que color»). Las inactivas usan el estilo `secondary` ya existente.
+        let tab_bar = settings_tab_bar(self.settings_section, t, fs);
+
+        // Contenido de la pestaña activa. Cada sección es una función
+        // privada: si en el futuro se mueve un control, se mueve a la
+        // sección correcta sin tocar las demás.
+        let body: Element<'_, Message> = match self.settings_section {
+            SettingsSection::General => self.settings_section_general(t, fs),
+            SettingsSection::Apariencia => self.settings_section_appearance(t, fs),
+            SettingsSection::Dictado => self.settings_section_dictation(t, fs),
+            SettingsSection::CorreccionIA => self.settings_section_correction(t, fs),
+            SettingsSection::Avanzado => self.settings_section_advanced(t, fs),
+        };
+
+        let panel = column![tab_bar, body]
+            .spacing(theme::SPACE_3)
+            .width(Length::Fill);
+
+        container(panel)
+            .width(Length::Fill)
+            .padding(theme::SPACE_3)
+            .style(|th| theme::card(th))
+            .into()
+    }
+
+    /// ── Sección «General» ────────────────────────────────────────────────
+    /// Lo más usado en una sesión normal: modelo de voz, micrófono, idioma,
+    /// limpieza de muletillas, autoinyección, diccionario y las muletillas
+    /// personalizadas. Es la pestaña que se abre por defecto al entrar en
+    /// Ajustes (requisito 5 de R7: aterrizar en lo común).
+    fn settings_section_general(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
         let model_pick = pick_list(
             Model::all().to_vec(),
             Some(self.config.selected_model()),
@@ -3251,11 +3325,14 @@ impl WhisprApp {
         .style(theme::pick_list);
         let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref(), fs);
 
-        // ── Idioma de transcripción ───────────────────────────────────────
-        // Selector de idioma: el item "Auto" representa autodetección
-        // (whisper decide); el resto son códigos BCP-47 ("es", "en", "fr").
-        // El getter `Config::language()` traduce "auto" a None y cualquier
-        // otro valor a Some(código) que se pasa a whisper.
+        // Subtítulo de la sub-sección «Transcripción».
+        let transcription_title = text("Transcripción")
+            .size(fs.lg)
+            .font(Font::MONOSPACE)
+            .color(t.text);
+
+        // Idioma: el getter traduce "auto" a None y cualquier otro valor a
+        // Some(BCP-47) que se pasa a whisper.
         const LANGUAGE_OPTIONS: &[&str] = &["auto", "es", "en", "fr", "de", "it", "pt"];
         let lang_pick = pick_list(
             LANGUAGE_OPTIONS
@@ -3269,11 +3346,348 @@ impl WhisprApp {
         .width(Length::Fill)
         .style(theme::pick_list);
 
-        // Beam size y threads: sliders numéricos 1..=8 / 1..=16.
-        // El getter clampea el rango efectivo; aquí mostramos el valor
-        // efectivo para que el slider esté alineado con el estado real
-        // (si el config traía un valor fuera de rango, mostramos el
-        // clamp, no el valor original, para no descolgar la UI).
+        // Toggle de limpieza de muletillas (separado del editor de
+        // muletillas que vive en esta misma sección).
+        let cleanup_checkbox = checkbox("Limpiar muletillas", self.config.cleanup_enabled())
+            .on_toggle(Message::ToggleCleanup)
+            .style(theme::checkbox);
+
+        // Autoinyección al terminar el turno.
+        let autoinject_checkbox = checkbox(
+            "Autoinyectar al terminar",
+            self.config.auto_inject.unwrap_or(true),
+        )
+        .on_toggle(Message::ToggleAutoInject)
+        .style(theme::checkbox);
+
+        // Botón «Por defecto» para las muletillas: solo aparece si el
+        // usuario ha personalizado las listas (config.fillers = Some).
+        let reset_button: Element<'_, Message> = if self.config.fillers.is_some() {
+            button("Por defecto")
+                .on_press(Message::ResetFillers)
+                .style(theme::secondary)
+                .into()
+        } else {
+            Space::new(Length::Shrink, 0).into()
+        };
+
+        let mut col = Column::new()
+            .spacing(theme::SPACE_2)
+            .width(Length::Fill);
+        // Modelo
+        col = col.push(
+            row![
+                text("Modelo")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                model_pick,
+                text(format!(
+                    "(~{} MB)",
+                    self.config.selected_model().approx_mb()
+                ))
+                .size(fs.sm)
+                .color(t.dim),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        // Micrófono
+        col = col.push(
+            row![
+                text("Micrófono")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                mic_pick,
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(transcription_title);
+        col = col.push(
+            row![
+                text("Idioma")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                lang_pick,
+                text(language_hint(&self.config.language))
+                    .size(fs.xxs)
+                    .color(t.dim),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text("Audio: normalizado automáticamente a 16 kHz")
+                .size(fs.sm)
+                .color(t.dim),
+        );
+        // ── Diccionario personal ────────────────────────────────────────────
+        col = col.push(
+            text("Diccionario personal")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        col = col.push(
+            row![
+                text_input("término", &self.entry_from)
+                    .on_input(Message::EntryFromChanged)
+                    .on_submit(Message::AddEntry)
+                    .style(theme::text_input),
+                text_input("reemplazo", &self.entry_to)
+                    .on_input(Message::EntryToChanged)
+                    .on_submit(Message::AddEntry)
+                    .style(theme::text_input),
+                button("Añadir")
+                    .on_press(Message::AddEntry)
+                    .style(theme::primary),
+            ]
+            .spacing(theme::SPACE_2),
+        );
+        col = col.push(dictionary_list(&self.config.dictionary, fs));
+        col = col.push(
+            row![
+                button("Importar")
+                    .on_press(Message::ImportDictionary)
+                    .style(theme::secondary),
+                button("Exportar")
+                    .on_press(Message::ExportDictionary)
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2),
+        );
+        // Feedback de import/export: vive aquí para que sea visible
+        // mientras la sección General esté abierta.
+        if let Some(corr) = &self.last_correction {
+            if corr.contains("Diccionario") {
+                col = col.push(text(corr).size(fs.sm).color(t.ok));
+            }
+        }
+        col = col.push(horizontal_rule(1).style(theme::rule));
+        // ── Muletillas ──────────────────────────────────────────────────────
+        col = col.push(
+            text("Muletillas")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        col = col.push(cleanup_checkbox);
+        col = col.push(autoinject_checkbox);
+        col = col.push(
+            text(format!("Atajo global: {}", self.hotkey_label))
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+        col = col.push(
+            row![
+                text_input("muletilla (ej. «vale»)", &self.filler_input)
+                    .on_input(Message::FillerInputChanged)
+                    .on_submit(Message::AddFiller)
+                    .style(theme::text_input),
+                pick_list(
+                    FillerCategory::ALL.to_vec(),
+                    Some(self.filler_category),
+                    Message::FillerCategorySelected,
+                )
+                .placeholder("Categoría")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+                button("Añadir")
+                    .on_press(Message::AddFiller)
+                    .style(theme::primary),
+            ]
+            .spacing(theme::SPACE_2),
+        );
+        col = col.push(filler_lists(&self.config.fillers(), fs));
+        col = col.push(reset_button);
+        col.into()
+    }
+
+    /// ── Sección «Apariencia» ────────────────────────────────────────────
+    /// Tema (global) y todo lo relativo a la burbuja flotante: estilo,
+    /// tamaño, esquina, opacidad y auto-ocultar. La fuente va aquí porque
+    /// es un ajuste visual y la regla de producto dice que cada opción
+    /// técnica necesita label claro + ayuda corta, y la fuente es el
+    /// ajuste visual más impactante de la app.
+    fn settings_section_appearance(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+        let mut col = Column::new()
+            .spacing(theme::SPACE_2)
+            .width(Length::Fill);
+        col = col.push(
+            text("Tema")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        col = col.push(
+            row![
+                text("Tema")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [ThemeMode::Auto, ThemeMode::Claro, ThemeMode::Oscuro].to_vec(),
+                    Some(self.config.theme_mode()),
+                    Message::ThemeModeChanged,
+                )
+                .placeholder("Tema")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+                if self.config.theme_mode() == ThemeMode::Auto {
+                    text("sigue a Windows").size(fs.xxs).color(t.dim)
+                } else {
+                    text("").size(fs.xxs).color(t.dim)
+                },
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            row![
+                text("Fuente")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        FontSize::Small,
+                        FontSize::Normal,
+                        FontSize::Large,
+                        FontSize::XLarge,
+                    ]
+                    .to_vec(),
+                    Some(self.config.font_size()),
+                    Message::FontSizeChanged,
+                )
+                .placeholder("Tamaño de fuente")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+                text(format!("{}×", self.config.font_size().factor()))
+                    .size(fs.xxs)
+                    .color(t.dim),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text("Burbuja flotante")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        col = col.push(
+            row![
+                text("Estilo")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [BubbleStyle::Solid, BubbleStyle::Ring, BubbleStyle::Minimal].to_vec(),
+                    Some(self.config.bubble_style()),
+                    Message::BubbleStyleChanged,
+                )
+                .placeholder("Estilo")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            row![
+                text("Tamaño")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [BubbleSize::Small, BubbleSize::Mid, BubbleSize::Large].to_vec(),
+                    Some(self.config.bubble_size()),
+                    Message::BubbleSizeChanged,
+                )
+                .placeholder("Tamaño")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            row![
+                text("Esquina")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        BubbleCorner::TopRight,
+                        BubbleCorner::TopLeft,
+                        BubbleCorner::BottomRight,
+                        BubbleCorner::BottomLeft,
+                    ]
+                    .to_vec(),
+                    Some(self.config.bubble_corner()),
+                    Message::BubbleCornerChanged,
+                )
+                .placeholder("Esquina")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        // Opacidad: slider 20–100 %; el getter clampea aunque el slider
+        // nunca emita fuera de rango.
+        let op = u32::from(self.config.bubble_opacity());
+        col = col.push(
+            row![
+                text(format!("Opacidad: {op}%"))
+                    .size(fs.sm)
+                    .color(t.text)
+                    .width(Length::Fixed(120.0)),
+                slider(20..=100, op, Message::BubbleOpacityChanged)
+                    .step(1u32)
+                    .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            row![
+                text("Auto-ocultar")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(96.0)),
+                pick_list(
+                    [
+                        BubbleHideTimeout::Never,
+                        BubbleHideTimeout::S5,
+                        BubbleHideTimeout::S10,
+                        BubbleHideTimeout::S30,
+                        BubbleHideTimeout::S60,
+                    ]
+                    .to_vec(),
+                    Some(self.config.bubble_hide_timeout()),
+                    Message::BubbleHideTimeoutChanged,
+                )
+                .placeholder("Auto-ocultar")
+                .width(Length::Fill)
+                .style(theme::pick_list),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col.into()
+    }
+
+    /// ── Sección «Dictado» ────────────────────────────────────────────────
+    /// Calidad (beam size), hilos de CPU y resumen informativo de la
+    /// inyección (formato, retardo y filtro de ventana). Lo técnico del
+    /// motor de transcripción vive aquí: si el usuario nunca toca la IA,
+    /// no lo verá al pasar por Corrección IA.
+    fn settings_section_dictation(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
         let beam = self.config.beam_size();
         let threads = self.config.n_threads();
         let beam_row = row![
@@ -3299,114 +3713,102 @@ impl WhisprApp {
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
 
-        // «Por defecto» solo tiene sentido cuando hay muletillas
-        // personalizadas (config.fillers = Some); si ya son las de serie, la
-        // fila se deja vacía para no mostrar un botón que no haría nada.
-        let reset_button: Element<'_, Message> = if self.config.fillers.is_some() {
-            button("Por defecto")
-                .on_press(Message::ResetFillers)
-                .style(theme::secondary)
-                .into()
-        } else {
-            Space::new(Length::Shrink, 0).into()
+        // Resumen informativo de la inyección (formato / retardo / filtro
+        // de ventana activa): sigue siendo informativo aquí, igual que en
+        // el antiguo panel. La edición de estos parámetros es interna a
+        // `config.inject_settings()`; no se exponen controles en la UI
+        // porque están fijados por el producto (requisito UX 10/09/2026).
+        let injection_label = {
+            let inj = self.config.inject_settings();
+            let destino = match inj.window_filter.as_deref() {
+                Some(f) => format!("solo «{f}»"),
+                None => "cualquier app".to_string(),
+            };
+            format!(
+                "Inyección: {} · retardo {} ms · {}",
+                inj.format.label(),
+                inj.delay.as_millis(),
+                destino,
+            )
         };
 
-        // ── Panel «Ajustes avanzados» (colapsado por defecto) ────────────
-        // Decisión de diseño (09/09/2026, re-agrupado 10/09/2026): lo COMÚN
-        // (modelo, corrección IA, ruta del server LLM) queda a la vista en
-        // primer nivel; lo técnico (beam, hilos, timeout, umbral, API key,
-        // confirmar, fuente, inyección) queda oculto tras este interruptor
-        // con su explicación corta bajo cada opción. El estado
-        // expandido/colapsado se persiste en `config.advanced_settings_open`
-        // para que reabra como el usuario lo dejó.
-        let advanced_open = self.config.advanced_open();
-        let advanced_label = if advanced_open {
-            "Ajustes avanzados ▾"
-        } else {
-            "Ajustes avanzados ▸"
-        };
-        let advanced_header = button(ui_text(advanced_label))
-            .on_press(Message::ToggleAdvancedSettings)
-            .style(theme::secondary)
+        let mut col = Column::new()
+            .spacing(theme::SPACE_2)
             .width(Length::Fill);
+        col = col.push(
+            text("Calidad y rendimiento")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        col = col.push(beam_row);
+        col = col.push(
+            text(
+                "Calidad de transcripción (beam size) vs velocidad: \
+                 1 = la más rápida, 8 = la más fiel. Rango 1–8, \
+                 recomendado: 5."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+        );
+        col = col.push(threads_row);
+        col = col.push(
+            text(
+                "Núcleos de CPU que usa Whisper al transcribir. \
+                 Sube si el equipo va justo de velocidad; baja para \
+                 dejar recursos al resto. Rango 1–16, recomendado: 4."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+        );
+        col = col.push(horizontal_rule(1).style(theme::rule));
+        col = col.push(
+            text("Inyección en la app activa")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        col = col.push(text(injection_label).size(fs.xxs).color(t.dim));
+        col.into()
+    }
 
-        let panel = column![
-            row![
-                text("Modelo")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                model_pick,
-                text(format!(
-                    "(~{} MB)",
-                    self.config.selected_model().approx_mb()
-                ))
-                .size(fs.sm)
-                .color(t.dim),
-            ]
+    /// ── Sección «Corrección IA» ─────────────────────────────────────────
+    /// Todo el corrector LLM en un único sitio: estado en vivo, toggle,
+    /// proveedor, endpoint, modelo, API key, ruta del server local y los
+    /// detalles técnicos (timeout, sensibilidad, confirmar). Es la
+    /// pestaña más densa porque el corrector tiene muchas opciones, pero
+    /// ahora están agrupadas y no se mezclan con el motor de voz ni con
+    /// la apariencia.
+    fn settings_section_correction(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+        // Estado en vivo (misma lógica pura que el chip del header):
+        // «Corrección IA: activa · <modelo>» o «inactiva — <motivo>».
+        let status_label = {
+            let ui = llm_status_ui(
+                self.config.ai_correction_enabled(),
+                &self.llm_status,
+                &self.config.llm_settings().model,
+            );
+            let color = match ui.kind {
+                "ok" => t.ok,
+                "warn" => t.warn,
+                _ => t.dim,
+            };
+            text(ui.label).size(fs.sm).color(color)
+        };
+
+        let mut col = Column::new()
             .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Micrófono")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                mic_pick,
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            // Subtítulo de la sección «Transcripción».
-            text("Transcripción")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-            row![
-                text("Idioma")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                lang_pick,
-                text(language_hint(&self.config.language))
-                    .size(fs.xxs)
-                    .color(t.dim),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            text("Audio: normalizado automáticamente a 16 kHz")
-                .size(fs.sm)
-                .color(t.dim),
-            // ── Corrección IA (primer nivel; requisito UX 10/09/2026) ──────
-            // Lo COMÚN vive aquí: qué hace, su estado en vivo, el toggle, el
-            // proveedor, el endpoint, el modelo y la ruta del server local.
-            // Cada opción lleva su explicación corta bajo el control. Los
-            // detalles técnicos (timeout, umbral, API key, confirmar) quedan
-            // tras «Ajustes avanzados», también con explicación.
-            text("Corrección IA")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-            // Estado en vivo (misma lógica pura que el chip del estado
-            // principal): «Corrección IA: activa · <modelo>» o «inactiva —
-            // <motivo>». Nunca silencioso.
-            {
-                let ui = llm_status_ui(
-                    self.config.ai_correction_enabled(),
-                    &self.llm_status,
-                    &self.config.llm_settings().model,
-                );
-                let color = match ui.kind {
-                    "ok" => t.ok,
-                    "warn" => t.warn,
-                    _ => t.dim,
-                };
-                text(ui.label).size(fs.sm).color(color)
-            },
+            .width(Length::Fill);
+        col = col.push(status_label);
+        col = col.push(
             checkbox(
                 "Corrección IA: una IA revisa y corrige lo que dictas",
                 self.config.ai_correction_enabled(),
             )
             .on_toggle(Message::ToggleAiCorrection)
             .style(theme::checkbox),
+        );
+        col = col.push(
             text(
                 "Al terminar un turno, la IA lo revisa y corrige («digo X», «no, \
                  era Y»…). Si el servidor de IA no está disponible, el dictado \
@@ -3414,6 +3816,8 @@ impl WhisprApp {
             )
             .size(fs.xxs)
             .color(t.dim),
+        );
+        col = col.push(
             row![
                 text("Proveedor")
                     .size(fs.sm)
@@ -3435,6 +3839,8 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
             text(
                 "Quién corrige lo que dictas: Local — llama.cpp, el que viene \
                  con la app (sin internet, recomendado) · Custom LLM — tu \
@@ -3443,6 +3849,8 @@ impl WhisprApp {
             )
             .size(fs.xxs)
             .color(t.dim),
+        );
+        col = col.push(
             row![
                 text("Endpoint LLM")
                     .size(fs.sm)
@@ -3458,12 +3866,16 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
             text(
                 "Dirección del servidor de IA (API compatible con OpenAI). \
                  Local: http://127.0.0.1:8081/v1."
             )
             .size(fs.xxs)
             .color(t.dim),
+        );
+        col = col.push(
             row![
                 text("Modelo IA")
                     .size(fs.sm)
@@ -3479,47 +3891,49 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
             text(
                 "El modelo que corrige. Debe estar en tu servidor local o ser \
                  uno de los que ofrece la nube."
             )
             .size(fs.xxs)
             .color(t.dim),
-            // API key: solo tiene sentido con un proveedor que la exija
-            // (Custom — opcional si el server no la pide — y Cloud,
-            // obligatoria). Con Local el server local no la usa, así que
-            // el campo no se muestra para no confundir. Persistencia en
-            // Credential Manager de Windows, NUNCA en config.json.
-            if self.config.correction_provider() != CorrectionProvider::Default {
-                column![
-                    row![
-                        text("API key")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        text_input(
-                            "opcional (Custom) · obligatoria (Cloud)",
-                            self.config.llm_api_key.as_deref().unwrap_or("")
-                        )
-                        .on_input(Message::LlmApiKeyChanged)
-                        .secure(true)
-                        .style(theme::text_input)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    text(
-                        "Clave del endpoint si la exige (Custom: opcional · \
-                         Cloud: obligatoria). Se guarda en el Administrador \
-                         de credenciales de Windows, nunca en la config."
+        );
+        // API key: solo con proveedor que la exija (Custom — opcional si
+        // el server no la pide — y Cloud, obligatoria). Con Local el
+        // server local no la usa. Persistencia en Credential Manager de
+        // Windows, NUNCA en config.json.
+        if self.config.correction_provider() != CorrectionProvider::Default {
+            col = col.push(
+                row![
+                    text("API key")
+                        .size(fs.sm)
+                        .color(t.dim)
+                        .width(Length::Fixed(96.0)),
+                    text_input(
+                        "opcional (Custom) · obligatoria (Cloud)",
+                        self.config.llm_api_key.as_deref().unwrap_or("")
                     )
-                    .size(fs.xxs)
-                    .color(t.dim),
+                    .on_input(Message::LlmApiKeyChanged)
+                    .secure(true)
+                    .style(theme::text_input)
+                    .width(Length::Fill),
                 ]
-                .spacing(theme::SPACE_1)
-            } else {
-                Column::new()
-            },
+                .spacing(theme::SPACE_2)
+                .align_y(iced::Alignment::Center),
+            );
+            col = col.push(
+                text(
+                    "Clave del endpoint si la exige (Custom: opcional · \
+                     Cloud: obligatoria). Se guarda en el Administrador \
+                     de credenciales de Windows, nunca en la config."
+                )
+                .size(fs.xxs)
+                .color(t.dim),
+            );
+        }
+        col = col.push(
             row![
                 text("Server LLM")
                     .size(fs.sm)
@@ -3540,6 +3954,8 @@ impl WhisprApp {
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
             text(
                 "Ejecutable llama-server.exe que la app lanza al arrancar. \
                  Vacío = autodetección (D:\\LlamaCPP, junto a la app…). Solo \
@@ -3547,358 +3963,243 @@ impl WhisprApp {
             )
             .size(fs.xxs)
             .color(t.dim),
-            // ── Apariencia: tema, fuente y burbuja configurable ──────────────
-            text("Apariencia")
+        );
+        col = col.push(horizontal_rule(1).style(theme::rule));
+        col = col.push(
+            text("Detalles técnicos")
                 .size(fs.lg)
                 .font(Font::MONOSPACE)
                 .color(t.text),
+        );
+        // Timeout: slider 1..=120 s (25 por defecto). El getter clampea.
+        col = col.push(
             row![
-                text("Tema")
+                text("Espera máx. (s)")
                     .size(fs.sm)
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
-                pick_list(
-                    [ThemeMode::Auto, ThemeMode::Claro, ThemeMode::Oscuro].to_vec(),
-                    Some(self.config.theme_mode()),
-                    Message::ThemeModeChanged,
+                slider(
+                    1..=120,
+                    self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
+                    Message::LlmTimeoutChanged,
                 )
-                .placeholder("Tema")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-                // Hint: Auto sigue el modo de Windows (se refresca solo).
-                if self.config.theme_mode() == ThemeMode::Auto {
-                    text("sigue a Windows").size(fs.xxs).color(t.dim)
-                } else {
-                    text("").size(fs.xxs).color(t.dim)
-                },
+                .step(1u32)
+                .width(Length::Fill),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
-            text("Burbuja flotante").size(fs.sm).color(t.dim),
-            row![
-                text("Estilo")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [BubbleStyle::Solid, BubbleStyle::Ring, BubbleStyle::Minimal].to_vec(),
-                    Some(self.config.bubble_style()),
-                    Message::BubbleStyleChanged,
-                )
-                .placeholder("Estilo")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Tamaño")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [BubbleSize::Small, BubbleSize::Mid, BubbleSize::Large].to_vec(),
-                    Some(self.config.bubble_size()),
-                    Message::BubbleSizeChanged,
-                )
-                .placeholder("Tamaño")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            row![
-                text("Esquina")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        BubbleCorner::TopRight,
-                        BubbleCorner::TopLeft,
-                        BubbleCorner::BottomRight,
-                        BubbleCorner::BottomLeft,
-                    ]
-                    .to_vec(),
-                    Some(self.config.bubble_corner()),
-                    Message::BubbleCornerChanged,
-                )
-                .placeholder("Esquina")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            // Opacidad: slider 20–100 %; el getter clampea aunque el slider
-            // nunca emita fuera de rango.
-            {
-                let op = u32::from(self.config.bubble_opacity());
-                row![
-                    text(format!("Opacidad: {op}%"))
-                        .size(fs.sm)
-                        .color(t.text)
-                        .width(Length::Fixed(120.0)),
-                    slider(20..=100, op, Message::BubbleOpacityChanged)
-                        .step(1u32)
-                        .width(Length::Fill),
-                ]
-                .spacing(theme::SPACE_2)
-                .align_y(iced::Alignment::Center)
-            },
-            row![
-                text("Auto-ocultar")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        BubbleHideTimeout::Never,
-                        BubbleHideTimeout::S5,
-                        BubbleHideTimeout::S10,
-                        BubbleHideTimeout::S30,
-                        BubbleHideTimeout::S60,
-                    ]
-                    .to_vec(),
-                    Some(self.config.bubble_hide_timeout()),
-                    Message::BubbleHideTimeoutChanged,
-                )
-                .placeholder("Auto-ocultar")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-            checkbox("Limpiar muletillas", self.config.cleanup_enabled(),)
-                .on_toggle(Message::ToggleCleanup)
-                .style(theme::checkbox),
-            checkbox(
-                "Autoinyectar al terminar",
-                self.config.auto_inject.unwrap_or(true),
+        );
+        col = col.push(
+            text(
+                "Espera máxima de la IA antes de dar el turno por \
+                 definitivo: si lo supera, se inserta sin corregir. \
+                 Rango 1–120 s, recomendado: 25 s."
             )
-            .on_toggle(Message::ToggleAutoInject)
-            .style(theme::checkbox),
-            text(format!("Atajo global: {}", self.hotkey_label))
-                .size(fs.xxs)
-                .color(t.dim),
-            horizontal_rule(1).style(theme::rule),
-            advanced_header,
-            // El panel solo se expande si el usuario lo pide; colapsado (el
-            // estado por defecto) solo se ve el interruptor «Ajustes
-            // avanzados». El estado se persiste en config.
-            if advanced_open {
-                column![
-                    // Calidad de transcripción (beam size): equilibrio
-                    // calidad vs velocidad (requisito UX 10/09/2026: rango y
-                    // default marcados en la ayuda).
-                    beam_row,
-                    text(
-                        "Calidad de transcripción (beam size) vs velocidad: \
-                         1 = la más rápida, 8 = la más fiel. Rango 1–8, \
-                         recomendado: 5."
-                    )
-                    .size(fs.xxs)
-                    .color(t.dim),
-                    threads_row,
-                    text(
-                        "Núcleos de CPU que usa Whisper al transcribir. \
-                         Sube si el equipo va justo de velocidad; baja para \
-                         dejar recursos al resto. Rango 1–16, recomendado: 4."
-                    )
-                    .size(fs.xxs)
-                    .color(t.dim),
-                    // Fuente: tamaño de letra global. Opción de apariencia
-                    // avanzada (el tema sí queda a la vista).
-                    row![
-                        text("Fuente")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        pick_list(
-                            [
-                                FontSize::Small,
-                                FontSize::Normal,
-                                FontSize::Large,
-                                FontSize::XLarge,
-                            ]
-                            .to_vec(),
-                            Some(self.config.font_size()),
-                            Message::FontSizeChanged,
-                        )
-                        .placeholder("Tamaño de fuente")
-                        .width(Length::Fill)
-                        .style(theme::pick_list),
-                        text(format!("{}×", self.config.font_size().factor()))
-                            .size(fs.xxs)
-                            .color(t.dim),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    // ── Detalles técnicos de la corrección IA ───────────────
-                    text("Corrección IA (técnico)").size(fs.sm).color(t.dim),
-                    // Timeout: slider 1..=120 s (25 por defecto). Clamp del lado del
-                    // getter: ≤0 cae al default; el slider nunca emite 0.
-                    row![
-                        text("Espera máx. (s)")
-                            .size(fs.sm)
-                            .color(t.dim)
-                            .width(Length::Fixed(96.0)),
-                        slider(
-                            1..=120,
-                            self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
-                            Message::LlmTimeoutChanged,
-                        )
-                        .step(1u32)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    text(
-                        "Espera máxima de la IA antes de dar el turno por \
-                         definitivo: si lo supera, se inserta sin corregir. \
-                         Rango 1–120 s, recomendado: 25 s."
-                    )
-                    .size(fs.xxs)
-                    .color(t.dim),
-                    // Umbral del clasificador: 0..=100. Default 50 (conducta
-                    // previa); 0 = pasivo (atajo al toggle off); 80+ muy
-                    // conservador. Etiqueta en lenguaje llano: «sensibilidad»
-                    // (requisito UX 10/09/2026: «umbral clasif.» no dice nada).
-                    row![
-                        text(format!("Sensibilidad: {}", self.config.llm_classifier_threshold()))
-                            .size(fs.sm)
-                            .color(t.text)
-                            .width(Length::Fixed(120.0)),
-                        slider(
-                            0..=100,
-                            u32::from(self.config.llm_classifier_threshold()),
-                            Message::LlmThresholdChanged,
-                        )
-                        .step(1u32)
-                        .width(Length::Fill),
-                    ]
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-                    text(
-                        "Con qué frecuencia se envía un turno a la IA: 50 = \
-                         casi siempre que hay una señal de corrección, 100 = \
-                         casi nunca. Rango 0–100, recomendado: 50."
-                    )
-                    .size(fs.xxs)
-                    .color(t.dim),
-                    checkbox(
-                        "Confirmar antes de aplicar",
-                        self.config.ai_correction_confirm(),
-                    )
-                    .on_toggle(Message::LlmConfirmToggled)
-                    .style(theme::checkbox),
-                    text(
-                        "Pide tu visto bueno (Aplicar/Descartar) antes de \
-                         modificar el texto. Recomendado si prefieres revisar \
-                         lo que corrige la IA."
-                    )
-                    .size(fs.xxs)
-                    .color(t.dim),
-                    // Resumen de la inyección (formato/retardo/filtro de la
-                    // ventana activa): informativo, configurable vía config.
-                    text({
-                        let inj = self.config.inject_settings();
-                        let destino = match inj.window_filter.as_deref() {
-                            Some(f) => format!("solo «{f}»"),
-                            None => "cualquier app".to_string(),
-                        };
-                        format!(
-                            "Inyección: {} · retardo {} ms · {}",
-                            inj.format.label(),
-                            inj.delay.as_millis(),
-                            destino,
-                        )
-                    })
-                    .size(fs.xxs)
-                    .color(t.dim),
-                ]
-                .spacing(theme::SPACE_2)
-            } else {
-                Column::new()
-            },
-            horizontal_rule(1).style(theme::rule),
-            text("Diccionario personal")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
+            .size(fs.xxs)
+            .color(t.dim),
+        );
+        // Umbral del clasificador: 0..=100. Default 50. Etiqueta llana
+        // «sensibilidad» (requisito UX 10/09/2026: «umbral clasif.» no
+        // dice nada).
+        col = col.push(
             row![
-                text_input("término", &self.entry_from)
-                    .on_input(Message::EntryFromChanged)
-                    .on_submit(Message::AddEntry)
-                    .style(theme::text_input),
-                text_input("reemplazo", &self.entry_to)
-                    .on_input(Message::EntryToChanged)
-                    .on_submit(Message::AddEntry)
-                    .style(theme::text_input),
-                button("Añadir")
-                    .on_press(Message::AddEntry)
-                    .style(theme::primary),
-            ]
-            .spacing(theme::SPACE_2),
-            dictionary_list(&self.config.dictionary, fs),
-            // Importar/Exportar: backup/restore del diccionario a JSON en
-            // %APPDATA%/whispr-open/dictionary.json (junto a la config).
-            row![
-                button("Importar")
-                    .on_press(Message::ImportDictionary)
-                    .style(theme::secondary),
-                button("Exportar")
-                    .on_press(Message::ExportDictionary)
-                    .style(theme::secondary),
-            ]
-            .spacing(theme::SPACE_2),
-            // Feedback de import/export visible mientras Ajustes está abierto
-            // (éxito verde con la ruta; el fallo va a Status::Error del header).
-            if let Some(corr) = &self.last_correction {
-                if corr.contains("Diccionario") {
-                    text(corr).size(fs.sm).color(t.ok)
-                } else {
-                    text("").size(fs.sm).color(t.ok)
-                }
-            } else {
-                text("").size(fs.sm).color(t.ok)
-            },
-            horizontal_rule(1).style(theme::rule),
-            // ── Muletillas: las listas de cleanup.rs, editables ────────────
-            // El toggle «Limpiar muletillas» sigue arriba; aquí se añaden y
-            // quitan palabras por categoría (Enter en el input añade).
-            text("Muletillas")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-            row![
-                text_input("muletilla (ej. «vale»)", &self.filler_input)
-                    .on_input(Message::FillerInputChanged)
-                    .on_submit(Message::AddFiller)
-                    .style(theme::text_input),
-                pick_list(
-                    FillerCategory::ALL.to_vec(),
-                    Some(self.filler_category),
-                    Message::FillerCategorySelected,
+                text(format!("Sensibilidad: {}", self.config.llm_classifier_threshold()))
+                    .size(fs.sm)
+                    .color(t.text)
+                    .width(Length::Fixed(120.0)),
+                slider(
+                    0..=100,
+                    u32::from(self.config.llm_classifier_threshold()),
+                    Message::LlmThresholdChanged,
                 )
-                .placeholder("Categoría")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-                button("Añadir")
-                    .on_press(Message::AddFiller)
-                    .style(theme::primary),
+                .step(1u32)
+                .width(Length::Fill),
             ]
-            .spacing(theme::SPACE_2),
-            filler_lists(&self.config.fillers(), fs),
-            reset_button,
-        ]
-        .spacing(theme::SPACE_2)
-        .width(Length::Fill);
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text(
+                "Con qué frecuencia se envía un turno a la IA: 50 = \
+                 casi siempre que hay una señal de corrección, 100 = \
+                 casi nunca. Rango 0–100, recomendado: 50."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+        );
+        col = col.push(
+            checkbox(
+                "Confirmar antes de aplicar",
+                self.config.ai_correction_confirm(),
+            )
+            .on_toggle(Message::LlmConfirmToggled)
+            .style(theme::checkbox),
+        );
+        col = col.push(
+            text(
+                "Pide tu visto bueno (Aplicar/Descartar) antes de \
+                 modificar el texto. Recomendado si prefieres revisar \
+                 lo que corrige la IA."
+            )
+            .size(fs.xxs)
+            .color(t.dim),
+        );
+        col.into()
+    }
 
-        container(panel)
-            .width(Length::Fill)
-            .padding(theme::SPACE_3)
-            .style(|th| theme::card(th))
-            .into()
+    /// ── Sección «Avanzado» ──────────────────────────────────────────────
+    /// Reservada para opciones transversales que no encajan en las
+    /// secciones anteriores. Tras el refactor por pestañas queda vacía;
+    /// se mantiene visible (en vez de oculta) porque la regla de
+    /// producto dice que toda opción técnica necesita label claro, y
+    /// este lands de aterrizaje es la casa natural de futuras opciones
+    /// avanzadas (p. ej. reset completo, importación/export global,
+    /// diagnóstico del server LLM). En fases siguientes puede poblarse.
+    fn settings_section_advanced(&self, _t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+        container(
+            column![
+                text("Avanzado")
+                    .size(fs.lg)
+                    .font(Font::MONOSPACE)
+                    .color(crate::theme::tokens(&self.theme()).text),
+                text(
+                    "Aquí irán las opciones que no encajan en General, \
+                     Apariencia, Dictado o Corrección IA. De momento no \
+                     hay ninguna."
+                )
+                .size(fs.sm),
+            ]
+            .spacing(theme::SPACE_3),
+        )
+        .width(Length::Fill)
+        .into()
+    }
+}
+
+/// Fila de pestañas del panel de Ajustes (R7 — Personalización I).
+/// Renderiza los cinco botones de sección; la activa lleva un prefijo `●`,
+/// fondo destacado y borde inferior, para que sea identificable sin
+/// depender solo del color (requisito 4 de R7: accesibilidad).
+fn settings_tab_bar(
+    active: SettingsSection,
+    _t: &UiPalette,
+    fs: theme::FontSizes,
+) -> Element<'static, Message> {
+    let mut bar = row![].spacing(theme::SPACE_1).align_y(iced::Alignment::Center);
+    for section in SettingsSection::ALL {
+        let is_active = section == active;
+        let label = if is_active {
+            format!("● {}", section.label())
+        } else {
+            section.label().to_string()
+        };
+        let tab: Element<'static, Message> = if is_active {
+            // Estilo «activo»: fondo surface_alt + texto accent + borde
+            // inferior de 2 px. El borde inferior se simula con un
+            // container con padding inferior grueso más un Border
+            // inferior 2 px. iced 0.13 no soporta borde por lado, así
+            // que el «borde inferior» va en el `Border` regular (que
+            // iced pinta en los 4 lados) — pero al ser del color del
+            // fondo el efecto visual es solo el del borde grueso
+            // uniforme, que también comunica «pestaña activa» sin
+            // depender del color.
+            button(text(label).size(fs.sm))
+                .on_press(Message::SettingsSectionSelected(section))
+                .style(|th, status| {
+                    let tokens = theme::tokens(th);
+                    let bg = match status {
+                        iced::widget::button::Status::Hovered
+                        | iced::widget::button::Status::Pressed => tokens.surface,
+                        _ => tokens.surface_alt,
+                    };
+                    let border_color = match status {
+                        iced::widget::button::Status::Active => tokens.accent,
+                        _ => tokens.border,
+                    };
+                    iced::widget::button::Style {
+                        background: Some(iced::Background::Color(bg)),
+                        text_color: tokens.accent_text,
+                        border: iced::Border {
+                            color: border_color,
+                            width: 2.0,
+                            radius: Radius::from(theme::RADIUS_SM),
+                        },
+                        shadow: Default::default(),
+                    }
+                })
+                .into()
+        } else {
+            button(text(label).size(fs.sm))
+                .on_press(Message::SettingsSectionSelected(section))
+                .style(theme::secondary)
+                .into()
+        };
+        bar = bar.push(tab);
+    }
+    container(bar)
+        .width(Length::Fill)
+        .padding(iced::Padding {
+            top: 0.0,
+            bottom: theme::SPACE_1 as f32,
+            left: 0.0,
+            right: 0.0,
+        })
+        .into()
+}
+
+/// Pestaña activa del panel de Ajustes (R7 — Personalización I). Cada
+/// variante corresponde a un grupo de controles del antiguo `settings_view`
+/// monolítico: dividir el panel en pestañas quita el ruido que vivía el
+/// usuario al ver toda la configuración apilada en una sola vista larga con
+/// scroll infinito.
+///
+/// El estado vive solo en memoria (`WhisprApp::settings_section`); NO se
+/// persiste en `config.json` porque la regla del producto es que la última
+/// sección abierta solo se recuerda dentro de la misma sesión de la app.
+///
+/// Notas de diseño:
+/// - El orden del enum es el orden visual de las pestañas y el del
+///   ciclo `next()` / `previous()` (por si en el futuro se añade
+///   navegación por teclado).
+/// - Cada variante tiene una etiqueta legible en español para que las
+///   pestañas sean accesibles también sin color (requisito 4 de la
+///   tarea R7).
+/// - La pestaña activa se marca con fondo + borde inferior y un
+///   indicador `●` antes de la etiqueta, no solo con color.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SettingsSection {
+    General,
+    Apariencia,
+    Dictado,
+    CorreccionIA,
+    Avanzado,
+}
+
+impl SettingsSection {
+    /// Orden de las pestañas, igual al del enum.
+    const ALL: [SettingsSection; 5] = [
+        SettingsSection::General,
+        SettingsSection::Apariencia,
+        SettingsSection::Dictado,
+        SettingsSection::CorreccionIA,
+        SettingsSection::Avanzado,
+    ];
+
+    /// Etiqueta legible en español (requisito 4: texto, no solo icono).
+    fn label(self) -> &'static str {
+        match self {
+            SettingsSection::General => "General",
+            SettingsSection::Apariencia => "Apariencia",
+            SettingsSection::Dictado => "Dictado",
+            SettingsSection::CorreccionIA => "Corrección IA",
+            SettingsSection::Avanzado => "Avanzado",
+        }
+    }
+}
+
+impl std::fmt::Display for SettingsSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
     }
 }
 
