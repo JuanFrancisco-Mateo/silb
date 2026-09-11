@@ -1,9 +1,10 @@
-# UI FUTURA — mejoras pendientes según `app-design-2026`
+# UI FUTURA — checklist `app-design-2026`: qué queda por hacer
 
-Base: el skill `app-design-2026` (tendencias 2026 + checklist). El rediseño ya
-hecho (commit `962342c`, `src/theme.rs`) implementa gran parte del lenguaje
-visual. Este documento lista **lo que falta** para cerrar el checklist, en
-orden de impacto.
+Base: el skill `app-design-2026` (tendencias 2026 + checklist). El rediseño
+(commit `962342c`, `src/theme.rs`) implementó gran parte del lenguaje visual y
+la fase R3/R4 (commit `7f2109e`) cerró varios puntos de esta lista. Este
+documento lista lo que faltaba y marca el **estado real a 11/09/2026**: lo
+hecho queda anotado con su commit, y lo que sigue abierto, como pendiente.
 
 ---
 
@@ -21,51 +22,49 @@ orden de impacto.
 
 ---
 
-## 2. Mejoras pendientes (priorizadas)
+## 2. Mejoras priorizadas (con estado real a 11/09/2026)
 
-### P0 — AI transparente y overrideable (el más importante)
+### P0 — AI transparente y overrideable (el más importante) — HECHO
 
 El principio nº3 del skill: si la app usa IA, el usuario debe **ver** qué hace
 y poder **corregirla/anularla**.
 
-- **Trust signal persistente**: un texto discreto y siempre visible del tipo
-  «Transcripción local · nada sale de tu PC» en el footer. Hoy esa promesa
-  solo está en el README, no en la app.
-- **Overflow del transcript editable**: hoy `transcript` es `text` de solo
-  lectura. Permitir **editar el texto** directamente (clic y corregir), para
-  que un error de Whisper no dependa de re-dictar ni de una corrección por voz.
-  Iced: sustituir el `text` del transcript por un `text_input` multilínea (o
-  un editor) con `Message::TranscriptEdited`.
-- **Confianza mostrada, no magia**: cuando se aplique la corrección por voz
-  (`CORRECCION-VOZ.md`), mostrar el diff («4 → 2») y ofrecer **Deshacer**.
-  Este punto se implementa con esa etapa; no duplicar aquí.
+- **HECHO** (11/09/2026) — **Trust signal persistente**: «Transcripción local ·
+  nada sale de tu PC» en el pie de la ventana principal (`src/app.rs`), con el
+  texto adaptado: si el proveedor de corrección es la nube, NO se promete que
+  nada sale del PC (hay un test que lo comprueba).
+- **HECHO** (`7f2109e`) — **Transcript editable**: el transcript es un
+  `text_editor` multilínea (`Message::TranscriptEdited`); editar a mano y
+  seguir dictando no se pisan (el dictado se añade al final del texto editado).
+- **HECHO** (`CORRECCION-VOZ.md`) — **Confianza mostrada, no magia**: la
+  corrección por voz muestra el diff («4 → 2») y ofrece Deshacer.
 
-### P1 — Contraste y accesibilidad (WCAG como infraestructura)
+### P1 — Contraste y accesibilidad (WCAG como infraestructura) — PARCIAL
 
-- **Contraste del acento**: el violeta `#7C6CFF` sobre fondo grafito
-  `#17181C` roza el límite para texto pequeño. Testear ≥ 4.5:1 en texto y ≥
-  3:1 en elementos grandes; si falla, subir la luminancia del acento (p. ej.
-  `#8F82FF`, ya usado como hover) o reservar el acento para fondos y usar
-  `#F7F6F3` para texto.
-- **`prefers-reduced-motion`**: Iced lo respeta parcialmente vía winit; auditar
-  que ningún micro-feedback (transiciones del hero, progress) fuerce animación.
-- **Foco de teclado visible**: verificar que todos los controles (toggle de
-  tema, ajustes, checkbox, pick_list) tienen focus ring visible; hoy depende
-  de los estilos por defecto de Iced.
-- **Targets táctiles**: el círculo del hero y la burbuja (56 px) ya son
-  grandes; los botones secundarios («Copiar», «Limpiar») pueden necesitar más
-  área de hit.
+- **HECHO** (`7f2109e`) — **Contraste del acento**: `contrast_ratio` (WCAG)
+  calculado en código y tests que exigen ≥ 4.5:1 en texto y ≥ 3:1 en
+  gráficos; el acento de texto (`ACCENT_TEXT`) es más claro que el de marca
+  para cumplirlo.
+- **PENDIENTE** — **`prefers-reduced-motion`**: Iced lo respeta parcialmente
+  vía winit; falta auditar que ningún micro-feedback fuerce animación.
+- **HECHO donde el framework lo permite** (`7f2109e`) — **Foco de teclado
+  visible**: el `text_input` y el editor dibujan un anillo de acento de 1.5 px
+  al enfocar. En botón, checkbox y `pick_list` iced 0.13 no expone estado de
+  foco (limitación del framework, anotada en `NOTA-SESION.md`).
+- **PENDIENTE** — **Targets táctiles**: el círculo del hero y la burbuja
+  (56 px) ya son grandes; los botones secundarios («Copiar», «Limpiar») pueden
+  necesitar más área de hit.
 
-### P2 — Estado y feedback fino
+### P2 — Estado y feedback fino — PARCIAL
 
-- **Errores en idioma del usuario**: `Status::Error` ya muestra el `hint`
-  crudo; revisar que los mensajes de error (descarga, micrófono, inyección)
-  sean frases amables y accionables, no mensajes técnicos de la cadena de
-  crates.
-- **Estado de descarga del modelo** más claro: hoy usa el hero con barra; añadir
-  el tiempo restante o el tamaño (`descargado / total`) junto al porcentaje.
-- **Nivel de micrófono con marcador de pico**: el `progress_bar` actual es
-  plano; un indicador de pico ayuda a saber si el mic está saturado o mudo.
+- **HECHO** (R2) — **Errores en idioma del usuario**: los errores de descarga,
+  micrófono e inyección son frases cortas y accionables en español
+  (`friendly_download_error` y compañía); el detalle técnico queda en el log.
+- **HECHO** (R4) — **Estado de descarga del modelo**: además del porcentaje se
+  muestra el tamaño (`descargado / total`) y el tiempo restante estimado.
+- **PENDIENTE** — **Nivel de micrófono con marcador de pico**: el pico ya se
+  calcula y se expone desde `AudioCapture`, pero la UI aún dibuja una barra
+  plana; falta el indicador de pico (mic saturado o mudo).
 
 ### P3 — Personalidad (opcional, bajo coste)
 
