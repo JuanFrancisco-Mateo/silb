@@ -257,6 +257,7 @@ impl BubbleHideTimeout {
         }
     }
 
+    /// Etiqueta del selector «Ocultar la burbuja tras…» (incluye «Nunca»).
     pub fn label(self) -> &'static str {
         match self {
             BubbleHideTimeout::Never => "Nunca",
@@ -274,8 +275,13 @@ impl std::fmt::Display for BubbleHideTimeout {
     }
 }
 
-// PartialEq para los tests de degradación elegante (corrupta/vacía →
-// defaults comparables por valor).
+/// Ajustes persistidos del usuario (`%APPDATA%/whispr-open/config.json`).
+///
+/// Todos los campos son opcionales y caen a su default: un config.json
+/// incompleto, antiguo o corrupto no rompe la app (ver `load`).
+///
+/// Deriva `PartialEq` para los tests de degradación elegante (config corrupta
+/// o vacía → defaults comparables por valor).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Config {
     /// `#[serde(default)]` en TODOS los campos (incluida la lista): un
@@ -415,6 +421,10 @@ pub struct Config {
     pub advanced_settings_open: Option<bool>,
 }
 
+/// Ruta del `config.json` del usuario (junto a `dictionary.json`).
+///
+/// Si el sistema no expone carpeta de datos se cae al directorio actual: la
+/// app sigue funcionando, solo guarda la config al lado del ejecutable.
 pub fn config_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("config.json")

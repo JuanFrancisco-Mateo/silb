@@ -12,12 +12,16 @@ use std::path::Path;
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// Término del diccionario personal: `from` tal y como lo transcribe whisper,
+/// `to` tal y como debe escribirse (p. ej. «codi» → «usuario»).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DictionaryEntry {
     pub from: String,
     pub to: String,
 }
 
+/// Resultado de aplicar el diccionario: texto final y los términos que se
+/// sustituyeron realmente (para poder avisar en la UI).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictionaryResult {
     pub text: String,

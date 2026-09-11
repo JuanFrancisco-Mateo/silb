@@ -11,6 +11,8 @@
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 
+/// Resultado de limpiar un turno: el texto final y las muletillas retiradas
+/// (la UI las muestra: qué se quitó y de dónde).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CleanupResult {
     pub text: String,

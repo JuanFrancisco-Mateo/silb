@@ -25,6 +25,7 @@ pub enum InjectFormat {
 }
 
 impl InjectFormat {
+    /// Etiqueta en español del selector «Formato de inyección» (Ajustes).
     pub fn label(self) -> &'static str {
         match self {
             InjectFormat::Paste => "Pegar (Ctrl+V)",
@@ -109,11 +110,20 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
         .map_err(|err| format!("no se pudo copiar el texto al portapapeles: {err}"))
 }
 
+/// Stub fuera de Windows: mismo contrato que la versión Windows, pero aquí
+/// siempre `Err` (arboard contra el portapapeles del sistema es de Windows).
 #[cfg(not(target_os = "windows"))]
 pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
     Err("el portapapeles solo está disponible en Windows".to_string())
 }
 
+/// Escribe `text` en la app que tiene el foco, según `opts` (formato, retardo
+/// y filtro de ventana).
+///
+/// Devuelve `Ok(InjectOutcome)` con el desenlace real —«omitida por filtro» y
+/// «sin ventana activa» NO son errores— o `Err` con mensaje en español si
+/// falla el portapapeles o el simulador de teclado. Nunca simula teclado a
+/// ciegas: sin ventana con el foco no hay destino donde pegar.
 #[cfg(target_os = "windows")]
 pub fn inject_text_into_active_app(
     text: &str,
@@ -205,6 +215,8 @@ fn foreground_window_title() -> Option<String> {
     }
 }
 
+/// Stub fuera de Windows: la inyección (portapapeles + enigo) es de
+/// escritorio Windows; aquí siempre `Err`, con el mismo contrato.
 #[cfg(not(target_os = "windows"))]
 pub fn inject_text_into_active_app(
     _text: &str,

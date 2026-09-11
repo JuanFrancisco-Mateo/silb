@@ -141,6 +141,9 @@ pub enum ExistingModelPlan {
     DownloadFresh,
 }
 
+/// Decisión pura (sin red ni disco) sobre un posible modelo ya presente:
+/// reutilizarlo, borrarlo y re-descargar, o descargar de cero. `ensure_model`
+/// la aplica tal cual; separarla permite testear la decisión sin red.
 pub fn existing_model_plan(exists: bool, valid: bool) -> ExistingModelPlan {
     match (exists, valid) {
         (true, true) => ExistingModelPlan::UseIt,
@@ -316,6 +319,13 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
     Ok(path)
 }
 
+/// `initial_prompt` de whisper a partir del diccionario personal (`entries`,
+/// usando `from`: la forma en que whisper los transcribe mal).
+///
+/// `None` si no queda ningún término usable. Se deduplica y se corta en
+/// `PROMPT_MAX_CHARS`: el prompt sesga la decodificación hacia esos términos
+/// (nombres propios, jerga), pero uno largo ralentiza cada transcripción y
+/// puede dominar la decodificación del turno.
 pub fn build_initial_prompt(
     entries: &[crate::domain::dictionary::DictionaryEntry],
 ) -> Option<String> {

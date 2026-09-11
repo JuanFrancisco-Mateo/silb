@@ -293,10 +293,11 @@ fn bubble_event_filter(
     }
 }
 
-/// Vista de la burbuja: círculo violeta con borde claro para contrastar sobre
-/// cualquier fondo. Estados: violeta = listo, rojo + punto blanco = grabando,
-/// ámbar = transcribiendo / descargando modelo, rojo = error.
+/// Estilos y vista del overlay de la burbuja (el círculo flotante).
 impl WhisprApp {
+    /// Vista de la burbuja: círculo violeta con borde claro para contrastar
+    /// sobre cualquier fondo. Estados: violeta = listo, rojo + punto blanco =
+    /// grabando, ámbar = transcribiendo / descargando modelo, rojo = error.
     pub fn bubble_view(&self) -> Element<'static, Message> {
         let style = self.bubble_style();
         let recording = matches!(self.bubble_status(), Status::Recording);
@@ -546,6 +547,8 @@ pub fn bubble_window_position() -> Option<(i32, i32)> {
     }
 }
 
+/// Stub fuera de Windows: sin ventana nativa no hay rectángulo que leer. Se
+/// mantiene la misma firma para que `app.rs` compile en cualquier target.
 #[cfg(not(target_os = "windows"))]
 pub fn bubble_window_position() -> Option<(i32, i32)> {
     None
@@ -663,6 +666,8 @@ pub struct BubbleDrag {
     last: (i32, i32),
 }
 
+/// Stub fuera de Windows: el arrastre es winapi puro (`SetCapture` +
+/// `SetWindowPos`), así que aquí no hay nada que sostener.
 #[cfg(not(target_os = "windows"))]
 pub struct BubbleDrag {
     _private: (),
@@ -820,13 +825,18 @@ impl BubbleDrag {
 
 #[cfg(not(target_os = "windows"))]
 impl BubbleDrag {
+    /// Stub: fuera de Windows nunca hay un arrastre que iniciar.
     pub fn start() -> Option<BubbleDrag> {
         None
     }
+    /// Stub: no-op (no hay ventana nativa que reposicionar).
     pub fn follow(&mut self) {}
+    /// Siempre `true`: sin captura real, el watchdog de 100 ms de la UI no
+    /// debe interpretar «captura robada» y cancelar un arrastre inexistente.
     pub fn is_captured(&self) -> bool {
         true
     }
+    /// Stub: no-op (no hay captura que liberar).
     pub fn end(&self) {}
 }
 
@@ -841,6 +851,8 @@ pub fn right_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_RBUTTON) as u16) & 0x8000 != 0 }
 }
 
+/// Stub fuera de Windows: `true` («botón derecho pulsado») para que la red de
+/// seguridad del arrastre no cancele por un soltado que aquí no existe.
 #[cfg(not(target_os = "windows"))]
 pub fn right_button_down() -> bool {
     true
@@ -857,6 +869,7 @@ pub fn capture_left_mouse() {
     }
 }
 
+/// Stub fuera de Windows (la captura del ratón es winapi puro).
 #[cfg(not(target_os = "windows"))]
 pub fn capture_left_mouse() {}
 
@@ -868,6 +881,7 @@ pub fn release_mouse_capture() {
     }
 }
 
+/// Stub fuera de Windows (no hay captura que soltar).
 #[cfg(not(target_os = "windows"))]
 pub fn release_mouse_capture() {}
 
@@ -877,6 +891,7 @@ pub fn left_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16) & 0x8000 != 0 }
 }
 
+/// Stub fuera de Windows: `false` = ningún botón izquierdo pulsado.
 #[cfg(not(target_os = "windows"))]
 pub fn left_button_down() -> bool {
     false
