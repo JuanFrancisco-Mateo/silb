@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
+use crate::theme::PaletteConfig;
 use crate::transcribe::Model;
 
 /// Proveedor de corrección IA. Permite elegir entre el LLM local por
@@ -419,6 +420,13 @@ pub struct Config {
     /// server LLM) vive en primer nivel. `None` = colapsado. Solo
     /// afecta a la UI: no cambia ninguna opción de comportamiento.
     pub advanced_settings_open: Option<bool>,
+    /// Overrides por campo de la paleta visual (R7 — Personalización II).
+    /// Cada campo es un hex opcional (`"#RRGGBB"` o `"#RGB"`); un valor
+    /// ausente o inválido cae al default del modo activo (la app nunca
+    /// rompe por un hex basura). `None` = paleta por defecto = mismo
+    /// comportamiento que antes de R7-II. Se serializa tal cual: campos
+    /// `None` se omiten del JSON para mantener los configs limpios.
+    pub palette: Option<PaletteConfig>,
 }
 
 /// Ruta del `config.json` del usuario (junto a `dictionary.json`).
@@ -1559,5 +1567,48 @@ mod tests {
             "un campo ausente no tira el resto de la config"
         );
         assert!(sin_dictionary.dictionary.is_empty());
+    }
+
+    #[test]
+    fn palette_roundtrip_y_legacy() {
+        // Default: paleta totalmente por defecto (None).
+        assert_eq!(Config::default().palette, None);
+
+        // Config personalizada → se persiste y se relee igual.
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                accent: Some("#00AAFF".into()),
+                text: Some("#101010".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let raw = serde_json::to_string(&cfg).unwrap();
+        let leida: Config = serde_json::from_str(&raw).unwrap();
+        assert_eq!(
+            leida.palette.as_ref().and_then(|p| p.accent.clone()),
+            Some("#00AAFF".into())
+        );
+        assert_eq!(
+            leida.palette.as_ref().and_then(|p| p.text.clone()),
+            Some("#101010".into())
+        );
+        // Campos None se omiten en el JSON para configs limpios.
+        assert!(!raw.contains("\"bg\":"));
+        assert!(!raw.contains("\"surface\":"));
+
+        // Config legacy sin el campo → None (default completo).
+        let legacy: Config = serde_json::from_str(r#"{ "dictionary": [] }"#).unwrap();
+        assert_eq!(legacy.palette, None);
+
+        // PaletteConfig con todos los campos None = is_empty + se omite.
+        let vacia = Config {
+            palette: Some(PaletteConfig::default()),
+            ..Default::default()
+        };
+        let raw_vacia = serde_json::to_string(&vacia).unwrap();
+        // El objeto PaletteConfig interno se serializa como {} (todos sus
+        // campos son None); pero el Option<PaletteConfig> = Some → presente.
+        assert!(raw_vacia.contains("\"palette\":{"));
     }
 }

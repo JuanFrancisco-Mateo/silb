@@ -1,6 +1,6 @@
 # Guía de usuario — Whispr Open
 
-Versión: 0.2.0 · Última revisión: 10/09/2026 (verificada contra binario release)
+Versión: 0.2.0 · Última revisión: 11/09/2026 (sección 6: paleta editable)
 y la especificación `docs/CORRECCION-VOZ.md`.
 
 Whispr Open es un dictado por voz local: hablas, la app transcribe y escribe
@@ -107,7 +107,92 @@ Para jerga, siglas y nombres propios (nombres de la empresa, anglicismos…):
 Ajustes → Diccionario. Cada entrada es una palabra que Whisper no transcribe
 bien y que la app intenta respetar en el dictado.
 
-## 6. Si algo va mal
+## 6. Personalizar la apariencia (paleta)
+
+Ajustes → Apariencia → Paleta te da control total sobre los colores de la
+app. Cada campo es editable por separado o puedes usar un preset de un clic.
+
+### 6.1 Presets
+
+Cinco combinaciones listas para los dos modos:
+
+- **Violeta (oscuro por defecto)**: el look de Whispr Open tal como se
+  distribuye.
+- **Grafito (cian sobrio)**: tono grafito con acento cian; lectura larga,
+  poco distractivo.
+- **Claro (violeta)**: el modo claro con acento violeta.
+- **Bosque (verde sobre crema)**: verde sobre fondo crema; ambiente cálido,
+  lectura sin reflejos.
+- **Oceánico (azul sobre tinta)**: azul profundo sobre tinta oscura;
+  alternativa al grafito en oscuro, o azul sobre blanco en claro.
+
+Cada preset reemplaza los 12 campos. Si después afinas uno o dos, el resto
+del preset se mantiene.
+
+### 6.2 Campos editables (12)
+
+Cada fila tiene un campo hex (`#RRGGBB` o `#RGB`, mayúsculas o minúsculas,
+con o sin `#`), un swatch con el color actual y un botón «Restaurar» que
+devuelve ese campo al default del modo activo. Los 12 campos:
+
+| Etiqueta              | Qué controla                                            |
+|-----------------------|---------------------------------------------------------|
+| Fondo de ventana      | Color de fondo de la ventana principal.                 |
+| Tarjetas / inputs     | Color de las tarjetas y de los campos de texto.         |
+| Hover / superficies 2 | Fondo al pasar el cursor sobre elementos.               |
+| Texto principal       | Color principal del texto. Mide ≥ 4.5:1 sobre fondo.   |
+| Texto atenuado        | Texto secundario (labels, pistas). Mide ≥ 4.5:1.        |
+| Acento                | Color de marca (botones primarios, foco, Checks).       |
+| Acento (hover)        | Acento al pasar el cursor sobre el botón primario.      |
+| Acento (texto)        | Acento usado como texto normal (≥ 4.5:1 sobre fondo).   |
+| Ok                    | Estados correctos (verde).                              |
+| Aviso                 | Estados de aviso (ámbar).                               |
+| Error                 | Estados de error (rojo).                                |
+| Bordes                | Bordes sutiles de tarjetas y separadores.               |
+
+Si el hex escrito no es válido, la app **lo ignora y usa el default** (no
+rompe la UI, no muestra error modal). Al pulsar «Aplicar» se persiste el
+valor en `config.json`.
+
+### 6.3 Aviso de contraste
+
+Al editar Texto principal o Texto atenuado, la fila muestra en ámbar el
+ratio WCAG medido contra el fondo activo. Si baja de 3:1, sale un aviso
+«⚠ Contraste X.XX:1 (texto sobre fondo, mínimo WCAG 3:1). Se aplica
+igualmente; ajusta hex o restaura el campo». **No bloquea** al usuario:
+solo avisa, porque hay contextos legítimos (modo claro experimental,
+demostraciones).
+
+### 6.4 Importar / Exportar JSON
+
+- **Exportar JSON…**: escribe un fichero `.json` con la paleta actual
+  resuelta (los 12 campos ya con defaults aplicados si los habías dejado en
+  blanco). Pensado para compartir.
+- **Importar JSON…**: lee un fichero y **funde** sus campos con tu paleta
+  actual: un campo presente en el JSON sobrescribe el tuyo, uno ausente se
+  mantiene. Esto permite compartir una paleta parcial (p. ej. solo el
+  acento) sin perder tus ajustes.
+
+Formato del JSON (los 12 campos; los ausentes se mantienen al importar):
+
+```json
+{
+  "bg": "#17181C",
+  "surface": "#1F2026",
+  "surface_alt": "#272830",
+  "text": "#F7F6F3",
+  "dim": "#9A9AA3",
+  "accent": "#7C6CFF",
+  "accent_hover": "#8F82FF",
+  "accent_text": "#8F82FF",
+  "ok": "#3FB95F",
+  "warn": "#F5A623",
+  "err": "#EB5757",
+  "border": "#2E3038"
+}
+```
+
+## 7. Si algo va mal
 
 - **El texto no se inyecta en la app**: comprueba que «Autoinyectar» está
   activo y que la app destino tiene el foco. Si tienes un filtro por título de
@@ -134,7 +219,7 @@ local · nada sale de tu PC». Si activas la corrección en la nube, el pie lo
 dice («la corrección IA usa la nube») — nunca te promete una privacidad que
 no estás usando.
 
-## 7. Referencias
+## 8. Referencias
 
 - Configuración de Local/Custom/Cloud: `docs/SETUP.md`.
 - Diseño del corrector: `docs/CORRECCION-VOZ.md`.

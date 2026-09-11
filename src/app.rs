@@ -12,9 +12,9 @@ use iced::border::Radius;
 use iced::widget::text::Shaping;
 use iced::widget::{
     button, checkbox, column, container, horizontal_rule, pick_list, progress_bar, row, scrollable,
-    slider, text, text_editor, text_input, Column, Space, Text,
+    slider, text, text_editor, text_input, Column, Row, Space, Text,
 };
-use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
+use iced::{window, Background, Border, Color, Element, Font, Length, Point, Subscription, Task, Theme};
 
 use crate::audio::AudioCapture;
 use crate::config::{
@@ -314,6 +314,40 @@ pub enum Message {
     /// relevante mientras `settings_open` sea true.
     SettingsSectionSelected(SettingsSection),
     Poll,
+    // ── Personalización II (R7): paleta editable ─────────────────────────
+    /// Texto del campo hex de un campo concreto de la paleta. Cada tecla
+    /// actualiza la previsualización (en el swatch + el aviso de contraste)
+    /// pero NO persiste hasta que el usuario pulsa «Aplicar» o edita otro
+    /// campo (debounce, como el resto de inputs de Ajustes).
+    PaletteFieldChanged(theme::PaletteField, String),
+    /// «Aplicar» de un campo concreto: persiste el valor actual del input
+    /// (parseo robusto, hex inválido = se ignora).
+    PaletteFieldApply(theme::PaletteField),
+    /// «Restaurar» un campo concreto: lo devuelve a `None` (default del
+    /// modo activo).
+    PaletteFieldReset(theme::PaletteField),
+    /// «Restaurar TODO»: borra la paleta entera (vuelve a defaults DARK/LIGHT).
+    PaletteResetAll,
+    /// Aplicar un preset (5 disponibles). Pasa a `Config::palette` el
+    /// `PaletteConfig` correspondiente al modo activo (DARK o LIGHT según
+    /// `ThemeMode` resuelto).
+    PalettePresetApply(theme::PalettePreset),
+    /// Exporta la paleta a un fichero JSON elegido por el usuario con
+    /// `rfd::FileDialog::save_file`. El resultado (ruta o None si se
+    /// canceló) vuelve como `Message::PaletteExportPicked`.
+    PaletteExport,
+    /// Resultado del diálogo de export. `Some(ruta)` = JSON escrito; `None`
+    /// = usuario canceló (no es error).
+    PaletteExportPicked(Option<std::path::PathBuf>),
+    /// Importa la paleta desde un fichero JSON elegido con
+    /// `rfd::FileDialog::pick_file`. El resultado vuelve como
+    /// `PaletteImportPicked`. Un JSON corrupto o inválido se rechaza SIN
+    /// tocar la paleta actual (la UI sigue con lo que tenía).
+    PaletteImport,
+    /// Resultado del diálogo de import: ruta o cancelación. La ruta se
+    /// procesa en `update` para leer + parsear + fundir con la paleta actual
+    /// (preservando lo que el usuario no esté reemplazando explícitamente).
+    PaletteImportPicked(Option<std::path::PathBuf>),
     // ── Burbuja flotante (overlay) ────────────────────────────────────────
     /// La ventana de la burbuja ya fue creada (aplicar WS_EX_NOACTIVATE).
     BubbleOpened(window::Id),
@@ -406,6 +440,14 @@ pub struct WhisprApp {
     /// 5 de la tarea R7: «recordar la última sección solo en el estado de
     /// sesión»).
     settings_section: SettingsSection,
+    // ── Personalización II (R7): buffers de input por campo de paleta ────────
+    /// Texto en vuelo del input hex de cada campo de la paleta (lo que el
+    /// usuario está tecleando, antes de pulsar «Aplicar» o pasar a otro
+    /// campo). Vacío por defecto; se rellena al entrar a la sección Apariencia
+    /// con el hex actual de cada campo (o vacío si está en default). La razón
+    /// de vivir aquí (vs. un `State` de iced): queremos comparar contra el
+    /// valor persistido para no machacar lo que el usuario está escribiendo.
+    palette_inputs: std::collections::HashMap<theme::PaletteField, String>,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
     bubble_id: Option<window::Id>,
     bubble_pressed: bool, // botón izquierdo pulsado (graba)
@@ -574,6 +616,7 @@ impl WhisprApp {
             filler_category: FillerCategory::Unambiguous,
             settings_open: false,
             settings_section: SettingsSection::General,
+            palette_inputs: std::collections::HashMap::new(),
             bubble_id,
             bubble_pressed: false,
             bubble_last_pos: Point::new(0.0, 0.0),
@@ -628,6 +671,119 @@ impl WhisprApp {
 
     fn save_config(&mut self) {
         self.config_save_deadline = Some(std::time::Instant::now() + Duration::from_millis(300));
+    }
+
+    /// Toma el buffer en vuelo de `palette_inputs[field]` (si existe) o el
+    /// hex ya persistido (si el usuario solo tocó «Aplicar» sin teclear);
+    /// parsea robusto; persiste; vacía el buffer. Si el input está vacío se
+    /// interpreta como «restaurar este campo al default» (= `None`).
+    fn apply_palette_field(&mut self, field: theme::PaletteField) {
+        let raw_input = self
+            .palette_inputs
+            .remove(&field)
+            .unwrap_or_else(|| {
+                // Sin buffer → tomar el valor ya persistido para mantenerlo.
+                let cfg = self.config.palette.as_ref();
+                let current = match cfg {
+                    Some(c) => match field {
+                        theme::PaletteField::Bg => c.bg.clone(),
+                        theme::PaletteField::Surface => c.surface.clone(),
+                        theme::PaletteField::SurfaceAlt => c.surface_alt.clone(),
+                        theme::PaletteField::Text => c.text.clone(),
+                        theme::PaletteField::Dim => c.dim.clone(),
+                        theme::PaletteField::Accent => c.accent.clone(),
+                        theme::PaletteField::AccentHover => c.accent_hover.clone(),
+                        theme::PaletteField::AccentText => c.accent_text.clone(),
+                        theme::PaletteField::Ok => c.ok.clone(),
+                        theme::PaletteField::Warn => c.warn.clone(),
+                        theme::PaletteField::Err => c.err.clone(),
+                        theme::PaletteField::Border => c.border.clone(),
+                    },
+                    None => None,
+                };
+                current.unwrap_or_default()
+            });
+        // Trim antes de decidir vacío.
+        let trimmed = raw_input.trim().to_string();
+        if trimmed.is_empty() {
+            // Vacío = restaurar default (None en el slot).
+            let cfg = self
+                .config
+                .palette
+                .get_or_insert_with(theme::PaletteConfig::default);
+            cfg.clear_field(field);
+            if cfg.is_empty() {
+                self.config.palette = None;
+            }
+        } else if theme::parse_hex(&trimmed).is_some() {
+            let cfg = self
+                .config
+                .palette
+                .get_or_insert_with(theme::PaletteConfig::default);
+            match field {
+                theme::PaletteField::Bg => cfg.bg = Some(trimmed),
+                theme::PaletteField::Surface => cfg.surface = Some(trimmed),
+                theme::PaletteField::SurfaceAlt => cfg.surface_alt = Some(trimmed),
+                theme::PaletteField::Text => cfg.text = Some(trimmed),
+                theme::PaletteField::Dim => cfg.dim = Some(trimmed),
+                theme::PaletteField::Accent => cfg.accent = Some(trimmed),
+                theme::PaletteField::AccentHover => cfg.accent_hover = Some(trimmed),
+                theme::PaletteField::AccentText => cfg.accent_text = Some(trimmed),
+                theme::PaletteField::Ok => cfg.ok = Some(trimmed),
+                theme::PaletteField::Warn => cfg.warn = Some(trimmed),
+                theme::PaletteField::Err => cfg.err = Some(trimmed),
+                theme::PaletteField::Border => cfg.border = Some(trimmed),
+            }
+            // Tras persistir, vacía el buffer para que el input «libere»
+            // el hex en vuelo (la UI mostrará el valor persistido).
+            self.palette_inputs.remove(&field);
+        } else {
+            // Hex inválido: se IGNORA (requisito: NUNCA romper la UI). Log
+            // para diagnóstico y vacía el buffer para que el input NO siga
+            // mostrando basura (la regla «input vacío = default» aplica).
+            crate::log!(
+                "palette",
+                "hex inválido descartado en {:?}: «{}»",
+                field,
+                trimmed
+            );
+            self.palette_inputs.remove(&field);
+        }
+        self.save_config();
+    }
+
+    // ── Fusión de paletas (import) ─────────────────────────────────────────
+    // Un campo presente en `incoming` sobrescribe el de `dest`; un campo
+    // ausente mantiene el valor actual. Esto permite compartir paletas
+    // parciales (p. ej. solo el acento). Hex inválido en `incoming` se
+    // ignora silenciosamente para no romper la paleta actual.
+    fn merge_palette_field(
+        dest: &mut Option<String>,
+        incoming: &Option<String>,
+    ) {
+        if let Some(raw) = incoming.as_deref() {
+            if theme::parse_hex(raw).is_some() {
+                *dest = Some(raw.to_string());
+            }
+        }
+    }
+
+    fn merge_palette_configs(
+        dest: &mut theme::PaletteConfig,
+        incoming: &theme::PaletteConfig,
+    ) {
+        Self::merge_palette_field(&mut dest.bg, &incoming.bg);
+        Self::merge_palette_field(&mut dest.surface, &incoming.surface);
+        Self::merge_palette_field(&mut dest.surface_alt, &incoming.surface_alt);
+        Self::merge_palette_field(&mut dest.text, &incoming.text);
+        Self::merge_palette_field(&mut dest.dim, &incoming.dim);
+        Self::merge_palette_field(&mut dest.accent, &incoming.accent);
+        Self::merge_palette_field(&mut dest.accent_hover, &incoming.accent_hover);
+        Self::merge_palette_field(&mut dest.accent_text, &incoming.accent_text);
+        Self::merge_palette_field(&mut dest.ok, &incoming.ok);
+        Self::merge_palette_field(&mut dest.warn, &incoming.warn);
+        Self::merge_palette_field(&mut dest.err, &incoming.err);
+        Self::merge_palette_field(&mut dest.border, &incoming.border);
     }
 
     fn persist_config(&self) {
@@ -2290,6 +2446,138 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            // ── Personalización II: paleta ─────────────────────────────────
+            Message::PaletteFieldChanged(field, value) => {
+                // Buffer de input en vuelo (NO se persiste todavía; el
+                // usuario confirma con «Aplicar» o sale del campo).
+                self.palette_inputs.insert(field, value);
+                Task::none()
+            }
+            Message::PaletteFieldApply(field) => {
+                // Toma el buffer en vuelo (o el hex ya persistido si el
+                // usuario no tocó nada); parsea robusto y persiste.
+                self.apply_palette_field(field);
+                Task::none()
+            }
+            Message::PaletteFieldReset(field) => {
+                let cfg = self.config.palette.get_or_insert_with(theme::PaletteConfig::default);
+                cfg.clear_field(field);
+                if cfg.is_empty() {
+                    self.config.palette = None;
+                }
+                // Limpia también el buffer de input para que el input
+                // muestre vacío (lo que la UI interpreta como «default»).
+                self.palette_inputs.remove(&field);
+                self.save_config();
+                Task::none()
+            }
+            Message::PaletteResetAll => {
+                self.config.palette = None;
+                self.palette_inputs.clear();
+                self.save_config();
+                Task::none()
+            }
+            Message::PalettePresetApply(preset) => {
+                let dark = self.config.resolved_dark(self.system_dark);
+                let palette = preset.colors(dark);
+                self.config.palette = Some(theme::palette_to_config(palette));
+                // Refresca los buffers con los nuevos hex (la UI los lee
+                // desde el estado para repintar el input).
+                self.palette_inputs.clear();
+                self.save_config();
+                Task::none()
+            }
+            Message::PaletteExport => Task::perform(
+                async {
+                    rfd::FileDialog::new()
+                        .set_title("Exportar paleta a JSON")
+                        .add_filter("JSON", &["json"])
+                        .set_file_name("whispr-palette.json")
+                        .save_file()
+                        .map(std::path::PathBuf::from)
+                },
+                Message::PaletteExportPicked,
+            ),
+            Message::PaletteExportPicked(path) => {
+                if let Some(p) = path {
+                    // La paleta que exportamos es la RESUELTA (no la
+                    // raw PaletteConfig) — así el JSON es directamente
+                    // compartible como «una paleta completa» y el import
+                    // puede fundirlo con la actual del receptor.
+                    let palette =
+                        theme::resolve_palette(&self.config, self.config.resolved_dark(self.system_dark));
+                    let cfg = theme::palette_to_config(palette);
+                    match serde_json::to_string_pretty(&cfg) {
+                        Ok(raw) => {
+                            if let Err(e) = std::fs::write(&p, raw) {
+                                crate::log!(
+                                    "palette",
+                                    "no se pudo escribir la paleta en {}: {}",
+                                    p.display(),
+                                    e
+                                );
+                            } else {
+                                crate::log!("palette", "exportada a {}", p.display());
+                            }
+                        }
+                        Err(e) => {
+                            crate::log!("palette", "no se pudo serializar la paleta: {e}");
+                        }
+                    }
+                }
+                Task::none()
+            }
+            Message::PaletteImport => Task::perform(
+                async {
+                    rfd::FileDialog::new()
+                        .set_title("Importar paleta desde JSON")
+                        .add_filter("JSON", &["json"])
+                        .pick_file()
+                        .map(std::path::PathBuf::from)
+                },
+                Message::PaletteImportPicked,
+            ),
+            Message::PaletteImportPicked(path) => {
+                if let Some(p) = path {
+                    match std::fs::read_to_string(&p) {
+                        Ok(raw) => match serde_json::from_str::<theme::PaletteConfig>(&raw) {
+                            Ok(imported) => {
+                                // FUSIÓN: la paleta importada COMPLEMENTA a
+                                // la actual. Un campo presente en el import
+                                // sobrescribe; uno ausente mantiene el
+                                // valor actual. Esto permite «compartir»
+                                // una paleta parcial (p. ej. solo el acento).
+                                let merged = match self.config.palette.as_mut() {
+                                    Some(existing) => {
+                                        Self::merge_palette_configs(existing, &imported);
+                                        existing.clone()
+                                    }
+                                    None => imported.clone(),
+                                };
+                                self.config.palette = Some(merged);
+                                self.palette_inputs.clear();
+                                self.save_config();
+                                crate::log!("palette", "importada desde {}", p.display());
+                            }
+                            Err(e) => {
+                                crate::log!(
+                                    "palette",
+                                    "JSON inválido en {}: {e}",
+                                    p.display()
+                                );
+                            }
+                        },
+                        Err(e) => {
+                            crate::log!(
+                                "palette",
+                                "no se pudo leer {}: {e}",
+                                p.display()
+                            );
+                        }
+                    }
+                }
+                Task::none()
+            }
             Message::ToggleSettings => {
                 self.settings_open = !self.settings_open;
                 // Al cerrar el panel reseteamos a General: la regla del
@@ -2910,9 +3198,27 @@ impl WhisprApp {
     }
 
     /// Tema iced según el modo resuelto (dark por defecto, auto sigue al
-    /// sistema; el Poll lo refresca cada 5 s).
+    /// sistema; el Poll lo refresca cada 5 s). El `Theme` se construye con
+    /// la paleta resuelta (defaults DARK/LIGHT + overrides del usuario), así
+    /// los 5 campos del `Palette` de iced (fondo de ventana, texto primario,
+    /// acento, ok, err) también respetan la personalización.
     pub fn theme(&self) -> Theme {
-        theme::custom(self.config.resolved_dark(self.system_dark))
+        let palette = theme::resolve_palette(
+            &self.config,
+            self.config.resolved_dark(self.system_dark),
+        );
+        theme::custom_with_palette(&palette)
+    }
+
+    /// Paleta resuelta (con overrides aplicados) para el modo activo.
+    /// Pensada para que `view()` la use explícitamente al pintar textos y
+    /// tarjetas (los widgets con estilo siguen leyendo `tokens(theme)`,
+    /// que a su vez consulta el thread-local del override).
+    fn resolved_palette(&self) -> theme::UiPalette {
+        theme::resolve_palette(
+            &self.config,
+            self.config.resolved_dark(self.system_dark),
+        )
     }
 
     /// Dibuja la ventana principal: pantalla de carga hasta que el arranque
@@ -2920,7 +3226,12 @@ impl WhisprApp {
     /// micrófono + nota editable + acciones + feedback + pie de confianza
     /// (o el panel de Ajustes en la zona central).
     pub fn view(&self) -> Element<'_, Message> {
-        let t = theme::tokens(&self.theme());
+        // R7-II: instala la paleta resuelta en el thread-local de `theme` para
+        // que los style closures de los widgets (`primary`, `secondary`, …)
+        // lean los overrides del usuario sin tocar sus firmas. El scope se
+        // libera al volver (Drop) ⇒ el siguiente frame empieza limpio.
+        let _palette_scope = theme::PaletteOverrideScope::new(self.resolved_palette());
+        let t = theme::tokens(&self.theme()).into_owned();
         // Tamaño de fuente global resuelto (Ajustes → Apariencia): TODOS los
         // textos de la vista lo usan (fs.*) en vez de los literales FONT_*.
         let fs = theme::font_sizes(self.config.font_size().factor());
@@ -2929,7 +3240,7 @@ impl WhisprApp {
         // no termine se muestra SOLO spinner + fase, sin UI de dictado.
         // Whisper y el server LLM se cargan en background (hilo propio).
         if !matches!(self.startup, StartupPhase::Ready) {
-            return self.loading_view(t, fs);
+            return self.loading_view(&t, fs);
         }
 
         // ── Cabecera: wordmark + controles globales ──────────────────────────
@@ -2986,7 +3297,7 @@ impl WhisprApp {
         // fila: punto de estado + label + hint a la derecha; la barra de
         // nivel/progreso va debajo, a todo el ancho de la tarjeta.
         // Feedback doble intacto: color de estado (punto + borde) y label.
-        let mic = self.mic_ui(t);
+        let mic = self.mic_ui(&t);
         let mut hero_content = column![row![
             text("●").size(fs.xl).color(mic.color),
             column![
@@ -3175,7 +3486,7 @@ impl WhisprApp {
         // central con su propio scroll en vez de empujar el transcript hacia
         // abajo (el transcript conserva su scroll independiente).
         let middle: Element<'_, Message> = if self.settings_open {
-            scrollable(self.settings_view(t))
+            scrollable(self.settings_view(&t))
                 .style(theme::scrollable)
                 .height(Length::Fill)
                 .into()
@@ -3215,7 +3526,7 @@ impl WhisprApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|th| container::Style {
-                background: Some(Background::Color(theme::tokens(th).bg)),
+                background: Some(Background::Color(theme::tokens(&th).bg)),
                 ..Default::default()
             })
             .into()
@@ -3262,7 +3573,7 @@ impl WhisprApp {
             .width(Length::Fill)
             .height(Length::Fill)
             .style(|th| container::Style {
-                background: Some(Background::Color(theme::tokens(th).bg)),
+                background: Some(Background::Color(theme::tokens(&th).bg)),
                 ..Default::default()
             })
             .into()
@@ -3679,7 +3990,321 @@ impl WhisprApp {
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
         );
+        // ── Personalización II: paleta editable ─────────────────────────────
+        col = col.push(self.settings_section_palette(t, fs));
         col.into()
+    }
+
+    /// Bloque «Paleta» dentro de la sección Apariencia (R7-II). Muestra
+    /// presets de un clic, una fila por campo editable (hex input + swatch
+    /// de previsualización + botón «Restaurar»), y botones de Importar /
+    /// Exportar a JSON. El aviso de contraste WCAG aparece bajo el campo
+    /// correspondiente cuando texto/principal baja de 3:1 sobre el fondo
+    /// activo (no bloquea: solo avisa).
+    fn settings_section_palette(
+        &self,
+        t: &UiPalette,
+        fs: theme::FontSizes,
+    ) -> Element<'_, Message> {
+        let mut col = Column::new()
+            .spacing(theme::SPACE_2)
+            .width(Length::Fill);
+
+        // Título de la sub-sección.
+        col = col.push(
+            text("Paleta")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+
+        // Subtítulo explicativo.
+        col = col.push(
+            text("Cambia cada color por separado o usa un preset. Hex \
+                  «#RRGGBB» o «#RGB»; los valores no válidos se ignoran.")
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+
+        // Presets (un clic = aplica la paleta entera al modo activo).
+        col = col.push(self.palette_preset_buttons(fs, t));
+
+        // Cabecera de la tabla de campos.
+        col = col.push(
+            text("Campos")
+                .size(fs.md)
+                .color(t.text),
+        );
+
+        // 12 filas: una por PaletteField.
+        for field in theme::PaletteField::ALL {
+            col = col.push(self.palette_field_row(*field, t, fs));
+        }
+
+        // Acciones globales: Importar / Restaurar todo.
+        col = col.push(self.palette_actions_row(t, fs));
+
+        col.into()
+    }
+
+    /// Botonera horizontal con los 5 presets. Cada botón aplica la paleta
+    /// resuelta del preset sobre el modo activo (DARK o LIGHT según el
+    /// `ThemeMode` del usuario en este momento).
+    fn palette_preset_buttons(
+        &self,
+        fs: theme::FontSizes,
+        t: &UiPalette,
+    ) -> Element<'_, Message> {
+        let mut presets_row = Row::new()
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center);
+        for preset in theme::PalettePreset::ALL {
+            let label = preset.label();
+            let preset_copy = *preset;
+            presets_row = presets_row.push(
+                button(text(label).size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::PalettePresetApply(preset_copy))
+                    .style(theme::secondary),
+            );
+        }
+        // Swatch预览: muestra el accent del modo activo como
+        // recordatorio visual («el preset tocará esto»).
+        let swatch = container(Space::new(Length::Fixed(16.0), Length::Fixed(16.0)))
+            .style(move |_th| {
+                let p = self.resolved_palette();
+                container::Style {
+                    background: Some(Background::Color(p.accent)),
+                    border: Border {
+                        color: p.border,
+                        width: 1.0,
+                        radius: Radius::from(3.0),
+                    },
+                    ..Default::default()
+                }
+            });
+        let _ = t; // t solo se usa en la cabecera (no en esta sub-helper)
+        Row::new()
+            .push(presets_row)
+            .push(Space::new(
+                Length::Fixed(theme::SPACE_2 as f32),
+                Length::Fixed(0.0),
+            ))
+            .push(swatch)
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center)
+            .into()
+    }
+
+    /// Una fila de la tabla de campos: label + input hex + swatch + botón
+    /// restaurar + (si aplica) aviso de contraste WCAG.
+    fn palette_field_row(
+        &self,
+        field: theme::PaletteField,
+        t: &UiPalette,
+        fs: theme::FontSizes,
+    ) -> Element<'_, Message> {
+        // Texto actual del input: lo que el usuario está tecleando, o el
+        // hex persistido si no hay buffer, o vacío (= default).
+        let current_text = self
+            .palette_inputs
+            .get(&field)
+            .cloned()
+            .or_else(|| self.palette_field_persisted(field))
+            .unwrap_or_default();
+
+        // Color que se previsualiza en el swatch:
+        //   - si el input tiene un hex parseable, ese color;
+        //   - si no, el color resuelto (override o default).
+        let swatch_color = theme::parse_hex(&current_text)
+            .unwrap_or_else(|| self.resolved_color_for_field(field));
+
+        let contrast_warn = self.contrast_warning_for(field, swatch_color);
+
+        let label_text = text(field.label())
+            .size(fs.sm)
+            .color(t.text)
+            .width(Length::Fixed(150.0));
+
+        let input_box: Element<'_, Message> = text_input(
+            field.help(),
+            &current_text,
+        )
+        .on_input(move |v| Message::PaletteFieldChanged(field, v))
+        .on_submit(Message::PaletteFieldApply(field))
+        .padding(theme::SPACE_2 as f32)
+        .width(Length::Fixed(120.0))
+        .style(theme::text_input)
+        .into();
+
+        let apply_btn = button(text("Aplicar").size(fs.xxs))
+            .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+            .on_press(Message::PaletteFieldApply(field))
+            .style(theme::primary);
+
+        let reset_btn = button(text("Restaurar").size(fs.xxs))
+            .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+            .on_press(Message::PaletteFieldReset(field))
+            .style(theme::secondary);
+
+        // Swatch: muestra el color actual (resolved o en-vuelo).
+        let border_color = t.border;
+        let swatch_color_for_closure = swatch_color;
+        let swatch = container(
+            Space::new(
+                Length::Fixed(20.0),
+                Length::Fixed(20.0),
+            ),
+        )
+        .style(move |_th| container::Style {
+            background: Some(Background::Color(swatch_color_for_closure)),
+            border: Border {
+                color: border_color,
+                width: 1.0,
+                radius: Radius::from(4.0),
+            },
+            ..Default::default()
+        });
+
+        let mut row = Row::new()
+            .push(label_text)
+            .push(input_box)
+            .push(Space::new(
+                Length::Fixed(theme::SPACE_2 as f32),
+                Length::Fixed(0.0),
+            ))
+            .push(apply_btn)
+            .push(reset_btn)
+            .push(Space::new(
+                Length::Fixed(theme::SPACE_2 as f32),
+                Length::Fixed(0.0),
+            ))
+            .push(swatch)
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center);
+
+        row = if let Some(warn) = contrast_warn {
+            row.push(
+                text(warn)
+                    .size(fs.xxs)
+                    .color(t.warn)
+                    .width(Length::Fill),
+            )
+        } else {
+            row.push(Space::new(Length::Fill, Length::Fixed(0.0)))
+        };
+
+        Column::new()
+            .push(row)
+            .spacing(theme::SPACE_1 as f32)
+            .into()
+    }
+
+    /// Devuelve el hex persistido del campo (o None si está en default).
+    fn palette_field_persisted(&self, field: theme::PaletteField) -> Option<String> {
+        let cfg = self.config.palette.as_ref()?;
+        let raw = match field {
+            theme::PaletteField::Bg => &cfg.bg,
+            theme::PaletteField::Surface => &cfg.surface,
+            theme::PaletteField::SurfaceAlt => &cfg.surface_alt,
+            theme::PaletteField::Text => &cfg.text,
+            theme::PaletteField::Dim => &cfg.dim,
+            theme::PaletteField::Accent => &cfg.accent,
+            theme::PaletteField::AccentHover => &cfg.accent_hover,
+            theme::PaletteField::AccentText => &cfg.accent_text,
+            theme::PaletteField::Ok => &cfg.ok,
+            theme::PaletteField::Warn => &cfg.warn,
+            theme::PaletteField::Err => &cfg.err,
+            theme::PaletteField::Border => &cfg.border,
+        };
+        raw.clone()
+    }
+
+    /// Devuelve el color resuelto (con overrides aplicados) para un campo.
+    fn resolved_color_for_field(&self, field: theme::PaletteField) -> Color {
+        let p = self.resolved_palette();
+        match field {
+            theme::PaletteField::Bg => p.bg,
+            theme::PaletteField::Surface => p.surface,
+            theme::PaletteField::SurfaceAlt => p.surface_alt,
+            theme::PaletteField::Text => p.text,
+            theme::PaletteField::Dim => p.dim,
+            theme::PaletteField::Accent => p.accent,
+            theme::PaletteField::AccentHover => p.accent_hover,
+            theme::PaletteField::AccentText => p.accent_text,
+            theme::PaletteField::Ok => p.ok,
+            theme::PaletteField::Warn => p.warn,
+            theme::PaletteField::Err => p.err,
+            theme::PaletteField::Border => p.border,
+        }
+    }
+
+    /// Si el campo es «texto» o «dim» y su contraste contra el fondo activo
+    /// es < 3:1, devuelve un mensaje de aviso (None en caso contrario).
+    /// El requisito es no bloquear al usuario: solo avisa.
+    fn contrast_warning_for(
+        &self,
+        field: theme::PaletteField,
+        candidate: Color,
+    ) -> Option<String> {
+        let bg = self.resolved_palette().bg;
+        let ratio = theme::contrast_ratio(candidate, bg);
+        let must_warn = matches!(
+            field,
+            theme::PaletteField::Text | theme::PaletteField::Dim
+        ) && ratio < 3.0;
+        if must_warn {
+            Some(format!(
+                "⚠ Contraste {ratio:.2}:1 (texto sobre fondo, mínimo WCAG 3:1). \
+                 Se aplica igualmente; ajusta hex o restaura el campo."
+            ))
+        } else {
+            None
+        }
+    }
+
+    /// Botones «Importar…» / «Exportar…» / «Restaurar todo».
+    fn palette_actions_row(
+        &self,
+        t: &UiPalette,
+        fs: theme::FontSizes,
+    ) -> Element<'_, Message> {
+        let import_btn = button(text("Importar JSON…").size(fs.sm))
+            .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
+            .on_press(Message::PaletteImport)
+            .style(theme::secondary);
+        let export_btn = button(text("Exportar JSON…").size(fs.sm))
+            .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
+            .on_press(Message::PaletteExport)
+            .style(theme::secondary);
+        let reset_all_btn = button(text("Restaurar todo").size(fs.sm))
+            .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
+            .on_press(Message::PaletteResetAll)
+            .style(theme::secondary);
+        Column::new()
+            .push(
+                Row::new()
+                    .push(import_btn)
+                    .push(Space::new(
+                        Length::Fixed(theme::SPACE_2 as f32),
+                        Length::Fixed(0.0),
+                    ))
+                    .push(export_btn)
+                    .push(Space::new(Length::Fill, Length::Fixed(0.0)))
+                    .push(reset_all_btn)
+                    .spacing(theme::SPACE_2)
+                    .align_y(iced::Alignment::Center),
+            )
+            .push(
+                text("Importar funde los campos presentes del JSON con tu paleta \
+                      actual (los ausentes se mantienen). Exportar guarda la la palette \
+                      RESUELTA (con defaults ya aplicados) para que sea \
+                      directamente compartible.")
+                    .size(fs.xxs)
+                    .color(t.dim),
+            )
+            .spacing(theme::SPACE_2)
+            .into()
     }
 
     /// ── Sección «Dictado» ────────────────────────────────────────────────
