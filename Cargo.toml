@@ -60,6 +60,11 @@ chrono = "0.4"
 # que ya está en el lockfile vía iced_graphics (sin compilación extra).
 cosmic-text = "0.12"
 
+[build-dependencies]
+# Incrusta el icono .ico y el manifest en el .exe de Windows (solo se usa
+# en Windows: ver build.rs).
+winresource = "0.1"
+
 [profile.release]
 lto = true
 strip = true
