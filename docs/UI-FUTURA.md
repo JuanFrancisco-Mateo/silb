@@ -83,6 +83,30 @@ y poder **corregirla/anularla**.
 
 ---
 
+## 7. Personalización III — imágenes y animación propia (cierre)
+
+iced 0.13 no expone un widget de imagen animada (no hay soporte nativo
+de GIF/WebP), pero el usuario puede poner su propio material visual:
+
+- **Imagen de fondo de la ventana principal** (PNG/JPG/BMP/GIF/WebP/TIFF).
+  Renderizada con `iced::widget::image` apilada bajo el contenido
+  (`iced::widget::stack!`) y `ContentFit::Cover`. Si la ruta no existe
+  o el formato no es legible, la app cae al fondo del tema (nunca
+  ventana negra).
+- **Sprite estático de la burbuja flotante** (mismo formato). Mismo
+  patrón de fallback al render vectorial si falla la carga.
+- **Animación por frames**: carpeta con PNGs (u otro formato
+  soportado) que se conmutan a un FPS configurable (1–30, default 12)
+  con `iced::time::every`. Orden alfabético; wrap seguro. La carpeta
+  vacía o sin imágenes cae al sprite estático o al render vectorial.
+
+Las rutas se persisten como dato en `config.json`
+(`bg_image_path`, `bubble_image_path`, `bubble_frames_path`,
+`bubble_animation_fps`). Validación en el render: si la ruta
+desaparece o cambia a formato no soportado, el getter
+correspondiente devuelve `None` y la UI pinta el aspecto original sin
+crash.
+
 ## 3. Cómo aplicar (patrones Iced, del propio skill)
 
 - Todo color/espacio/radio sale de `src/theme.rs`: si un hueco exige un token

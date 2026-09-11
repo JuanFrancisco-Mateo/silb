@@ -298,6 +298,15 @@ impl WhisprApp {
     /// Vista de la burbuja: círculo violeta con borde claro para contrastar
     /// sobre cualquier fondo. Estados: violeta = listo, rojo + punto blanco =
     /// grabando, ámbar = transcribiendo / descargando modelo, rojo = error.
+    ///
+    /// Personalización III: si el usuario eligió una imagen para la burbuja
+    /// (sprite estático o frame actual de una secuencia animada), se pinta
+    /// DEBAJO del centro (que mantiene el indicador de estado — punto de
+    /// grabación / etiqueta «IA» — SIEMPRE legible). Si la imagen falla al
+    /// cargar (ruta inválida al renderizar, formato no soportado), la
+    /// burbuja cae al render vectorial sin crashear: `resolve_static` /
+    /// `resolve_frames` ya filtraron las rutas malas, y `iced::image`
+    /// pinta un placeholder si el path cambió a última hora.
     pub fn bubble_view(&self) -> Element<'static, Message> {
         let style = self.bubble_style();
         let recording = matches!(self.bubble_status(), Status::Recording);
@@ -368,19 +377,48 @@ impl WhisprApp {
             container(text("")).into()
         };
 
-        container(center)
+        // Imagen de la burbuja: prioridad frames animados > sprite
+        // estático > render vectorial (el que define `fill` arriba).
+        let bubble_image: Option<std::path::PathBuf> = self
+            .bubble_current_frame()
+            .or_else(|| self.bubble_static_image());
+
+        if let Some(path) = bubble_image {
+            // El centro (REC / IA) SIEMPRE va encima de la imagen:
+            // apilamos con `stack!` para que el indicador de estado
+            // nunca quede ocluido por el sprite. La imagen se estira
+            // con `ContentFit::Cover` y se recorta por el border-radius
+            // circular del contenedor exterior (los píxeles fuera del
+            // círculo los recorta winit al componer la ventana).
+            let handle = iced::widget::image::Handle::from_path(&path);
+            let bg: Element<'static, Message> = container(
+                iced::widget::image(handle)
+                    .content_fit(iced::ContentFit::Cover)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .opacity(opacity),
+            )
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(move |_| container::Style {
-                background: Some(Background::Color(fill)),
-                border: Border {
-                    color: crate::theme::with_alpha(Color::WHITE, opacity),
-                    width: border_width,
-                    radius: (size / 2.0).into(),
-                },
-                ..Default::default()
-            })
-            .into()
+            .into();
+            let center_container: Element<'static, Message> =
+                container(center).width(Length::Fill).height(Length::Fill).into();
+            iced::widget::stack![bg, center_container].into()
+        } else {
+            container(center)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(move |_| container::Style {
+                    background: Some(Background::Color(fill)),
+                    border: Border {
+                        color: crate::theme::with_alpha(Color::WHITE, opacity),
+                        width: border_width,
+                        radius: (size / 2.0).into(),
+                    },
+                    ..Default::default()
+                })
+                .into()
+        }
     }
 }
 

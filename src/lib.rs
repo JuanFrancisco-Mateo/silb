@@ -16,6 +16,7 @@ pub mod app;
 pub mod audio;
 pub mod bubble;
 pub mod config;
+pub mod custom_image;
 pub mod domain;
 pub mod fonts;
 pub mod hotkey;

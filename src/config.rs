@@ -427,6 +427,27 @@ pub struct Config {
     /// comportamiento que antes de R7-II. Se serializa tal cual: campos
     /// `None` se omiten del JSON para mantener los configs limpios.
     pub palette: Option<PaletteConfig>,
+    // ── Personalización III: imágenes del usuario ───────────────────────
+    /// Ruta absoluta (o relativa al directorio de trabajo) de la imagen de
+    /// fondo de la ventana principal. `None` = fondo del tema (defecto).
+    /// La ruta se persiste TAL CUAL; la validación (existencia, extensión
+    /// soportada) corre al renderizar, en `custom_image::resolve_static`:
+    /// si falla → fallback al fondo del tema, sin romper la UI.
+    pub bg_image_path: Option<String>,
+    /// Ruta del sprite estático de la burbuja flotante. Si está presente
+    /// gana sobre la animación por frames; si no, se evalúa
+    /// `bubble_frames_path`. Validación y fallback en
+    /// `custom_image::resolve_static` / `resolve_frames`.
+    pub bubble_image_path: Option<String>,
+    /// Carpeta con la secuencia de frames PNG (u otro formato soportado)
+    /// para animar la burbuja. Orden alfabético estable; cada
+    /// `1000/fps` ms se avanza al siguiente frame (wrap). Vacía o
+    /// ausente → se usa `bubble_image_path` (o el render vectorial).
+    pub bubble_frames_path: Option<String>,
+    /// Velocidad de la animación de la burbuja en FPS. Default 12; rango
+    /// 1..=30 (validado en el getter y al aplicar el slider). Valores
+    /// fuera de rango caen al default.
+    pub bubble_animation_fps: Option<u8>,
 }
 
 /// Ruta del `config.json` del usuario (junto a `dictionary.json`).
@@ -851,6 +872,49 @@ impl Config {
             (Some(x), Some(y)) => Some((x, y)),
             _ => None,
         }
+    }
+
+    /// Ruta de la imagen de fondo de la ventana principal (cadena en
+    /// blanco/ausente = sin imagen). El getter NO valida la ruta: la
+    /// verificación corre al renderizar (`custom_image::resolve_static`)
+    /// para no penalizar el arranque con un I/O innecesario y para que
+    /// un fichero recién elegido por el diálogo de archivo esté
+    /// disponible aunque el FS aún no haya refrescado el descriptor.
+    pub fn bg_image_path(&self) -> Option<&str> {
+        self.bg_image_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Ruta del sprite estático de la burbuja flotante. Misma semántica
+    /// que `bg_image_path`: validación en el render.
+    pub fn bubble_image_path(&self) -> Option<&str> {
+        self.bubble_image_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Carpeta de frames para la animación por conmutación de la
+    /// burbuja. Validación en el render: si la carpeta no existe o está
+    /// vacía → no se anima (cae al sprite estático o al render
+    /// vectorial).
+    pub fn bubble_frames_path(&self) -> Option<&str> {
+        self.bubble_frames_path
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+    }
+
+    /// FPS efectivo de la animación de la burbuja. Default 12; fuera del
+    /// rango 1..=30 también cae al default. La validación fina (clamp)
+    /// vive en `custom_image::clamp_fps` para que el módulo y la UI
+    /// compartan la misma función pura.
+    pub fn bubble_animation_fps(&self) -> u8 {
+        crate::custom_image::clamp_fps(self.bubble_animation_fps.unwrap_or(
+            crate::custom_image::DEFAULT_BUBBLE_FPS,
+        ))
     }
 }
 
@@ -1461,6 +1525,79 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(cfg.selected_model(), Model::Tiny);
+    }
+
+    #[test]
+    fn image_paths_roundtrip_y_legacy() {
+        // Default: ninguna ruta (todo en None).
+        assert_eq!(Config::default().bg_image_path(), None);
+        assert_eq!(Config::default().bubble_image_path(), None);
+        assert_eq!(Config::default().bubble_frames_path(), None);
+        assert_eq!(
+            Config::default().bubble_animation_fps(),
+            crate::custom_image::DEFAULT_BUBBLE_FPS
+        );
+
+        // Cuatro rutas personalizadas → roundtrip.
+        let cfg = Config {
+            bg_image_path: Some("C:\\fondo.png".into()),
+            bubble_image_path: Some("C:\\bubble.png".into()),
+            bubble_frames_path: Some("C:\\frames".into()),
+            bubble_animation_fps: Some(24),
+            ..Default::default()
+        };
+        assert_eq!(cfg.bg_image_path(), Some("C:\\fondo.png"));
+        assert_eq!(cfg.bubble_image_path(), Some("C:\\bubble.png"));
+        assert_eq!(cfg.bubble_frames_path(), Some("C:\\frames"));
+        assert_eq!(cfg.bubble_animation_fps(), 24);
+        let raw = serde_json::to_string(&cfg).unwrap();
+        let reloaded: Config = serde_json::from_str(&raw).unwrap();
+        assert_eq!(reloaded.bg_image_path(), Some("C:\\fondo.png"));
+        assert_eq!(reloaded.bubble_image_path(), Some("C:\\bubble.png"));
+        assert_eq!(reloaded.bubble_frames_path(), Some("C:\\frames"));
+        assert_eq!(reloaded.bubble_animation_fps(), 24);
+
+        // Cadenas en blanco / con espacios → None (no se persisten
+        // rutas inútiles que dispararían fallback).
+        let blank = Config {
+            bg_image_path: Some("   ".into()),
+            bubble_image_path: Some(String::new()),
+            bubble_frames_path: Some("\t".into()),
+            ..Default::default()
+        };
+        assert_eq!(blank.bg_image_path(), None);
+        assert_eq!(blank.bubble_image_path(), None);
+        assert_eq!(blank.bubble_frames_path(), None);
+
+        // Config legacy (sin los campos nuevos) se deserializa y los
+        // getters devuelven defaults (compatibilidad hacia atrás).
+        let legacy: Config =
+            serde_json::from_str(r#"{ "dictionary": [] }"#).unwrap();
+        assert_eq!(legacy.bg_image_path(), None);
+        assert_eq!(legacy.bubble_image_path(), None);
+        assert_eq!(legacy.bubble_frames_path(), None);
+        assert_eq!(
+            legacy.bubble_animation_fps(),
+            crate::custom_image::DEFAULT_BUBBLE_FPS
+        );
+
+        // FPS fuera de rango cae al default (clamp centralizado).
+        let high = Config {
+            bubble_animation_fps: Some(99),
+            ..Default::default()
+        };
+        assert_eq!(
+            high.bubble_animation_fps(),
+            crate::custom_image::DEFAULT_BUBBLE_FPS
+        );
+        let zero = Config {
+            bubble_animation_fps: Some(0),
+            ..Default::default()
+        };
+        assert_eq!(
+            zero.bubble_animation_fps(),
+            crate::custom_image::DEFAULT_BUBBLE_FPS
+        );
     }
 
     #[test]
