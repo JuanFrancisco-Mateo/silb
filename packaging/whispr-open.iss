@@ -1,0 +1,128 @@
+; whispr-open.iss — instalador de Whispr Open v0.2.0 (Fase 4 / R6).
+;
+; INSTALACIÓN POR USUARIO (sin admin):
+;   Whispr Open se instala en %LOCALAPPDATA%\Programs\WhisprOpen, igual que
+;   cualquier app de Microsoft Store o winget. Cero UAC, cero prompts.
+;
+; DESTINATARIOS:
+;   Windows 10 1809+ / Windows 11. La app usa Iced 0.13 + whisper.cpp + CUDA
+;   estático; el instalador NO incluye los modelos GGML (se descargan en el
+;   primer arranque desde Hugging Face; ver src/transcribe.rs::ensure_model).
+;
+; CÓMO COMPILARLO (Windows):
+;   cmd /c ""C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss"
+;   Salida: packaging\Output\whispr-open-0.2.0-setup.exe (~20-25 MB, LZMA).
+;
+; VARIABLES DE USUARIO (las que se pueden sobreescribir por línea de comandos
+; con /D="nombre=valor"):
+;   WHISPR_RELEASE_DIR  directorio con whispr-open.exe (por defecto ..\target\release)
+;   WHISPR_VERSION      versión del paquete (por defecto 0.2.0)
+;
+; Ejemplo con override:
+;   ISCC.exe /DWHISPR_VERSION=0.2.1 /DWHISPR_RELEASE_DIR=D:\builds\release packaging\whispr-open.iss
+
+#define MyReleaseDir GetEnv("WHISPR_RELEASE_DIR") ? GetEnv("WHISPR_RELEASE_DIR") : "..\target\release"
+#define MyAppName "Whispr Open"
+#define MyAppPublisher "Whispr Open contributors"
+#define MyAppURL "https://github.com/whispr-open/whispr-open"
+#define MyAppExeName "whispr-open.exe"
+#ifndef MyAppVersion
+  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.2.0"
+#endif
+
+[Setup]
+; GUID estable del producto (cambia SOLO si cambia el nombre o el editor).
+AppId={{6E2A0E9C-1B5B-4F0E-9C8C-5F8F7B6A7D11}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppVerName={#MyAppName} {#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+AppCopyright=Copyright (c) 2026 Whispr Open contributors
+; Instalación POR USUARIO en %LOCALAPPDATA%\Programs\WhisprOpen. Cero UAC.
+DefaultDirName={localappdata}\Programs\{#MyAppName}
+; Sin privilegio de administrador: el instalador corre con el usuario actual.
+PrivilegesRequired=lowest
+PrivilegesRequiredOverridesAllowed=dialog
+; Compresión LZMA/ultra64 (mejor ratio para binarios Rust grandes).
+Compression=lzma2/ultra64
+SolidCompression=yes
+LZMAUseSeparateProcess=yes
+; Interfaz moderna (Win 10/11): look&feel nativo.
+WizardStyle=modern
+WizardSizePercent=120
+; Icono del instalador (mismo .ico que el binario).
+SetupIconFile=..\assets\whispr-open.ico
+; Pantalla de bienvenida con la licencia MIT.
+InfoBeforeFile=..\LICENSE
+; Mensaje final de instalación.
+InfoAfterFile=
+; Desinstalador visible en "Agregar o quitar programas" (ARP).
+Uninstallable=yes
+UninstallDisplayIcon={app}\{#MyAppExeName}
+UninstallDisplayName={#MyAppName}
+UninstallFilesDir={localappdata}\Programs\{#MyAppName}
+; Nombre del desinstalador.
+OutputDir=Output
+OutputBaseFilename=whispr-open-{#MyAppVersion}-setup
+; Permite instalar sobre una versión anterior sin desinstalar primero.
+MinVersion=10.0
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
+
+[Languages]
+Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+; Acceso directo en el escritorio (marcado por defecto, el usuario lo puede quitar).
+Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: checkedonce
+
+[Files]
+; Binario principal: el .exe release con icono incrustado (ver build.rs).
+Source: "{#MyReleaseDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; Icono que verá el acceso directo (mismo .ico que el binario, redundante
+; pero Inno lo necesita para el .lnk; el .exe ya lleva el suyo).
+Source: "..\assets\whispr-open.ico"; DestDir: "{app}"; Flags: ignoreversion
+
+[Icons]
+; Menú Inicio (siempre).
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\whispr-open.ico"; Comment: "Dictado local por voz"
+; Escritorio (opcional, según selección del usuario).
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\whispr-open.ico"; Comment: "Dictado local por voz"; Tasks: desktopicon
+; Acceso directo al desinstalador (carpeta del menú Inicio).
+Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\whispr-open.ico"
+
+[Run]
+; Lanzar al terminar la instalación (opcional, marcado por defecto).
+Filename: "{app}\{#MyAppExeName}"; Description: "Ejecutar {#MyAppName}"; Flags: nowait postinstall skipifsilent
+
+[UninstallDelete]
+; Limpiar el cache de modelos (los GGML pesan GB; mejor preguntar).
+; Si quieres limpiarlo al desinstalar, descomenta la siguiente línea:
+; Type: filesandordirs; Name: "{userappdata}\whispr-open\models"
+
+[Code]
+// Mensaje de confirmación al desinstalar: pregunta si quiere borrar también
+// la config y los modelos (lo habitual es "sí" porque se puede regenerar).
+// Se respeta el flag /VERYSILENT: si el usuario desinstala sin UI, no se
+// muestra ningún MsgBox y se mantiene la config (lo más seguro).
+function InitializeUninstall(): Boolean;
+var
+  ResultCode: Integer;
+begin
+  Result := True;
+  if not UninstallSilent then
+  begin
+    if MsgBox(
+      '¿Quieres borrar también tu configuración personal y los modelos descargados?' + #13#10 +
+      '(Si dices NO, podrás seguir usando Whispr Open si lo reinstalas.)',
+      mbConfirmation, MB_YESNO
+    ) = IDYES then
+    begin
+      DelTree(ExpandConstant('{userappdata}\whispr-open'), True, True, True);
+    end;
+  end;
+end;

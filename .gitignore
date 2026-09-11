@@ -1,3 +1,6 @@
 # Rust
 /target
 Cargo.lock
+
+# Empaquetado
+/packaging/Output/
