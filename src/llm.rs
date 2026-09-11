@@ -484,6 +484,494 @@ fn word_count(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
+/// Guard determinista para sustituciones numéricas simples
+/// (t_1fc864ef).
+///
+/// El corrector LLM local (Qwen3.5-0.8B-Q8) es POCO FIABLE en
+/// razonamiento numérico con numerales en palabras: ante una
+/// auto-corrección tipo «A digo B» o «A en vez de B» con A y B ambos
+/// numerales (dígitos o palabras: cuatro, cinco, …), el modelo a veces
+/// concatena los dos (evidencia: «me comi cuatro digo cinco peras» →
+/// «me comi cuatro cinco peras») en lugar de sustituir. Esa salida
+/// concatena los DOS numerales y, por tanto, ningún guard existente la
+/// detecta: `guard_anti_truncacion` no la corta (ratio de palabras
+/// plausible) y `contains_in_turn_marker` no ve meta-lengua. El texto
+/// inyectado es gramaticalmente incoherente.
+///
+/// Este guard detecta el patrón inequívoco «NUM_A [marcador] NUM_B» en
+/// el INPUT y verifica que el output del LLM lo haya resuelto. Si el
+/// LLM mantuvo AMBOS numerales (concatenación rota) o eliminó la
+/// corrección, reconstruye el texto aplicando la sustitución
+/// deterministamente en código: «texto_antes» + NUM_B + «texto_despues».
+///
+/// Devuelve `Ok(texto_corregido)` cuando el guard interviene (porque
+/// el LLM claramente falló en este caso). Devuelve `Err(())` cuando NO
+/// hay patrón inequívoco o cuando el LLM ya lo resolvió bien — el
+/// caller decide entonces si acepta el output del LLM tal cual.
+///
+/// ALCANCE: solo numerales simples (un solo token, sin contexto
+/// elaborado). Casos como «me debe tres mil doscientos cuarenta y ocho
+/// euros» NO entran (no hay auto-corrección). Tampoco entran
+/// correcciones con sustantivos (murcia/cartagena: el LLM ya las hace
+/// bien). Esto es la red de seguridad mínima para el bug concreto del
+/// 0.8B-Q8, no un parser de números universal.
+pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, ()> {
+    // 1) Detectar el patrón inequívoco «NUM_A [marcador] NUM_B» en el
+    //    input. Si no encaja, el guard no aplica.
+    let Some(pat) = parse_numeric_correction(input) else {
+        return Err(());
+    };
+
+    // 2) Si el LLM ya puso el «después» (NUM_B) en el output, lo damos
+    //    por bueno y NO intervenimos (puede haber pequeñas variaciones
+    //    que el LLM manejó bien, p.ej. «voy a las 4» en lugar de
+    //    «voy a las cuatro»). Dejamos que los otros guards decidan.
+    if contains_token(&output.to_lowercase(), &pat.num_b.to_lowercase())
+        && !contains_token(&output.to_lowercase(), &pat.num_a.to_lowercase())
+    {
+        return Err(());
+    }
+
+    // 3) Reconstrucción determinista. Buscamos las posiciones
+    //    exactas (en bytes) del token NUM_A y del token NUM_B en el
+    //    input, y construimos: input[..num_a_start] + num_b + input[after_num_b..].
+    //    Esto elimina NUM_A, el marcador completo (entre NUM_A y
+    //    NUM_B) y la posible duplicación de palabras de función
+    //    alrededor de NUM_B (p.ej. «sino a las cinco» → «cinco», sin
+    //    volver a escribir «a las»).
+    let num_a_lower = pat.num_a.to_lowercase();
+    let num_b_lower = pat.num_b.to_lowercase();
+    // Acceso a la regex de marcador para detectar si `before_raw`
+    // empieza por «no …» (caso B: «no X sino»). La usamos para
+    // descartar el prefijo «no » antes de NUM_A y producir una
+    // reconstrucción limpia (p.ej. «no voy a las tres sino …» →
+    // «voy a las cuatro» y NO «no voy a las cuatro»).
+    let re_for_discard_start = numeric_marker_regex();
+
+    // Tokenizamos el input guardando el rango de bytes de cada token.
+    struct Tok {
+        start: usize, // byte offset en el input original
+        end: usize,
+        text: String,
+        is_word: bool,
+    }
+    let mut tokens: Vec<Tok> = Vec::new();
+    let mut current_start: Option<usize> = None;
+    let mut current = String::new();
+    for (i, c) in input.char_indices() {
+        if c.is_alphanumeric() {
+            if current_start.is_none() {
+                current_start = Some(i);
+            }
+            current.push(c);
+        } else {
+            if !current.is_empty() {
+                let s = current_start.unwrap();
+                tokens.push(Tok {
+                    start: s,
+                    end: i,
+                    text: current.clone(),
+                    is_word: true,
+                });
+                current.clear();
+                current_start = None;
+            }
+        }
+    }
+    if !current.is_empty() {
+        let s = current_start.unwrap();
+        let end = input.len();
+        tokens.push(Tok {
+            start: s,
+            end,
+            text: current,
+            is_word: true,
+        });
+    }
+
+    // NUM_A: último token del input cuyo texto (lowercase) coincide.
+    let num_a_token = tokens
+        .iter()
+        .rev()
+        .find(|t| t.is_word && t.text.to_lowercase() == num_a_lower);
+    let Some(num_a_tok) = num_a_token else {
+        // NUM_A no aparece (no debería pasar). Fallback seguro.
+        return Ok(input.to_string());
+    };
+    // NUM_B: primer token del input cuyo texto (lowercase) coincide.
+    let num_b_token = tokens
+        .iter()
+        .find(|t| t.is_word && t.text.to_lowercase() == num_b_lower);
+    let Some(num_b_tok) = num_b_token else {
+        // NUM_B no aparece (no debería pasar). Fallback seguro.
+        return Ok(input.to_string());
+    };
+    // Si NUM_A y NUM_B son el MISMO token (caso degenerado que no
+    // debería darse porque count_numeric_tokens=1 a cada lado, pero
+    // por si la entrada trae numerales pegados), no intervenimos.
+    if num_a_tok.start == num_b_tok.start {
+        return Err(());
+    }
+
+    let before_raw = &input[..num_a_tok.start];
+    let after_raw = &input[num_b_tok.end..];
+    // Para el caso «no X sino» (regex con grupo 1), el patrón empieza
+    // por «no » y eso está dentro de `before_raw` (porque NUM_A va
+    // DENTRO de X). Necesitamos descartar también el «no » inicial
+    // para que la reconstrucción sea limpia.
+    let before = if re_for_discard_start.captures(before_raw).ok().flatten().is_some()
+        || before_raw.trim_start().to_lowercase().starts_with("no ")
+    {
+        // Caso B detectado: quitar el prefijo «no …» hasta el primer
+        // token no-numeral que sea inicio de NUM_A (o sea: quitar
+        // «no » si está al principio).
+        let trimmed = before_raw.trim_start();
+        let lower = trimmed.to_lowercase();
+        if lower.starts_with("no ") || lower.starts_with("no,") {
+            // Saltamos «no » y lo que venga hasta el primer token útil.
+            let after_no = if lower.starts_with("no ") { 3 } else { 2 };
+            let rest = &trimmed[after_no..];
+            rest.trim_start()
+        } else {
+            before_raw
+        }
+    } else {
+        before_raw
+    };
+    let after = after_raw;
+    // Decidimos si necesitamos un espacio adicional entre los trozos.
+    // La idea: si entre `before` y NUM_A no había whitespace, las
+    // palabras estaban pegadas (raro) y debemos meter un espacio.
+    // Si sí había whitespace, ya está la separación: NO añadimos.
+    // Lo mismo entre NUM_B y `after`.
+    let space_before_num_b = !before.is_empty() && !before.ends_with(char::is_whitespace);
+    let space_after_num_b = !after.is_empty() && !after.starts_with(char::is_whitespace);
+    let mut reconstructed = String::with_capacity(before.len() + pat.num_b.len() + after.len() + 2);
+    reconstructed.push_str(before);
+    if space_before_num_b {
+        reconstructed.push(' ');
+    }
+    reconstructed.push_str(&pat.num_b);
+    if space_after_num_b {
+        reconstructed.push(' ');
+    }
+    reconstructed.push_str(after);
+    let reconstructed = reconstructed.trim().to_string();
+
+    // 4) Si reconstruido quedó vacío o es solo espacios, conservar
+    //    el input (fallback seguro).
+    if reconstructed.is_empty() {
+        return Ok(input.to_string());
+    }
+
+    // 5) Logs para diagnóstico: este caso es diagnóstico porque el LLM
+    //    acaba de fallar en razonamiento numérico (t_1fc864ef).
+    crate::log!(
+        "llm",
+        "in-turn: guard numérico determinista reconstruyó la sustitución: \
+         num_a={:?} num_b={:?} input={:?} output={:?} reconstruido={:?}",
+        pat.num_a,
+        pat.num_b,
+        input,
+        output,
+        reconstructed,
+    );
+
+    // 6) El caller (app.rs) usa el output del guard si es distinto
+    //    del LLM original. Si coinciden (caso raro), devolvemos
+    //    Err(()) para no duplicar trabajo.
+    if reconstructed == output.trim() {
+        Err(())
+    } else {
+        Ok(reconstructed)
+    }
+}
+
+/// Resultado de `parse_numeric_correction`: el input partido en el
+/// primer marcador correctivo inequívoco, con los dos numerales
+/// identificados y la posición donde EMPIEZA la zona a descartar
+/// (NUM_A + marcador + posible contexto de función entre marcador y
+/// NUM_B — esto último se resuelve en la reconstrucción).
+///
+/// `input_a` e `input_b` se conservan para trazabilidad y futuros
+/// consumidores (p.ej. tests de integración con la pipeline); el
+/// reconstructor principal hoy solo usa `num_a`/`num_b`.
+struct NumericCorrection {
+    /// Texto del input hasta el inicio de la zona a descartar.
+    #[allow(dead_code)]
+    input_a: String,
+    /// Texto del input desde el final del marcador (incluye NUM_B).
+    #[allow(dead_code)]
+    input_b: String,
+    /// Token literal de NUM_A tal como aparece en el input.
+    num_a: String,
+    /// Token literal de NUM_B tal como aparece en el input.
+    num_b: String,
+}
+
+/// Busca el primer marcador correctivo inequívoco en `input` y, si a
+/// cada lado hay exactamente UN numeral simple (dígito o palabra de la
+/// lista corta), devuelve la partición. Si no hay patrón inequívoco,
+/// devuelve `None`.
+///
+/// Lista de numerales: solo los más comunes que caben en UN token.
+/// NO incluye «tres mil», «cuarenta y ocho», etc.: el guard es para el
+/// bug concreto del 0.8B-Q8, no un parser de números universal.
+const NUM_WORDS: &[&str] = &[
+    "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho",
+    "nueve", "diez", "once", "doce", "trece", "catorce", "quince",
+    "dieciséis", "dieciseis", "veinte", "treinta", "cuarenta",
+    "cincuenta", "sesenta", "setenta", "ochenta", "noventa", "cien",
+    "mil",
+];
+
+/// Marcadores correctivos que separan NUM_A y NUM_B. Deben ser
+/// inequívocos: si el LLM ya entendió bien la frase, este guard no
+/// debe intervenir. Por eso usamos los mismos que `has_unambiguous_in_turn_marker`
+/// más «no X sino Y» y «X en vez/lugar de Y».
+///
+/// Diseño: el regex devuelve DOS grupos cuando es posible:
+/// - grupo 1 (opcional): el «antes» del marcador que debe eliminarse.
+///   En «no X sino» X es lo que se va a sustituir; necesitamos que
+///   esté en el grupo para extraer NUM_A correctamente.
+/// - grupo 2: el marcador en sí.
+///
+/// NOTA sobre (1): la lógica de auto-corrección ya existe en
+/// `src/domain/corrective.rs` (`IN_TURN_MARKERS`,
+/// `apply_diff`/`apply_diff_inferido`). Sin embargo, ese módulo es
+/// declarativo/clasificador: su regex casa el marcador con meta-lengua
+/// general (digo, en vez de, no X sino…) y exige estructura «antes /
+/// después» con longitudes mínimas. NO está pensado para reconstruir
+/// la sustitución (no devuelve qué numeral se sustituye por cuál), y
+/// su lista de marcadores cubre más casos (incluido «mejor», «dime»
+/// como súplicas) que NO queremos tocar aquí. Reutilizar ese regex
+/// directo aquí haría al guard más permisivo de lo necesario y
+/// dispararía falsos positivos en frases coloquiales que el LLM
+/// resuelve bien. Mantener la regex acotada en este módulo es la
+/// decisión correcta: el guard es pequeño, surgical, y auto-contenido.
+const NUMERIC_MARKER_REGEX: &str = r"(?i)\b(?:no\s+(.+?)\s+sino\b|(digo\b|diga\b|dime\b|quiero decir\b|quise decir\b|mejor dicho\b|en vez de\b|en lugar de\b))";
+
+/// Regex compilada perezosamente (fancy-regex tiene coste).
+fn numeric_marker_regex() -> &'static fancy_regex::Regex {
+    use std::sync::OnceLock;
+    static RE: OnceLock<fancy_regex::Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        fancy_regex::Regex::new(NUMERIC_MARKER_REGEX)
+            .expect("regex de marcador numérico inválida")
+    })
+}
+
+/// ¿`token` es un numeral simple (dígito o palabra de la lista)?
+fn is_numeric_token(token: &str) -> bool {
+    let t = token.to_lowercase();
+    if t.parse::<u64>().is_ok() {
+        return true;
+    }
+    NUM_WORDS.contains(&t.as_str())
+}
+
+/// ¿`text` contiene `token` como palabra completa (separada por
+/// whitespace o puntuación)?
+fn contains_token(text: &str, token: &str) -> bool {
+    if token.is_empty() {
+        return false;
+    }
+    text.split(|c: char| !c.is_alphanumeric())
+        .any(|t| t == token)
+}
+
+/// Quita la ÚLTIMA aparición de `token` (como palabra completa) de
+/// `text` y devuelve el resultado con los espacios saneados. Si no
+/// aparece, devuelve `None` (el caller decide el fallback).
+fn strip_last_token(text: &str, token: &str) -> Option<String> {
+    if token.is_empty() {
+        return None;
+    }
+    // Tokenizamos conservando los separadores para poder reconstruir
+    // los espacios correctamente.
+    let mut tokens: Vec<(String, bool)> = Vec::new();
+    let mut current = String::new();
+    let mut current_is_word = false;
+    for c in text.chars() {
+        if c.is_alphanumeric() {
+            current.push(c);
+            current_is_word = true;
+        } else {
+            if !current.is_empty() {
+                tokens.push((current.clone(), current_is_word));
+                current.clear();
+                current_is_word = false;
+            }
+            tokens.push((c.to_string(), false));
+        }
+    }
+    if !current.is_empty() {
+        tokens.push((current, current_is_word));
+    }
+    // Buscamos la última posición donde hay un token que coincide (case-insensitive).
+    let mut last_idx: Option<usize> = None;
+    for (i, (tok, is_word)) in tokens.iter().enumerate() {
+        if *is_word && tok.to_lowercase() == token.to_lowercase() {
+            last_idx = Some(i);
+        }
+    }
+    let idx = last_idx?;
+    // Eliminamos el token y los separadores inmediatamente anteriores
+    // (espacios) para dejar el texto limpio.
+    let mut remove_from = idx;
+    while remove_from > 0 {
+        let (ref s, is_word) = tokens[remove_from - 1];
+        if !is_word && (s == " " || s == "\t" || s == "\n") {
+            remove_from -= 1;
+        } else {
+            break;
+        }
+    }
+    let mut out = String::new();
+    for (i, (s, _)) in tokens.iter().enumerate() {
+        if i >= remove_from && i <= idx {
+            continue;
+        }
+        out.push_str(s);
+    }
+    Some(out)
+}
+
+/// Parsea el input buscando el patrón inequívoco «NUM_A [marker] NUM_B».
+///
+/// Caso A (marcador simple: digo, en vez de, …):
+///   - `start` = inicio del marcador (ej. «digo»)
+///   - `end` = fin del marcador
+///   - `before` = input[..start] (NUM_A está al final de `before`)
+///   - `after` = input[end..] (NUM_B está al principio de `after`)
+///
+/// Caso B («no X sino»):
+///   - el grupo 1 del regex captura X, que es la «pieza incorrecta»
+///     que el usuario sustituye. NUM_A = last_token(X).
+///   - `before` = input[..start_of_match] (lo que va antes del «no»,
+///     p.ej. en «no voy a las tres sino…» antes del «no» no hay
+///     nada útil; pero en frases más largas como «el precio es 4 no
+///     5 sino 6» antes del «no» sí hay contexto que mantener).
+///   - `after` = input[end_of_match..] (NUM_B está al principio).
+fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
+    let re = numeric_marker_regex();
+    let caps = re.captures(input).ok().flatten()?;
+    let m = caps.get(0)?;
+    let start = m.start();
+    let end = m.end();
+    let marker_text = m.as_str();
+
+    // NUM_B: primer numeral en `input[end..]`, saltando tokens de
+    // función. Igual para ambos casos.
+    let after = input[end..].trim();
+    let num_b = first_numeric_token(after)?;
+    if count_numeric_tokens(after) != 1 {
+        return None;
+    }
+
+    // NUM_A depende del tipo de marcador:
+    // - Caso B («no X sino»): X está capturado en el grupo 1 y ES el
+    //   «antes» que se sustituye. NUM_A es el último numeral de X.
+    //   Pero además hay que mantener la parte de X que va ANTES de
+    //   NUM_A (p.ej. «no voy a las tres sino …» → conservamos «voy a
+    //   las» y solo sustituimos «tres»).
+    // - Caso A: NUM_A es el último token de `input[..start]`.
+    let (before, num_a) = if let Some(x_match) = caps.get(1) {
+        // Caso B: «no X sino».
+        let x = x_match.as_str();
+        let last = last_token(x)?;
+        if !is_numeric_token(&last) {
+            return None;
+        }
+        // El «antes» final: lo que va antes del «no» + la parte de X
+        // que precede a NUM_A (sin incluir el numeral).
+        let prefix_before_no = input[..start].trim_end();
+        let x_without_num = strip_last_token(x, &last).unwrap_or_default();
+        let combined = if prefix_before_no.is_empty() {
+            x_without_num.trim().to_string()
+        } else if x_without_num.trim().is_empty() {
+            prefix_before_no.to_string()
+        } else {
+            format!("{} {}", prefix_before_no, x_without_num.trim())
+        };
+        (combined, last)
+    } else {
+        // Caso A: NUM_A = último token del «antes».
+        let before_str = input[..start].trim();
+        let last = last_token(before_str)?;
+        if !is_numeric_token(&last) {
+            return None;
+        }
+        if count_numeric_tokens(before_str) != 1 {
+            return None;
+        }
+        (
+            before_str.trim_end().to_string(),
+            last,
+        )
+    };
+
+    // El «después» (todo lo que va tras el marcador): en el caso B hay
+    // que descontar X y «sino» (que ya están en el match, dentro de
+    // `input[end..]` solo queda «Y …»).
+    let _ = marker_text; // sólo documenta
+
+    Some(NumericCorrection {
+        input_a: before,
+        input_b: after.to_string(),
+        num_a,
+        num_b,
+    })
+}
+
+/// Primer token NUMÉRICO de un texto, saltando tokens de función
+/// («a», «las», «los», «el», «la», «de», «del», «al»). Devuelve `None`
+/// si no hay ningún numeral.
+fn first_numeric_token(s: &str) -> Option<String> {
+    const FUNCTION_WORDS: &[&str] = &[
+        "a", "al", "de", "del", "el", "la", "las", "lo", "los", "y", "o", "u",
+    ];
+    let mut current = String::new();
+    for c in s.chars() {
+        if c.is_alphanumeric() {
+            current.push(c);
+        } else if !current.is_empty() {
+            let lower = current.to_lowercase();
+            if is_numeric_token(&lower) {
+                return Some(current);
+            }
+            if !FUNCTION_WORDS.contains(&lower.as_str()) {
+                // Encontramos un token que no es numeral ni function
+                // word: el numeral real (si existe) viene DESPUÉS. Si
+                // ya pasamos tokens no-numéricos no-numerales, este
+                // turno no encaja en el patrón «NUM_B inmediato».
+                return None;
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() && is_numeric_token(&current.to_lowercase()) {
+        Some(current)
+    } else {
+        None
+    }
+}
+
+/// Último token «palabra» de un texto (alfanumérico).
+fn last_token(s: &str) -> Option<String> {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty())
+        .next_back()
+        .map(|t| t.to_string())
+}
+
+/// Cuenta cuántos tokens numéricos hay en `s`.
+fn count_numeric_tokens(s: &str) -> usize {
+    s.split(|c: char| !c.is_alphanumeric())
+        .filter(|t| !t.is_empty() && is_numeric_token(t))
+        .count()
+}
+
 /// Extrae el texto a parsear de la respuesta JSON del LLM. Preferentemente
 /// `choices[0].message.content`; si está vacío cae a
 /// `choices[0].message.reasoning_content` (modelos de razonamiento con
@@ -1626,6 +2114,166 @@ mod tests {
         assert_eq!(word_count(""), 0);
         assert_eq!(word_count("   "), 0);
         assert_eq!(word_count("a  b \t c"), 3);
+    }
+
+    // ── Guard numérico determinista (t_1fc864ef) ─────────────────────────
+    //
+    // El corrector LLM local (Qwen3.5-0.8B-Q8) concatena numerales en
+    // lugar de sustituirlos cuando se dicta «A digo B» con A y B ambos
+    // numerales. Evidencia real del log: «me comi cuatro digo cinco
+    // peras» → output del LLM «me comi cuatro cinco peras» (sin
+    // «digo», con los dos números juntos). Este guard detecta el patrón
+    // en el INPUT y reconstruye la sustitución en código.
+    //
+    // Contrato: el guard interviene SOLO si el patrón es inequívoco
+    // (dos numerales simples separados por un marcador correctivo) Y el
+    // output del LLM no cumple la corrección. En cualquier otro caso
+    // devuelve Err(()) y deja el flujo del LLM en manos del resto de
+    // guards existentes.
+
+    #[test]
+    fn guard_numeric_corrige_concatenacion_de_numerales_en_palabras() {
+        // Caso del bug: input «A digo B», LLM devuelve «A B» (sin
+        // marcador y con los dos numerales concatenados).
+        let input = "me comi cuatro digo cinco peras";
+        let output = "me comi cuatro cinco peras";
+        let result = guard_numeric_substitution(input, output)
+            .expect("el guard debe reconstruir la sustitución");
+        assert_eq!(
+            result, "me comi cinco peras",
+            "sustitución determinista: «cuatro» se reemplaza por «cinco»"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_corrige_concatenacion_con_numerales_digitos() {
+        // Variante con dígitos: «2 en vez de 4» → output «2 4»
+        // (concatenación rota).
+        let input = "el plazo es 2 en vez de 4 días";
+        let output = "el plazo es 2 4 días";
+        let result = guard_numeric_substitution(input, output)
+            .expect("el guard debe reconstruir la sustitución con dígitos");
+        assert_eq!(
+            result, "el plazo es 4 días",
+            "sustitución determinista: «2» se reemplaza por «4»"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_corrige_con_no_sino() {
+        // Variante con marcador «no X sino Y»: input «no X sino Y»,
+        // output «X Y» (concatenación del 0.8B).
+        let input = "no voy a las tres sino a las cuatro";
+        let output = "voy a las tres cuatro";
+        let result = guard_numeric_substitution(input, output)
+            .expect("el guard debe reconstruir con «no X sino Y»");
+        assert_eq!(
+            result, "voy a las cuatro",
+            "sustitución determinista: «tres» se reemplaza por «cuatro»"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_no_interviene_si_llm_resolvio_bien() {
+        // El LLM devolvió la respuesta correcta: NO debe intervenir.
+        let input = "me comi cuatro digo cinco peras";
+        let output = "me comi cinco peras";
+        assert!(
+            guard_numeric_substitution(input, output).is_err(),
+            "el LLM ya resolvió la corrección: el guard NO debe intervenir"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_no_interviene_si_no_hay_numerales() {
+        // Caso sin numerales (corrección geográfica). NO es problema del
+        // 0.8B (el LLM lo resuelve bien en runtime) → no intervenimos.
+        let input = "que calor en murcia digo cartagena";
+        let output = "que calor en murcia cartagena"; // hipotético «fallo» del LLM
+        assert!(
+            guard_numeric_substitution(input, output).is_err(),
+            "sin numerales el guard numérico no aplica (alcance del fix)"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_no_interviene_si_no_hay_patron_a_digo_b() {
+        // Numerales presentes pero SIN marcador correctivo: el turno
+        // NO es una auto-corrección numérica.
+        let input = "me comi cuatro peras";
+        let output = "me comi cuatro peras";
+        assert!(
+            guard_numeric_substitution(input, output).is_err(),
+            "sin marcador correctivo no hay sustitución que aplicar"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_no_interviene_si_solo_hay_un_numeral() {
+        // El usuario repite el numeral sin corregirlo: no hay
+        // auto-corrección y el guard no debe inventarse una.
+        let input = "me comi cuatro digo cinco peras y me comi cuatro digo cinco";
+        // Para que el patrón sea inequívoco exigimos un solo numeral
+        // antes y un solo numeral después; con dos «cuatro/cinco»
+        // repetidos no hay match → guard no interviene.
+        let output = "cuatro cinco cuatro cinco";
+        assert!(
+            guard_numeric_substitution(input, output).is_err(),
+            "con múltiples numerales el patrón deja de ser inequívoco"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_no_se_pisa_con_texto_largo_y_sin_correccion() {
+        // El caso del log LARGO sin corrección (73 palabras) no debe
+        // entrar en el guard numérico: el guard NO es responsable de
+        // detectar resúmenes (eso es `guard_anti_truncacion`). El
+        // guard numérico solo mira el patrón «NUM A [marker] NUM B».
+        let input = LOG_LARGO_INPUT;
+        let output = LOG_LARGO_OUTPUT;
+        assert!(
+            guard_numeric_substitution(input, output).is_err(),
+            "texto sin corrección numérica explícita: el guard no aplica"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_corrige_incluso_si_llm_borro_numerales() {
+        // Caso real del 0.8B: a veces el LLM no solo concatena, sino
+        // que también BORRA uno o ambos numerales (probablemente por
+        // confusión). El guard detecta el patrón en el INPUT y puede
+        // reconstruir igualmente: «me comi cuatro digo cinco peras»
+        // con output «me comi peras» → reconstruido «me comi cinco
+        // peras» (¡mejor que el input!).
+        let input = "me comi cuatro digo cinco peras";
+        let output = "me comi peras";
+        let result = guard_numeric_substitution(input, output)
+            .expect("el guard debe reconstruir incluso si el LLM borró numerales");
+        assert_eq!(
+            result, "me comi cinco peras",
+            "el input tiene NUM_A y NUM_B: la sustitución es inequívoca"
+        );
+    }
+
+    #[test]
+    fn guard_numeric_canonicos_intactos_no_se_pisan() {
+        // Sanity: los casos canónicos de la spec (que el LLM resuelve
+        // bien en runtime) NO deben disparar el guard: «murcia digo
+        // cartagena», «se cruzo una moto digo se cruzo un coche», etc.
+        // El guard solo aplica cuando hay numeral, así que con texto
+        // sin numerales no hay patrón.
+        for (input, output) in [
+            ("que calor que hace en murcia digo cartagena", "que calor en cartagena"),
+            (
+                "se cruzo una moto digo se cruzo un coche",
+                "se cruzo un coche",
+            ),
+        ] {
+            assert!(
+                guard_numeric_substitution(input, output).is_err(),
+                "caso canónico sin numerales: guard no aplica ({input:?} → {output:?})"
+            );
+        }
     }
 
     #[test]

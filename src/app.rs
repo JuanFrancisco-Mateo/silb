@@ -946,7 +946,6 @@ impl WhisprApp {
         // todavía un marcador in-turn, NO usamos la respuesta:
         // fallback al input bruto (spec §3.5.4).
         let clean_text = redacted.trim();
-        let still_has_meta = crate::domain::corrective::contains_in_turn_marker(clean_text);
         if clean_text.is_empty() {
             crate::log!(
                 "llm",
@@ -961,6 +960,30 @@ impl WhisprApp {
             self.save_config();
             return Task::none();
         }
+        // Guard numérico determinista (t_1fc864ef). El corrector
+        // local (Qwen3.5-0.8B-Q8) concatena numerales en lugar de
+        // sustituirlos cuando el usuario rectifica un dígito: «me comí
+        // cuatro digo cinco peras» → «me comí cuatro cinco peras» (sin
+        // «digo», con los dos números juntos). Este guard detecta el
+        // patrón «NUM_A [marcador] NUM_B» en el INPUT y reconstruye
+        // determinísticamente la sustitución. Si el LLM ya acertó la
+        // sustitución (contiene NUM_B pero no NUM_A), el guard NO
+        // interviene y deja pasar el output tal cual.
+        let effective_clean_text = match crate::llm::guard_numeric_substitution(&input, clean_text)
+        {
+            Ok(reconstructed) => {
+                crate::log!(
+                    "llm",
+                    "in-turn: guard numérico aplicado: {:?} -> {:?}",
+                    clean_text,
+                    reconstructed
+                );
+                reconstructed
+            }
+            Err(()) => clean_text.to_string(),
+        };
+        let still_has_meta =
+            crate::domain::corrective::contains_in_turn_marker(&effective_clean_text);
         // Guard anti-truncación (t_6b9348de): el LLM local (Qwen3.5-0.8B)
         // responde a los turnos largos sin corrección con UN RESUMEN
         // («estamos debulando la aplicación…» → «no se ha levantado ningún
