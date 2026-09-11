@@ -26,7 +26,7 @@ Leer este archivo ANTES de tocar nada.
 
 ## Definición de "done" (criterios innegociables)
 
-1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → 234 tests verdes.
+1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → 295 tests verdes.
 2. `... cargo.exe check` → sin errores (warnings tolerados).
 3. Commit en git por fase lógica, mensaje en español.
 
