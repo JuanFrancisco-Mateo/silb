@@ -32,12 +32,17 @@ run_one() {
     # Cargo se ejecuta desde Windows; necesita la ruta Windows del cfg.
     local cfg_file_win
     cfg_file_win="$(wslpath -w "$cfg_file" 2>/dev/null || echo "$cfg_file")"
-    cat > "$cfg_file" <<EOF
+    local opt_value
+case "$opt" in
+    z|s) opt_value="\"$opt\"";;
+    *)   opt_value="$opt";;
+esac
+cat > "$cfg_file" <<EOF
 [profile.release]
 lto = true
 strip = true
 codegen-units = ${cgu}
-opt-level = ${opt}
+opt-level = ${opt_value}
 panic = "${pan}"
 EOF
     echo
