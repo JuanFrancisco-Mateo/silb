@@ -171,7 +171,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 271 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 295 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 ```
 
 ## Estructura
@@ -201,6 +201,12 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 271 passed + 1 ignored (dominio, 
 
 ## Historial de versiones
 
+- **0.3.0** (rama `native-iced`): cierre del producto (fases R6+R7) — instalador
+  Inno Setup que instala/desinstala con el registro de programas correcto, icono
+  multirresolución (16/24/32/48/64/128/256) incrustado en el `.exe`, y
+  Personalización I+II+III dentro del binario release (Ajustes por secciones,
+  paleta editable con presets y por campo, imágenes y animación por frames en la
+  burbuja). Añade la documentación de cierre (`INFORME-CIERRE.md`).
 - **0.2.0** (rama `native-iced`): reescritura a escritorio nativo. Adiós web.
 - 0.2.0 → 11/09/2026: cierre de la documentación (fase R5) — licencia MIT,
   `docs/ARQUITECTURA.md` para quien llega nuevo, guía de usuario ampliada,

@@ -435,6 +435,8 @@ pub fn resolve_palette(cfg: &Config, dark: bool) -> UiPalette {
 // los campos (incluido el acento). Pensado para «inspiraciones»: el usuario
 // clica uno y luego afina por campo.
 
+/// Preset de paleta completa: cambia los 12 campos de golpe (incluido el
+/// acento). Pensado como inspiración de un clic; luego se afina campo a campo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PalettePreset {
     /// Paleta oscura por defecto (violeta + grafito).
@@ -450,6 +452,7 @@ pub enum PalettePreset {
 }
 
 impl PalettePreset {
+    /// Todos los presets, en el orden en que se ofrecen en Ajustes.
     pub const ALL: &'static [PalettePreset] = &[
         PalettePreset::Violeta,
         PalettePreset::Grafito,
@@ -458,6 +461,7 @@ impl PalettePreset {
         PalettePreset::Oceánico,
     ];
 
+    /// Nombre humano del preset, tal cual se muestra en el selector.
     pub fn label(self) -> &'static str {
         match self {
             PalettePreset::Violeta => "Violeta (oscuro por defecto)",
@@ -625,6 +629,8 @@ pub struct PaletteOverrideScope {
 }
 
 impl PaletteOverrideScope {
+    /// Instala `p` como paleta activa y recuerda la anterior para devolverla
+    /// al soltar el scope (en `Drop`).
     pub fn new(p: UiPalette) -> Self {
         let arc = Arc::new(p);
         let previous = OVERRIDE.with(|c| {
