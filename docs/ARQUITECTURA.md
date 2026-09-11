@@ -173,7 +173,7 @@ funciones con ejemplos conocidos):
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test    # 261 pasan, 1 se salta
+C:\Users\usuario\.cargo\bin\cargo.exe test    # 271 pasan, 1 se salta
 ```
 
 El que se salta («ignored») necesita un servidor llama.cpp real encendido:

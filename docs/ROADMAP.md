@@ -1,6 +1,6 @@
 # ROADMAP — Whispr Open (rama `native-iced`)
 
-Estado verificado a 04/09/2026 contra el código y el historial de git. Este
+Estado verificado a 11/09/2026 contra el código y el historial de git. Este
 archivo documenta **qué hay hecho** y **qué viene después**, priorizado por
 impacto/riesgo. Los documentos hermanos (`CORRECCION-VOZ.md`,
 `EMPAQUETADO.md`, `UI-FUTURA.md`) son las especificaciones detalladas de cada
@@ -26,9 +26,14 @@ etapa.
 | Corrección IA configurable | `src/config.rs`, `src/llm.rs`, `src/app.rs` | Proveedor local/cloud/custom OpenAI-compatible, timeout, umbral, confirmación opcional y API key fuera de `config.json`. |
 | Audio robusto | `src/audio.rs` | El stream se crea y reproduce antes de entrar en `Recording`; todo audio no-16 kHz se remuestrea a 16 kHz. |
 | Build release | `target/release/whispr-open.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
+| Licencia y documentación | `LICENSE`, `README.md`, `docs/` | MIT (10/09/2026); `docs/ARQUITECTURA.md` (recorrido del código para quien no ha tocado Rust), `docs/GUIA-USUARIO.md` y doc-comments públicos en español (11/09/2026). |
 
 Versión actual del paquete: **0.2.0** (`Cargo.toml`). Rama activa: `native-iced`
 (la rama `main` es la versión web legada y no se toca desde aquí).
+
+Verificación de hoy (11/09/2026): `cargo.exe test` → **271 passed, 0 failed,
+1 ignored** (el ignorado pide un server llama.cpp real encendido);
+`cargo.exe check` sin errores.
 
 ### Cadena de procesado actual (por turno de dictado)
 
@@ -52,13 +57,19 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 | 3 | **P2** | Mejoras de UI | [`UI-FUTURA.md`](UI-FUTURA.md) | Cerrar los huecos del checklist 2026: trust signal "nada sale de tu PC", override visible de la IA, contraste AA del acento, accesibilidad. |
 | 4 | **Hecho** | Cache del motor Whisper | `src/transcribe.rs` | Se conserva un contexto por modelo activo y se reemplaza solo al cambiar de modelo, evitando recargarlo en cada turno. |
 | 5 | P3 (backlog) | Transcripción casi-tiempo-real | — | Ventanas solapadas + re-decodificación parcial. Riesgo alto, toca el núcleo de grabación; requiere prueba manual de micrófono. |
-| 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |### Orden recomendado de trabajo
+| 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |
+
+### Orden recomendado de trabajo
 
 1. **P0 completado:** validar manualmente el flujo con micrófono, cambio de
    modelo, endpoint cloud/custom autenticado y confirmación de correcciones.
-2. **P1 siguiente:** empaquetado y distribución: instalador, icono y firma.
-3. **P2 siguiente:** revisión visual final, contraste AA y accesibilidad.
-4. **P3 backlog:** transcripción casi en tiempo real y notetaker de reuniones.
+2. **P2 completado** (R3/R4, commit `7f2109e`): nota editable, contraste AA
+   medido, transparencia del corrector IA y foco visible.
+3. **R5 completado** (11/09/2026): licencia MIT, `docs/ARQUITECTURA.md`, guía de
+   usuario ampliada y doc-comments públicos en español.
+4. **P1 siguiente:** empaquetado y distribución: instalador, icono `.ico`,
+   variante portable y firma (fase R6 de `NOTA-SESION.md`).
+5. **P3 backlog:** transcripción casi en tiempo real y notetaker de reuniones.
 
 
 ---

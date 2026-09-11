@@ -171,7 +171,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
 ```powershell
 cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 261 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+C:\Users\usuario\.cargo\bin\cargo.exe test   # 271 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 ```
 
 ## Estructura
@@ -195,11 +195,17 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 261 passed + 1 ignored (dominio, 
 | `docs/GUIA-USUARIO.md` | guía de usuario: dictar y corregir hablando |
 | `docs/ARQUITECTURA.md` | recorrido del código para alguien que nunca ha tocado Rust |
 | `docs/SETUP.md` | cómo configurar Local / Custom / Cloud |
+| `ROADMAP.md` (raíz) | punto de entrada: apunta a `docs/ROADMAP.md` |
 | `docs/EMPAQUETADO.md` · `docs/ROADMAP.md` · `docs/UI-FUTURA.md` | empaquetado y hoja de ruta |
+| `docs/ROADMAP-LEGADO-WEB.md` | hoja de ruta de la versión web (histórico, rama `main`) |
 
 ## Historial de versiones
 
 - **0.2.0** (rama `native-iced`): reescritura a escritorio nativo. Adiós web.
+- 0.2.0 → 11/09/2026: cierre de la documentación (fase R5) — licencia MIT,
+  `docs/ARQUITECTURA.md` para quien llega nuevo, guía de usuario ampliada,
+  doc-comments en español en todas las funciones y tipos públicos, y roadmap
+  de la raíz apuntando al de la rama nativa (el web quedó archivado).
 - 0.2.0 → 10/09/2026: cierre del producto — robustez a prueba de fallos
   (descarga, audio, inyección, instancia única), nota editable, contraste
   AA medido, pie de confianza, descarga con MB y tiempo restante,
