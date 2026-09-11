@@ -1,4 +1,4 @@
-; whispr-open.iss — instalador de Whispr Open v0.2.0 (Fase 4 / R6).
+; whispr-open.iss — instalador de Whispr Open v0.3.0 (Fase 5 / R7).
 ;
 ; INSTALACIÓN POR USUARIO (sin admin):
 ;   Whispr Open se instala en %LOCALAPPDATA%\Programs\WhisprOpen, igual que
@@ -11,15 +11,15 @@
 ;
 ; CÓMO COMPILARLO (Windows):
 ;   cmd /c ""C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss"
-;   Salida: packaging\Output\whispr-open-0.2.0-setup.exe (~20-25 MB, LZMA).
+;   Salida: packaging\Output\whispr-open-0.3.0-setup.exe (~20-25 MB, LZMA).
 ;
 ; VARIABLES DE USUARIO (las que se pueden sobreescribir por línea de comandos
 ; con /D="nombre=valor"):
 ;   WHISPR_RELEASE_DIR  directorio con whispr-open.exe (por defecto ..\target\release)
-;   WHISPR_VERSION      versión del paquete (por defecto 0.2.0)
+;   WHISPR_VERSION      versión del paquete (por defecto 0.3.0)
 ;
 ; Ejemplo con override:
-;   ISCC.exe /DWHISPR_VERSION=0.2.1 /DWHISPR_RELEASE_DIR=D:\builds\release packaging\whispr-open.iss
+;   ISCC.exe /DWHISPR_VERSION=0.3.1 /DWHISPR_RELEASE_DIR=D:\builds\release packaging\whispr-open.iss
 
 #define MyReleaseDir GetEnv("WHISPR_RELEASE_DIR") ? GetEnv("WHISPR_RELEASE_DIR") : "..\target\release"
 #define MyAppName "Whispr Open"
@@ -27,7 +27,7 @@
 #define MyAppURL "https://github.com/whispr-open/whispr-open"
 #define MyAppExeName "whispr-open.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.2.0"
+  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.3.0"
 #endif
 
 [Setup]

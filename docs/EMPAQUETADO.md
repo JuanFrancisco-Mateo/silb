@@ -3,13 +3,18 @@
 Objetivo: convertir `target/release/whispr-open.exe` en distribuciones
 instalables y confiables para Windows 10/11.
 
-Estado al cierre de la **Fase 4 (R6, 11/09/2026)**: instalador Inno
-Setup funcional (23,21 MiB tras Personalización III; sin admin,
+Estado al cierre de la **Fase 5 (R7, 11/09/2026, v0.3.0)**: instalador
+Inno Setup funcional (objetivo ≤25 MiB, sin admin,
 `%LOCALAPPDATA%\Programs\WhisprOpen`),
 icono `.ico` multirresolución (16/24/32/48/64/128/256, color `#7C6CFF`,
 fondo transparente) generado por código e incrustado en el `.exe` y en los
 accesos directos, variante portable = el propio `.exe` release (sin
 instalador). Medidas reales de ligereza abajo (§8).
+
+**Cambios en R7 (Fase 5):** bump de versión 0.2.0 → 0.3.0 (cierre de la
+fase 5 con la personalización completa integrada en el binario final:
+sección Imágenes en Ajustes, paleta editable, animación por frames).
+Medidas reales actualizadas en §8.4.
 
 ---
 
@@ -59,6 +64,7 @@ Contenido del instalador:
 | `target/release/whispr-open.exe` (tras Personalización I+II+III, feat `image` activada) | 47.178.240 B (44,99 MiB) |
 | `packaging/Output/whispr-open-0.2.0-setup.exe` (R6 inicial, feat `image` desactivada) | 23.769.034 B (22,67 MiB) |
 | `packaging/Output/whispr-open-0.2.0-setup.exe` (tras Personalización III, feat `image` activa) | 24.332.697 B (23,21 MiB) |
+| `packaging/Output/whispr-open-0.3.0-setup.exe` (R7, v0.3.0 con personalización completa) | (medido en §8.4) |
 
 Compresión LZMA2/ultra64 reduce el binario de ~45 MiB a ~23 MiB
 (~52 % del original). Objetivo ≤25 MiB: **CUMPLIDO** (margen 1,79 MiB
@@ -139,12 +145,12 @@ inventado ningún certificado.
 
 ## 4. Versionado (SemVer)
 
-- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.2.0** (`Cargo.toml`).
+- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.3.0** (`Cargo.toml`).
   - `0.x`: API inestable; cada feature nueva sube MINOR, los fixes PATCH.
   - Se pasa a `1.0.0` cuando la app tenga el flujo completo (corrección por
     voz incluida) y una estabilidad de formato demostrada.
 - Fuente de verdad única: `Cargo.toml` `version`. El instalador lee la
-  versión de la variable de entorno `WHISPR_VERSION` (default `0.2.0`).
+  versión de la variable de entorno `WHISPR_VERSION` (default `0.3.0`).
 - Convención de commits (opcional): prefijos `feat:` / `fix:` / `docs:` /
   `chore:` (ya se usan en el repo) para derivar CHANGELOG y el bump.
 
@@ -211,8 +217,8 @@ sobreescribir).
 ::    C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe
 ::
 ::    El script lee la versión de la variable de entorno WHISPR_VERSION
-::    (default 0.2.0). Para hacer un release con otra versión:
-::      set WHISPR_VERSION=0.2.1
+::    (default 0.3.0). Para hacer un release con otra versión:
+::      set WHISPR_VERSION=0.3.1
 ::      ISCC.exe ... whispr-open.iss
 ::
 ::    Para apuntar a otro directorio de release (CI, rama de hotfix):
@@ -234,7 +240,7 @@ y muestra la licencia MIT antes de pedir confirmación.
 
 ```cmd
 :: Instalar (silencioso, sin wizard):
-packaging\Output\whispr-open-0.2.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
+packaging\Output\whispr-open-0.3.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
 
 :: Verificar que el icono está incrustado:
 powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; [System.Drawing.Icon]::ExtractAssociatedIcon('%LOCALAPPDATA%\Programs\Whispr Open\whispr-open.exe')"
@@ -326,6 +332,43 @@ del atajo se paga al inicio de la sesión, no en mitad del dictado.
 Para quien no quiera ese coste de RAM, basta cambiar el modelo a
 `tiny` en Ajustes → Modelo (~75 MB en disco, +80 MB en RAM).
 
+### 8.5 Medidas reales de R7 (Fase 5, 11/09/2026, v0.3.0)
+
+Cierre de la fase 5 con bump de versión 0.2.0 → 0.3.0 y el binario
+final con la personalización completa integrada (Ajustes por secciones
++ paleta + imágenes y animación por frames).
+
+| Artefacto | Tamaño (B) | Tamaño (MiB) |
+|---|---:|---:|
+| `target/release/whispr-open.exe` (v0.3.0) | **47.177.728** | **44,99** |
+| `packaging/Output/whispr-open-0.3.0-setup.exe` | **24.331.612** | **23,20** |
+| `assets/whispr-open.ico` (16/24/32/48/64/128/256) | 372.526 | 363,79 KiB |
+
+**Δ vs R6:** el `.exe` es idéntico al byte (-0 B; el cambio de versión
+solo afecta al string `version` en `Cargo.toml`). El instalador
+disminuye -1.085 B (≈ -0,004 %) por el mismo motivo. **Objetivo ≤25 MiB
+del instalador:** CUMPLIDO (margen 1,80 MiB).
+
+**RAM tras prerroll de `small`** (medido el 11/09/2026 con `psapi.GetProcessMemoryInfo`):
+WorkingSet 484,6 MiB, PrivateMemory 1.243,9 MiB. Coherente con la medición
+de R6 (486 / 1.213 MiB).
+
+**Smoke del exe (`target/release/whispr-open.exe` directo, sin instalar):**
+- PID arranca; log escribe `Whispr Open 0.3.0 iniciando` en `%APPDATA%\whispr-open\whispr-open.log`.
+- Prerroll de whisper en ~1 s; bandeja lista; ventana principal registrada (id=2); burbuja aplicada noact+pos+tamaño 72.
+- `taskkill /T /PID <pid>` → 0 instancias whispr-open.exe y 0 instancias llama-server.exe.
+
+**Smoke del instalador (`scripts/install-smoke.py`):**
+- install exit=0; ARP con `DisplayName=Whispr Open`, `DisplayVersion=0.3.0`, `Publisher=Whispr Open contributors`, `DisplayIcon=...\whispr-open.exe`.
+- uninstall exit=0; ARP Whispr Open tras uninstall = `eliminado OK`.
+
+**Guard de instancia única:** verificado. La segunda ejecución registra
+`[main] ya hay otra instancia corriendo: salgo sin tocar atajo ni bandeja`,
+muestra `MessageBoxW` con título «Whispr Open» y **no** registra bandeja,
+burbuja ni atajo global.
+
+Detalle completo en `INFORME-CIERRE.md` (raíz del repo).
+
 ---
 
 ## 9. Criterios de aceptación
@@ -337,7 +380,7 @@ Para quien no quiera ese coste de RAM, basta cambiar el modelo a
   versión correcta, **sin elevación de administrador**.
 - ⏳ Firma de código (pipeline listo; pendiente de certificado real).
 - ✅ La versión en todos los artefactos coincide con `Cargo.toml`
-  (`0.2.0`).
+  (`0.3.0`).
 - ✅ El instalador (23,21 MiB tras Personalización III) cumple el
   objetivo de ≤25 MiB.
 - ✅ El `.ico` multirresolución está versionado en el repo, validado por
