@@ -19,6 +19,7 @@ pub mod config;
 pub mod domain;
 pub mod fonts;
 pub mod hotkey;
+pub mod icon_header;
 pub mod inject;
 pub mod llm;
 pub mod log;
