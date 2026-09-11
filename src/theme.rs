@@ -4,6 +4,19 @@
 //! tamaños de fuente. CERO literales mágicos en la UI (app.rs).
 //! Principios: calm design, dark mode por defecto, un solo acento violeta,
 //! sin blur/glassmorphism, sin animaciones decorativas, grid de 8 px.
+//!
+//! Personalización (R7 — Personalización II): el usuario puede sobreescribir
+//! CADA campo de la paleta desde Ajustes → Apariencia con un código hex
+//! (`#RRGGBB` o `#RGB`). Los overrides viven en `Config::palette`; este
+//! módulo expone `resolve_palette` para fundir los defaults con los overrides
+//! (un campo inválido cae al default por modo, NUNCA panic). El resultado se
+//! inyecta vía `set_palette_override` para que los estilos de widgets
+//! (`primary`, `secondary`, …) lean la paleta activa sin tocar los 50
+//! callsites que las invocan (thread-local; solo se setea en `view()` y se
+//! restaura al salir — fuera de `view()` se usan los defaults DARK/LIGHT).
+
+use std::cell::RefCell;
+use std::sync::Arc;
 
 use iced::border::Radius;
 use iced::theme::Palette;
@@ -12,6 +25,8 @@ use iced::widget::{
     scrollable as scroll, text_editor as editor, text_input as input,
 };
 use iced::{Background, Border, Color, Shadow, Theme};
+
+use crate::config::Config;
 
 /// Color desde hex `0xRRGGBB` (const, evaluado en compilación).
 macro_rules! rgb {
@@ -148,6 +163,491 @@ pub const LIGHT: UiPalette = UiPalette {
     border: BORDER_LIGHT,
 };
 
+// ─────────────────────────── Personalización (R7-II) ──────────────────────────
+//
+// `Config::palette` guarda `Option<PaletteConfig>`: cada campo es un hex
+// opcional (`"#RRGGBB"` o `"#RGB"`, con o sin `#`; case-insensitive). Cada
+// override se aplica sobre la paleta base del modo (DARK o LIGHT); un campo
+// ausente o inválido cae al default de ese modo (la app nunca rompe ni hace
+// panic por un hex basura). Diseño: per-field override, no wholesale
+// replacement — así un usuario puede tocar solo el acento sin perder el
+// resto del lenguaje visual.
+
+/// Override por campo de la paleta. Cada `Option<String>` es un hex válido o
+/// `None` (= usa el default del modo activo). Se serializa tal cual: los
+/// `None` se omiten del JSON para mantener los configs limpios.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct PaletteConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_alt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dim: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_hover: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ok: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warn: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub err: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+}
+
+impl PaletteConfig {
+    /// ¿Tiene AL MENOS un override? `false` ≡ paleta totalmente default.
+    pub fn is_empty(&self) -> bool {
+        self.bg.is_none()
+            && self.surface.is_none()
+            && self.surface_alt.is_none()
+            && self.text.is_none()
+            && self.dim.is_none()
+            && self.accent.is_none()
+            && self.accent_hover.is_none()
+            && self.accent_text.is_none()
+            && self.ok.is_none()
+            && self.warn.is_none()
+            && self.err.is_none()
+            && self.border.is_none()
+    }
+
+    /// Vacía TODOS los overrides → vuelve a la paleta por defecto del modo
+    /// activo. La UI lo usa en el botón «Restaurar todo».
+    pub fn clear(&mut self) {
+        self.bg = None;
+        self.surface = None;
+        self.surface_alt = None;
+        self.text = None;
+        self.dim = None;
+        self.accent = None;
+        self.accent_hover = None;
+        self.accent_text = None;
+        self.ok = None;
+        self.warn = None;
+        self.err = None;
+        self.border = None;
+    }
+
+    /// Restaura un campo concreto a default (`None`). La UI lo usa en el
+    /// botón «Restaurar» junto a cada input.
+    pub fn clear_field(&mut self, field: PaletteField) {
+        let slot: &mut Option<String> = match field {
+            PaletteField::Bg => &mut self.bg,
+            PaletteField::Surface => &mut self.surface,
+            PaletteField::SurfaceAlt => &mut self.surface_alt,
+            PaletteField::Text => &mut self.text,
+            PaletteField::Dim => &mut self.dim,
+            PaletteField::Accent => &mut self.accent,
+            PaletteField::AccentHover => &mut self.accent_hover,
+            PaletteField::AccentText => &mut self.accent_text,
+            PaletteField::Ok => &mut self.ok,
+            PaletteField::Warn => &mut self.warn,
+            PaletteField::Err => &mut self.err,
+            PaletteField::Border => &mut self.border,
+        };
+        *slot = None;
+    }
+}
+
+/// Identifica un campo concreto de `PaletteConfig` para que la UI pueda
+/// «restaurar este campo al default» sin tener que conocer la estructura
+/// interna. Usado por `Message::PaletteFieldReset`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PaletteField {
+    Bg,
+    Surface,
+    SurfaceAlt,
+    Text,
+    Dim,
+    Accent,
+    AccentHover,
+    AccentText,
+    Ok,
+    Warn,
+    Err,
+    Border,
+}
+
+impl PaletteField {
+    /// Todos los campos, en el orden estable que usa la UI.
+    pub const ALL: &'static [PaletteField] = &[
+        PaletteField::Bg,
+        PaletteField::Surface,
+        PaletteField::SurfaceAlt,
+        PaletteField::Text,
+        PaletteField::Dim,
+        PaletteField::Accent,
+        PaletteField::AccentHover,
+        PaletteField::AccentText,
+        PaletteField::Ok,
+        PaletteField::Warn,
+        PaletteField::Err,
+        PaletteField::Border,
+    ];
+
+    /// Etiqueta humana en español para la fila de la UI (sin coletilla).
+    pub fn label(self) -> &'static str {
+        match self {
+            PaletteField::Bg => "Fondo de ventana",
+            PaletteField::Surface => "Tarjetas / inputs",
+            PaletteField::SurfaceAlt => "Hover / superficies 2",
+            PaletteField::Text => "Texto principal",
+            PaletteField::Dim => "Texto atenuado",
+            PaletteField::Accent => "Acento",
+            PaletteField::AccentHover => "Acento (hover)",
+            PaletteField::AccentText => "Acento (texto)",
+            PaletteField::Ok => "Ok",
+            PaletteField::Warn => "Aviso",
+            PaletteField::Err => "Error",
+            PaletteField::Border => "Bordes",
+        }
+    }
+
+    /// Texto de ayuda CORTO (lo técnico detrás de «Ajustes avanzados», pero
+    /// expuesto aquí porque personalizar colores ES la sección avanzada de
+    /// Apariencia y el usuario debe entender qué cambia cada campo).
+    pub fn help(self) -> &'static str {
+        match self {
+            PaletteField::Bg => "Fondo de la ventana principal.",
+            PaletteField::Surface => "Color de las tarjetas y los campos de texto.",
+            PaletteField::SurfaceAlt => "Fondo al pasar el cursor sobre elementos.",
+            PaletteField::Text => "Color principal del texto (≥ 4.5:1 sobre fondo y tarjeta).",
+            PaletteField::Dim => "Texto secundario (labels, pistas). Mide ≥ 4.5:1 también.",
+            PaletteField::Accent => "Color de marca (botones primarios, foco,Checks). Acepta ≥ 3:1.",
+            PaletteField::AccentHover => "Acento al pasar el cursor sobre el botón primario.",
+            PaletteField::AccentText => "Acento usado como TEXTO normal (≥ 4.5:1 sobre fondo).",
+            PaletteField::Ok => "Estados correctos (verde). Mide ≥ 4.5:1 como texto.",
+            PaletteField::Warn => "Estados de aviso (ámbar). Mide ≥ 4.5:1 como texto.",
+            PaletteField::Err => "Estados de error (rojo). Mide ≥ 4.5:1 como texto.",
+            PaletteField::Border => "Bordes sutiles de tarjetas y separadores.",
+        }
+    }
+}
+
+/// Parsea un hex CSS (`#RRGGBB`, `#RGB`, con o sin `#`; case-insensitive) a
+/// `Color` opaco. Devuelve `None` si el formato es basura — la UI usa esto
+/// para «campo inválido → se ignora y se usa el default del modo» sin romper
+/// el render.
+///
+/// Acepta 3 o 6 dígitos hex (CSS-style). 8 dígitos NO: alpha no es editable
+/// (la opacidad global es otro ajuste). El caracter `#` inicial es opcional.
+pub fn parse_hex(raw: &str) -> Option<Color> {
+    let s = raw.trim();
+    let s = s.strip_prefix('#').unwrap_or(s);
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    let s = s.strip_prefix("0X").unwrap_or(s);
+    let bytes = s.as_bytes();
+    let rgb @ [r, g, b] = match bytes.len() {
+        3 => {
+            // #RGB → expande a #RRGGBB (cada nibble se duplica).
+            let r = hex_nibble(bytes[0])?;
+            let g = hex_nibble(bytes[1])?;
+            let b = hex_nibble(bytes[2])?;
+            [r * 17, g * 17, b * 17]
+        }
+        6 => {
+            let r = u8::from_str_radix(std::str::from_utf8(&bytes[0..2]).ok()?, 16).ok()?;
+            let g = u8::from_str_radix(std::str::from_utf8(&bytes[2..4]).ok()?, 16).ok()?;
+            let b = u8::from_str_radix(std::str::from_utf8(&bytes[4..6]).ok()?, 16).ok()?;
+            [r, g, b]
+        }
+        _ => return None,
+    };
+    let _ = rgb;
+    Some(Color::from_rgb(
+        r as f32 / 255.0,
+        g as f32 / 255.0,
+        b as f32 / 255.0,
+    ))
+}
+
+fn hex_nibble(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
+/// Resuelve la paleta efectiva (defaults del modo + overrides por campo). Si
+/// `cfg.palette` es `None` o todos sus campos son `None`, devuelve una copia
+/// del `DARK` o `LIGHT` base (comportamiento idéntico al de antes de R7-II).
+/// Cada hex inválido se ignora silenciosamente y se usa el default del campo.
+pub fn resolve_palette(cfg: &Config, dark: bool) -> UiPalette {
+    let base = if dark { DARK } else { LIGHT };
+    let Some(overrides) = cfg.palette.as_ref() else {
+        return base;
+    };
+    fn pick(
+        field: PaletteField,
+        overrides: &PaletteConfig,
+        default: Color,
+    ) -> Color {
+        let raw = match field {
+            PaletteField::Bg => &overrides.bg,
+            PaletteField::Surface => &overrides.surface,
+            PaletteField::SurfaceAlt => &overrides.surface_alt,
+            PaletteField::Text => &overrides.text,
+            PaletteField::Dim => &overrides.dim,
+            PaletteField::Accent => &overrides.accent,
+            PaletteField::AccentHover => &overrides.accent_hover,
+            PaletteField::AccentText => &overrides.accent_text,
+            PaletteField::Ok => &overrides.ok,
+            PaletteField::Warn => &overrides.warn,
+            PaletteField::Err => &overrides.err,
+            PaletteField::Border => &overrides.border,
+        };
+        raw.as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(default)
+    }
+    UiPalette {
+        bg: pick(PaletteField::Bg, overrides, base.bg),
+        surface: pick(PaletteField::Surface, overrides, base.surface),
+        surface_alt: pick(PaletteField::SurfaceAlt, overrides, base.surface_alt),
+        text: pick(PaletteField::Text, overrides, base.text),
+        dim: pick(PaletteField::Dim, overrides, base.dim),
+        accent: pick(PaletteField::Accent, overrides, base.accent),
+        accent_hover: pick(PaletteField::AccentHover, overrides, base.accent_hover),
+        accent_text: pick(PaletteField::AccentText, overrides, base.accent_text),
+        ok: pick(PaletteField::Ok, overrides, base.ok),
+        warn: pick(PaletteField::Warn, overrides, base.warn),
+        err: pick(PaletteField::Err, overrides, base.err),
+        border: pick(PaletteField::Border, overrides, base.border),
+    }
+}
+
+// ───────────── Presets (un clic cambia 12 campos a la vez) ───────────────
+//
+// Pensados para los dos modos principales (oscuro/claro) + 3 acentos
+// distintos. NO se mezclan con la paleta base — cada preset REEMPLAZA todos
+// los campos (incluido el acento). Pensado para «inspiraciones»: el usuario
+// clica uno y luego afina por campo.
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PalettePreset {
+    /// Paleta oscura por defecto (violeta + grafito).
+    Violeta,
+    /// Grafito puro, acento cian sobrio (lectura larga, poco distractivo).
+    Grafito,
+    /// Paleta clara por defecto.
+    Claro,
+    /// Verde bosque sobre fondo crema (lectura larga en claro, contraste suave).
+    Bosque,
+    /// Azul océano sobre fondo tinta (modo oscuro alternativo al grafito).
+    Oceánico,
+}
+
+impl PalettePreset {
+    pub const ALL: &'static [PalettePreset] = &[
+        PalettePreset::Violeta,
+        PalettePreset::Grafito,
+        PalettePreset::Claro,
+        PalettePreset::Bosque,
+        PalettePreset::Oceánico,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            PalettePreset::Violeta => "Violeta (oscuro por defecto)",
+            PalettePreset::Grafito => "Grafito (cian sobrio)",
+            PalettePreset::Claro => "Claro (violeta)",
+            PalettePreset::Bosque => "Bosque (verde sobre crema)",
+            PalettePreset::Oceánico => "Oceánico (azul sobre tinta)",
+        }
+    }
+
+    /// Preset aplicado a la rama DARK o LIGHT. Lo que devuelve es la paleta
+    /// entera (los 12 campos), por lo que se usa como «fuente de verdad»
+    /// para poblar `Config::palette`.
+    pub fn colors(self, dark: bool) -> UiPalette {
+        match (self, dark) {
+            // Oscuros
+            (PalettePreset::Violeta, true) => DARK,
+            (PalettePreset::Claro, true) => DARK, // preset «claro» en modo oscuro → cae al violeta oscuro
+            (PalettePreset::Grafito, true) => UiPalette {
+                bg: rgb!(0x14, 0x16, 0x1A),
+                surface: rgb!(0x1B, 0x1E, 0x24),
+                surface_alt: rgb!(0x24, 0x27, 0x2E),
+                text: rgb!(0xEC, 0xED, 0xF0),
+                dim: rgb!(0x92, 0x96, 0xA0),
+                accent: rgb!(0x3E, 0xC8, 0xC8), // cian sobrio
+                accent_hover: rgb!(0x5C, 0xDA, 0xDA),
+                accent_text: rgb!(0x5C, 0xDA, 0xDA),
+                ok: rgb!(0x4E, 0xC8, 0x6E),
+                warn: rgb!(0xE8, 0xA6, 0x3A),
+                err: rgb!(0xE6, 0x6B, 0x6B),
+                border: rgb!(0x29, 0x2C, 0x34),
+            },
+            (PalettePreset::Bosque, true) => UiPalette {
+                bg: rgb!(0x16, 0x1F, 0x18),
+                surface: rgb!(0x1E, 0x29, 0x21),
+                surface_alt: rgb!(0x26, 0x32, 0x2A),
+                text: rgb!(0xEC, 0xEF, 0xE8),
+                dim: rgb!(0x96, 0xA2, 0x94),
+                accent: rgb!(0x6E, 0xC8, 0x6B),
+                accent_hover: rgb!(0x8A, 0xDC, 0x86),
+                accent_text: rgb!(0x8A, 0xDC, 0x86),
+                ok: rgb!(0x6E, 0xC8, 0x6B),
+                warn: rgb!(0xE8, 0xB6, 0x4A),
+                err: rgb!(0xE6, 0x6B, 0x6B),
+                border: rgb!(0x2A, 0x36, 0x2D),
+            },
+            (PalettePreset::Oceánico, true) => UiPalette {
+                bg: rgb!(0x10, 0x14, 0x1C),
+                surface: rgb!(0x18, 0x1E, 0x28),
+                surface_alt: rgb!(0x20, 0x27, 0x33),
+                text: rgb!(0xEC, 0xEF, 0xF4),
+                dim: rgb!(0x90, 0x9A, 0xA8),
+                accent: rgb!(0x4F, 0x8E, 0xE8),
+                accent_hover: rgb!(0x6E, 0xA8, 0xF2),
+                accent_text: rgb!(0x6E, 0xA8, 0xF2),
+                ok: rgb!(0x4E, 0xC8, 0x8E),
+                warn: rgb!(0xE8, 0xB6, 0x4A),
+                err: rgb!(0xE6, 0x6B, 0x6B),
+                border: rgb!(0x25, 0x2D, 0x3A),
+            },
+            // Claros
+            (PalettePreset::Violeta, false) | (PalettePreset::Claro, false) => LIGHT,
+            (PalettePreset::Grafito, false) => UiPalette {
+                bg: rgb!(0xF4, 0xF5, 0xF7),
+                surface: rgb!(0xFF, 0xFF, 0xFF),
+                surface_alt: rgb!(0xE7, 0xE9, 0xED),
+                text: rgb!(0x14, 0x16, 0x1A),
+                dim: rgb!(0x68, 0x6C, 0x76),
+                accent: rgb!(0x1F, 0x7A, 0x82), // cian sobrio oscuro para AA en claro
+                accent_hover: rgb!(0x26, 0x90, 0x9A),
+                accent_text: rgb!(0x1F, 0x7A, 0x82),
+                ok: rgb!(0x1F, 0x7A, 0x3E),
+                warn: rgb!(0x8F, 0x63, 0x00),
+                err: rgb!(0xC9, 0x3E, 0x3E),
+                border: rgb!(0xD6, 0xD8, 0xDE),
+            },
+            (PalettePreset::Bosque, false) => UiPalette {
+                bg: rgb!(0xF6, 0xF4, 0xEA),
+                surface: rgb!(0xFF, 0xFC, 0xF1),
+                surface_alt: rgb!(0xE8, 0xE4, 0xD2),
+                text: rgb!(0x1A, 0x26, 0x18),
+                dim: rgb!(0x66, 0x72, 0x62),
+                accent: rgb!(0x2E, 0x6E, 0x3A),
+                accent_hover: rgb!(0x3A, 0x82, 0x48),
+                accent_text: rgb!(0x2E, 0x6E, 0x3A),
+                ok: rgb!(0x2E, 0x6E, 0x3A),
+                warn: rgb!(0x8F, 0x63, 0x00),
+                err: rgb!(0xC9, 0x3E, 0x3E),
+                border: rgb!(0xD8, 0xD2, 0xBE),
+            },
+            (PalettePreset::Oceánico, false) => UiPalette {
+                bg: rgb!(0xF4, 0xF6, 0xFA),
+                surface: rgb!(0xFF, 0xFF, 0xFF),
+                surface_alt: rgb!(0xE3, 0xE8, 0xF0),
+                text: rgb!(0x12, 0x18, 0x24),
+                dim: rgb!(0x66, 0x70, 0x82),
+                accent: rgb!(0x25, 0x55, 0xA0),
+                accent_hover: rgb!(0x33, 0x6A, 0xC0),
+                accent_text: rgb!(0x25, 0x55, 0xA0),
+                ok: rgb!(0x1F, 0x7A, 0x3E),
+                warn: rgb!(0x8F, 0x63, 0x00),
+                err: rgb!(0xC9, 0x3E, 0x3E),
+                border: rgb!(0xD2, 0xD8, 0xE2),
+            },
+        }
+    }
+}
+
+/// Convierte una `UiPalette` resuelta al `PaletteConfig` correspondiente
+/// (con cada campo escrito como `"#RRGGBB"`). Lo usa el botón «Aplicar
+/// preset» y la importación JSON → config.
+pub fn palette_to_config(p: UiPalette) -> PaletteConfig {
+    fn hx(c: Color) -> String {
+        let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
+        let g = (c.g * 255.0).round().clamp(0.0, 255.0) as u8;
+        let b = (c.b * 255.0).round().clamp(0.0, 255.0) as u8;
+        format!("#{r:02X}{g:02X}{b:02X}")
+    }
+    PaletteConfig {
+        bg: Some(hx(p.bg)),
+        surface: Some(hx(p.surface)),
+        surface_alt: Some(hx(p.surface_alt)),
+        text: Some(hx(p.text)),
+        dim: Some(hx(p.dim)),
+        accent: Some(hx(p.accent)),
+        accent_hover: Some(hx(p.accent_hover)),
+        accent_text: Some(hx(p.accent_text)),
+        ok: Some(hx(p.ok)),
+        warn: Some(hx(p.warn)),
+        err: Some(hx(p.err)),
+        border: Some(hx(p.border)),
+    }
+}
+
+// ───────────── Thread-local: inyecta la paleta resuelta en `tokens` ──────
+//
+// Los widgets piden el `UiPalette` dentro de los style closures (que solo
+// reciben `&Theme` por la API de iced). Para que esos closures lean la
+// paleta resuelta del usuario sin tocar los 50 callsites, cacheamos la
+// paleta activa en un thread-local durante `view()`. Fuera de `view()`
+// `tokens(theme)` cae a los defaults DARK/LIGHT (los tests de contraste
+// cuentan con eso).
+
+thread_local! {
+    static OVERRIDE: RefCell<Option<Arc<UiPalette>>> = const { RefCell::new(None) };
+}
+
+/// Establece la paleta que verán los style closures hasta el próximo
+/// `clear_palette_override`. Pensado para envolver `WhisprApp::view()` y
+/// `bubble_view()` (mismo hilo UI). Pasar `None` ≡ sin override (DARK/LIGHT).
+pub fn set_palette_override(p: Option<Arc<UiPalette>>) {
+    OVERRIDE.with(|c| *c.borrow_mut() = p);
+}
+
+/// Limpia el override. Lo usa el destructor de `PaletteOverrideScope`.
+pub fn clear_palette_override() {
+    OVERRIDE.with(|c| *c.borrow_mut() = None);
+}
+
+/// RAII helper: setea el override al construirse, lo limpia al soltarse.
+/// Garantiza que un `?` o un panic en `view()` no deje la paleta fantasma
+/// para el siguiente frame.
+pub struct PaletteOverrideScope {
+    previous: Option<Arc<UiPalette>>,
+}
+
+impl PaletteOverrideScope {
+    pub fn new(p: UiPalette) -> Self {
+        let arc = Arc::new(p);
+        let previous = OVERRIDE.with(|c| {
+            let prev = c.borrow_mut().replace(arc);
+            // `prev` es `Option<Arc<UiPalette>>`; `replace` devuelve el
+            // valor anterior sin doble envoltura.
+            prev
+        });
+        Self { previous }
+    }
+}
+
+impl Drop for PaletteOverrideScope {
+    fn drop(&mut self) {
+        let prev = self.previous.take();
+        OVERRIDE.with(|c| *c.borrow_mut() = prev);
+    }
+}
+
+fn override_active() -> Option<Arc<UiPalette>> {
+    OVERRIDE.with(|c| c.borrow().clone())
+}
+
 // ─────────────────────────────── Tokens: geometría ───────────────────────────────
 // Grid de 8 px.
 pub const SPACE_1: u16 = 4; // medio paso
@@ -243,45 +743,77 @@ pub fn system_dark_mode() -> bool {
 
 // ─────────────────────────────── Temas iced ───────────────────────────────
 
-/// Tema custom para la app según el modo del `Config` (dark por defecto).
+/// Tema custom con la paleta del modo activo (defaults DARK/LIGHT si no hay
+/// override de usuario). Pensado para tests / arranque sin `Config`.
 pub fn custom(dark: bool) -> Theme {
-    if dark {
-        Theme::custom(
-            "Whispr Open — oscuro".to_string(),
-            Palette {
-                background: DARK.bg,
-                text: DARK.text,
-                primary: DARK.accent,
-                success: DARK.ok,
-                danger: DARK.err,
-            },
-        )
-    } else {
-        Theme::custom(
-            "Whispr Open — claro".to_string(),
-            Palette {
-                background: LIGHT.bg,
-                text: LIGHT.text,
-                primary: LIGHT.accent,
-                success: LIGHT.ok,
-                danger: LIGHT.err,
-            },
-        )
-    }
+    custom_with_palette(if dark { &DARK } else { &LIGHT })
 }
 
-/// `true` si el tema activo es el oscuro (compara la paleta con la nuestra).
+/// Tema custom construido desde una `UiPalette` ya resuelta. El caller
+/// (WhisprApp) pasa `resolve_palette(cfg, dark)` para que el `Theme` iced
+/// refleje los overrides del usuario (los 5 campos del `Palette` de iced
+/// salen del `UiPalette` resuelto, así el fondo de ventana y los defaults
+/// de widgets no estilizados también respetan la personalización).
+pub fn custom_with_palette(p: &UiPalette) -> Theme {
+    Theme::custom(
+        // El nombre no se usa para lógica; dejamos uno estable por modo.
+        format!("Whispr Open — {}", if is_palette_dark(p) { "oscuro" } else { "claro" }),
+        Palette {
+            background: p.bg,
+            text: p.text,
+            primary: p.accent,
+            success: p.ok,
+            danger: p.err,
+        },
+    )
+}
+
+/// ¿Esta paleta «es oscura»? Criterio: la luminancia relativa del fondo
+/// (WCAG) está por debajo del 50 %. Es la misma fórmula que `contrast_ratio`
+/// usa internamente, así que coincide con la intuición visual.
+fn is_palette_dark(p: &UiPalette) -> bool {
+    let lum = |c: Color| -> f64 {
+        let channel = |v: f32| {
+            let v = v.clamp(0.0, 1.0) as f64;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
+    };
+    lum(p.bg) < 0.5
+}
+
+/// `true` si el tema activo es el oscuro. Compara el `background` del
+/// `Theme` contra el de la paleta activa del override (si lo hay) o contra
+/// `DARK.bg` (sin override). Esto deja `is_dark(theme)` coherente con el
+/// override del usuario: si el bg custom sigue siendo oscuro por luminancia,
+/// devuelve `true` y el ciclo de tokens sigue funcionando.
 pub fn is_dark(theme: &Theme) -> bool {
-    theme.palette().background == DARK.bg
+    let bg = theme.palette().background;
+    if let Some(arc) = override_active() {
+        return bg == arc.bg;
+    }
+    bg == DARK.bg
 }
 
-/// Paleta semántica del tema activo.
-pub fn tokens(theme: &Theme) -> &'static UiPalette {
-    if is_dark(theme) {
-        &DARK
-    } else {
-        &LIGHT
+/// Paleta semántica del tema activo. Si hay un override activo
+/// (establecido por `set_palette_override` / `PaletteOverrideScope`,
+/// tipicamente durante `view()`), se devuelve una referencia al `Arc`
+/// resuelto. Si no, se devuelve `DARK` o `LIGHT` por static-promote
+/// (comportamiento idéntico al de antes de R7-II).
+///
+/// Los style closures de widgets iced se ejecutan en el hilo UI durante
+/// `view()`; el override siempre está activo en ese momento, así que en
+/// la práctica SIEMPRE se devuelve la paleta resuelta.
+pub fn tokens(theme: &Theme) -> std::borrow::Cow<'static, UiPalette> {
+    if let Some(arc) = override_active() {
+        return std::borrow::Cow::Owned((*arc).clone());
     }
+    let base: &'static UiPalette = if is_dark(theme) { &DARK } else { &LIGHT };
+    std::borrow::Cow::Borrowed(base)
 }
 
 fn border(color: Color, width: f32, radius: f32) -> Border {
@@ -531,12 +1063,16 @@ mod tests {
 
     #[test]
     fn tokens_resuelven_por_modo() {
+        // Garantiza que ningún test anterior dejó un override colgado
+        // (thread-local). Sin esto, una paleta de un test anterior podría
+        // contaminar las mediciones de contraste WCAG.
+        clear_palette_override();
         let dark_theme = custom(true);
         assert!(is_dark(&dark_theme));
-        assert_eq!(tokens(&dark_theme), &DARK);
+        assert_eq!(*tokens(&dark_theme), DARK);
         let light_theme = custom(false);
         assert!(!is_dark(&light_theme));
-        assert_eq!(tokens(&light_theme), &LIGHT);
+        assert_eq!(*tokens(&light_theme), LIGHT);
     }
 
     #[test]
@@ -675,5 +1211,233 @@ mod tests {
         assert_eq!(DARK.accent_text, ACCENT_TEXT);
         assert_eq!(LIGHT.accent_text, ACCENT_TEXT_LIGHT);
         assert_eq!(INK_ON_ACCENT, rgb!(0x17, 0x18, 0x1C));
+    }
+
+    // ── Personalización II: paleta editable ──────────────────────────────────
+
+    /// Limpia el override antes de cada test que mide defaults WCAG (los
+    /// thread-locals pueden sobrevivir entre tests si una aserción paniquea
+    /// a mitad).
+    fn reset_palette_override() {
+        clear_palette_override();
+    }
+
+    #[test]
+    fn parse_hex_acepta_rrggbb_y_rgb_y_tolerancias() {
+        reset_palette_override();
+        // #RRGGBB mayúsculas y minúsculas.
+        let c1 = parse_hex("#FF8800").unwrap();
+        assert_eq!(c1.r, 1.0);
+        assert!((c1.g - 136.0 / 255.0).abs() < 0.001);
+        assert_eq!(c1.b, 0.0);
+        // #RGB se expande a #RRGGBB duplicando nibble.
+        let c2 = parse_hex("#f0a").unwrap();
+        assert_eq!(c2.r, 1.0); // f → ff
+        assert_eq!(c2.g, 0.0); // 0 → 00
+        assert!((c2.b - 170.0 / 255.0).abs() < 0.001); // a → aa
+        // Sin `#`, lowercase.
+        let c3 = parse_hex("7c6cff").unwrap();
+        assert_eq!(c3.r, 0x7C as f32 / 255.0);
+        assert_eq!(c3.g, 0x6C as f32 / 255.0);
+        assert_eq!(c3.b, 0xFF as f32 / 255.0);
+        // Trim de espacios.
+        let c4 = parse_hex("  #ABCDEF  ").unwrap();
+        assert_eq!(c4.r, 0xAB as f32 / 255.0);
+        // Prefijo 0x también aceptado.
+        let c5 = parse_hex("0x101010").unwrap();
+        assert_eq!(c5.r, 16.0 / 255.0);
+    }
+
+    #[test]
+    fn parse_hex_rechaza_basura_sin_panicar() {
+        reset_palette_override();
+        // Longitudes no soportadas.
+        assert!(parse_hex("").is_none());
+        assert!(parse_hex("#").is_none());
+        assert!(parse_hex("#FF").is_none());
+        assert!(parse_hex("#FFFF").is_none()); // 4 = ARGB hex CSS, NO lo aceptamos
+        assert!(parse_hex("#FFFFFFFF").is_none()); // 8 dígitos con alpha no es editable
+        // Caracteres no hex.
+        assert!(parse_hex("#GGGGGG").is_none());
+        assert!(parse_hex("#XX00FF").is_none());
+        assert!(parse_hex("no es hex").is_none());
+        assert!(parse_hex("##").is_none());
+        // NUNCA panic; la app puede llamar a esto desde UI sin try/catch.
+        let opts = [
+            "", "#", "#FF", "#FFFF", "#FFFFFFFF", "#GGGGGG",
+            "no es hex", "##", "  ", "0xZZ", "café",
+        ];
+        for opt in opts {
+            assert!(parse_hex(opt).is_none(), "parse_hex({opt:?}) debería ser None");
+        }
+    }
+
+    #[test]
+    fn resolve_palette_sin_override_es_identica_al_default_del_modo() {
+        reset_palette_override();
+        let cfg = Config::default();
+        let d = resolve_palette(&cfg, true);
+        let l = resolve_palette(&cfg, false);
+        assert_eq!(d, DARK, "sin override oscuro = DARK");
+        assert_eq!(l, LIGHT, "sin override claro = LIGHT");
+
+        // Config con palette = Some(PaletteConfig::default()) (todos None)
+        // también cae al default completo.
+        let cfg_empty = Config {
+            palette: Some(PaletteConfig::default()),
+            ..Default::default()
+        };
+        assert_eq!(resolve_palette(&cfg_empty, true), DARK);
+        assert_eq!(resolve_palette(&cfg_empty, false), LIGHT);
+    }
+
+    #[test]
+    fn resolve_palette_mezcla_por_campo_y_cae_a_default_si_hex_invalido() {
+        reset_palette_override();
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                accent: Some("#00AAFF".into()),
+                surface_alt: Some("#222".into()),
+                text: Some("BASURA".into()), // hex inválido → default
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = resolve_palette(&cfg, true);
+        // Solo accent y surface_alt cambiaron.
+        assert_eq!(p.accent, parse_hex("#00AAFF").unwrap());
+        assert_eq!(p.surface_alt, parse_hex("#222").unwrap());
+        // El resto conserva los defaults oscuros.
+        assert_eq!(p.bg, DARK.bg);
+        assert_eq!(p.surface, DARK.surface);
+        assert_eq!(p.text, DARK.text, "hex inválido cae al default");
+        assert_eq!(p.err, DARK.err);
+
+        // En modo claro aplica los defaults LIGHT a los campos no override.
+        let l = resolve_palette(&cfg, false);
+        assert_eq!(l.accent, parse_hex("#00AAFF").unwrap());
+        assert_eq!(l.surface_alt, parse_hex("#222").unwrap());
+        assert_eq!(l.bg, LIGHT.bg);
+        assert_eq!(l.text, LIGHT.text);
+    }
+
+    #[test]
+    fn palette_override_se_aplica_a_tokens_entre_set_y_clear() {
+        reset_palette_override();
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                accent: Some("#00FF00".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = resolve_palette(&cfg, true);
+        // Antes del scope: tokens cae a DARK (no override).
+        let theme_default = custom(true);
+        assert_eq!(*tokens(&theme_default), DARK);
+        // Dentro del scope: tokens devuelve la paleta resuelta.
+        let _scope = PaletteOverrideScope::new(p);
+        assert_eq!(tokens(&theme_default).accent, parse_hex("#00FF00").unwrap());
+        // Tras soltar el scope: vuelve a DARK.
+        drop(_scope);
+        assert_eq!(*tokens(&theme_default), DARK);
+    }
+
+    #[test]
+    fn palette_to_config_puede_roundtrip_con_parse_hex() {
+        reset_palette_override();
+        let original = DARK;
+        let cfg = palette_to_config(original);
+        let resolved = resolve_palette(
+            &Config {
+                palette: Some(cfg.clone()),
+                ..Default::default()
+            },
+            true,
+        );
+        // Cada campo debe coincidir con el original (con tolerancia epsilon
+        // por el redondeo de f32 → u8 → f32).
+        fn approx(a: Color, b: Color) -> bool {
+            (a.r - b.r).abs() < 0.01
+                && (a.g - b.g).abs() < 0.01
+                && (a.b - b.b).abs() < 0.01
+        }
+        for (field, (orig, res)) in [
+            ("bg", (original.bg, resolved.bg)),
+            ("surface", (original.surface, resolved.surface)),
+            ("surface_alt", (original.surface_alt, resolved.surface_alt)),
+            ("text", (original.text, resolved.text)),
+            ("dim", (original.dim, resolved.dim)),
+            ("accent", (original.accent, resolved.accent)),
+            ("accent_hover", (original.accent_hover, resolved.accent_hover)),
+            ("accent_text", (original.accent_text, resolved.accent_text)),
+            ("ok", (original.ok, resolved.ok)),
+            ("warn", (original.warn, resolved.warn)),
+            ("err", (original.err, resolved.err)),
+            ("border", (original.border, resolved.border)),
+        ] {
+            assert!(approx(orig, res), "{field}: {orig:?} vs {res:?}");
+        }
+        // Forma del hex: #RRGGBB mayúsculas.
+        assert_eq!(cfg.bg.as_deref(), Some("#17181C"));
+    }
+
+    #[test]
+    fn presets_tienen_cinco_opciones_y_cubre_oscuro_y_claro() {
+        reset_palette_override();
+        assert_eq!(PalettePreset::ALL.len(), 5);
+        // Cada preset tiene una rama DARK y una LIGHT definidas.
+        for preset in PalettePreset::ALL {
+            let _ = preset.colors(true);
+            let _ = preset.colors(false);
+        }
+    }
+
+    #[test]
+    fn aviso_de_contraste_segun_wcag() {
+        reset_palette_override();
+        // Texto casi-del-mismo-color que el fondo: contraste < 3:1 → ilegible.
+        let bajo = Color::from_rgb(0.5, 0.5, 0.5);
+        let fondo = Color::from_rgb(0.5, 0.5, 0.5);
+        let ratio = contrast_ratio(bajo, fondo);
+        assert!(ratio < 3.0, "mismo gris sobre mismo gris debe ser <3:1, midió {ratio:.2}");
+        // Combinación legible: blanco sobre negro.
+        assert!(contrast_ratio(Color::WHITE, Color::BLACK) >= 3.0);
+        // Texto blanco sobre fondo blanco: contraste = 1:1 (ilegible).
+        assert!(contrast_ratio(Color::WHITE, Color::WHITE) < 3.0);
+        // Texto blanco sobre gris claro: contraste ≤ 3:1 → ILEGIBLE.
+        let gris_claro = rgb!(0xCC, 0xCC, 0xCC);
+        assert!(
+            contrast_ratio(Color::WHITE, gris_claro) < 3.0,
+            "blanco sobre #CCCCCC debe ser <3:1"
+        );
+    }
+
+    #[test]
+    fn contrast_ratio_dispara_aviso_si_text_o_dim_bajan_de_3_sobre_bg() {
+        reset_palette_override();
+        // Helper: la UI muestra el aviso cuando text o dim bajan de 3:1
+        // sobre el fondo de ventana (requisito UX: «no negociable»).
+        fn legible(c: Color, bg: Color) -> bool {
+            contrast_ratio(c, bg) >= 3.0
+        }
+        // Defaults: SIEMPRE legibles.
+        assert!(legible(DARK.text, DARK.bg));
+        assert!(legible(DARK.dim, DARK.bg));
+        assert!(legible(LIGHT.text, LIGHT.bg));
+        assert!(legible(LIGHT.dim, LIGHT.bg));
+        // Override patológico: texto casi del mismo color que el fondo.
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                text: Some("#181818".into()), // 1 px sobre el #17181C de DARK.bg → ilegible
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = resolve_palette(&cfg, true);
+        assert!(
+            !legible(p.text, p.bg),
+            "override patológico debe disparar el aviso"
+        );
     }
 }
