@@ -192,6 +192,35 @@ Formato del JSON (los 12 campos; los ausentes se mantienen al importar):
 }
 ```
 
+### 6.5 Imágenes propias (fondo y burbuja)
+
+Ajustes → Apariencia → Imágenes te deja poner tu propio material
+visual. Tres controles, todos opcionales e independientes:
+
+- **Fondo de la ventana**: una imagen estática (PNG/JPG/BMP/GIF/WebP/TIFF).
+  Se estira para cubrir la ventana. Si la ruta no existe o el formato no
+  es legible, la app cae al fondo del tema (no se queda en negro).
+- **Sprite de la burbuja**: una imagen estática que reemplaza el círculo
+  violeta de la burbuja flotante. La grabación (punto blanco) y la
+  corrección IA (etiqueta «IA») siguen visibles encima del sprite.
+- **Frames de animación**: una carpeta con PNGs (u otro formato
+  soportado) que se conmutan como animación de la burbuja. Orden
+  alfabético; wrap al llegar al último. La velocidad (FPS) la eliges tú
+  con un slider (1–30, default 12). Si la carpeta está vacía, la
+  animación cae al sprite estático o al render vectorial.
+
+**Cómo se eligen**: «Elegir…» abre el diálogo nativo de Windows. La
+ruta se guarda en `config.json` y se aplica al instante. «Quitar»
+limpia la ruta y vuelve al aspecto original. Si el archivo se borra o
+se renombra después, la app lo detecta al renderizar y cae al
+fallback sin crash.
+
+**GIF/WebP animado nativo**: iced 0.13 no lo soporta (verificado en
+`docs/UI-FUTURA.md` §7). Por eso la animación aquí se hace por
+conmutación de frames PNG: pierdes la comodidad de un único fichero,
+pero ganas control fino sobre la velocidad y el orden. Cuando la app
+migre a iced 0.14+, este control se reemplazará por el widget nativo.
+
 ## 7. Si algo va mal
 
 - **El texto no se inyecta en la app**: comprueba que «Autoinyectar» está

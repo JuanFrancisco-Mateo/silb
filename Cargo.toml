@@ -7,8 +7,11 @@ edition = "2021"
 license = "MIT"
 
 [dependencies]
-# UI nativa (sin webview)
-iced = { version = "0.13", features = ["tokio"] }
+# UI nativa (sin webview). `image` activa el widget `image` de iced y el
+# crate `image` 0.25 (que ya está en Cargo.lock) para que el usuario pueda
+# poner su propia imagen de fondo y un sprite o animación por frames en la
+# burbuja flotante (ver src/custom_image.rs).
+iced = { version = "0.13", features = ["tokio", "image"] }
 
 # Multi-ventana de Iced (la burbuja flotante es una segunda ventana del mismo
 # proceso, con vista y tema propios por window::Id)

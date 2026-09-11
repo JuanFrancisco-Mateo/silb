@@ -348,6 +348,35 @@ pub enum Message {
     /// procesa en `update` para leer + parsear + fundir con la paleta actual
     /// (preservando lo que el usuario no esté reemplazando explícitamente).
     PaletteImportPicked(Option<std::path::PathBuf>),
+    // ── Personalización III (R7): imágenes del usuario ────────────────
+    /// Abrir el diálogo nativo para elegir la imagen de fondo de la
+    /// ventana principal. `rfd::FileDialog` filtra por extensiones de
+    /// imagen comunes; el resultado (ruta o None si se canceló) vuelve
+    /// como `BgImagePicked`.
+    BgImageBrowse,
+    /// Resultado del diálogo de imagen de fondo. `Some(path)` = persistir
+    /// y aplicar; `None` = usuario canceló (no es error).
+    BgImagePicked(Option<String>),
+    /// Vacía la ruta de la imagen de fondo (vuelve al fondo del tema).
+    BgImageClear,
+    /// Abrir el diálogo para elegir el sprite estático de la burbuja.
+    BubbleImageBrowse,
+    BubbleImagePicked(Option<String>),
+    BubbleImageClear,
+    /// Abrir el diálogo para elegir la carpeta con los frames de la
+    /// animación de la burbuja. `rfd::FileDialog::pick_folder`.
+    BubbleFramesBrowse,
+    BubbleFramesPicked(Option<String>),
+    BubbleFramesClear,
+    /// FPS de la animación de la burbuja (1..=30). Sale del slider; el
+    /// getter ya clampea.
+    BubbleFpsChanged(u32),
+    /// Tick del reloj de animación: avanza el frame del sprite de la
+    /// burbuja. Se envía desde la subscription de `iced::time::every`
+    /// solo cuando la animación está activa (carpeta de frames
+    /// resuelta + FPS > 0). El Poll lo ignora si la animación está
+    /// parada.
+    AnimationTick,
     // ── Burbuja flotante (overlay) ────────────────────────────────────────
     /// La ventana de la burbuja ya fue creada (aplicar WS_EX_NOACTIVATE).
     BubbleOpened(window::Id),
@@ -460,6 +489,12 @@ pub struct WhisprApp {
     /// Captura del ratón + seguimiento de la posición durante el arrastre.
     bubble_drag: Option<crate::bubble::BubbleDrag>,
     pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
+    /// Índice de frame actual en la animación por conmutación de la
+    /// burbuja. Avanzado por `Message::AnimationTick` (enviado desde la
+    /// suscripción de `iced::time::every` cuando hay frames resueltos).
+    /// `0` por defecto; se reinicia al elegir una nueva carpeta de
+    /// frames (ver `Message::BubbleFramesPicked`).
+    bubble_frame_index: usize,
     // ── Corrección IA (LLM) ────────────────────────────────────────────────
     llm_rx: Option<Receiver<Result<LlmResult, String>>>,
     /// Instrucción en ruta al LLM (con el target capturado): si la llamada
@@ -624,6 +659,7 @@ impl WhisprApp {
             bubble_right: crate::bubble::RightDragState::default(),
             bubble_drag: None,
             pending_inject: false,
+            bubble_frame_index: 0,
             llm_rx: None,
             llm_pending: None,
             pending_diff: None,
@@ -1487,6 +1523,48 @@ impl WhisprApp {
 
     pub(crate) fn bubble_style(&self) -> crate::config::BubbleStyle {
         self.config.bubble_style()
+    }
+
+    /// Frames resueltos para la animación por conmutación de la
+    /// burbuja. `None` si la carpeta no está configurada, no existe o
+    /// no contiene imágenes soportadas (en cuyo caso el render usa el
+    /// sprite estático si está, o el render vectorial). Cachear el
+    /// resultado de `resolve_frames` aquí evita I/O repetido durante
+    /// el redibujo (que ocurre ~60 Hz).
+    pub(crate) fn bubble_frames_resolved(
+        &self,
+    ) -> Option<Vec<std::path::PathBuf>> {
+        crate::custom_image::resolve_frames(self.config.bubble_frames_path())
+    }
+
+    /// Frame actual del sprite animado (la ruta del fichero a mostrar).
+    /// Si la animación está parada o el índice quedó fuera de rango,
+    /// devuelve el primer frame (determinista). Es el método que usa
+    /// `bubble.rs` para pintar el sprite sin tocar el `Message` ni el
+    /// `update`.
+    pub(crate) fn bubble_current_frame(&self) -> Option<std::path::PathBuf> {
+        let frames = self.bubble_frames_resolved()?;
+        if frames.is_empty() {
+            return None;
+        }
+        let idx = self
+            .bubble_frame_index
+            .min(frames.len().saturating_sub(1));
+        Some(frames[idx].clone())
+    }
+
+    /// Ruta del sprite estático de la burbuja (validada). `None` si no
+    /// hay imagen propia (en ese caso se pinta el render vectorial).
+    pub(crate) fn bubble_static_image(
+        &self,
+    ) -> Option<std::path::PathBuf> {
+        crate::custom_image::resolve_static(self.config.bubble_image_path())
+    }
+
+    /// Ruta de la imagen de fondo de la ventana principal (validada).
+    /// `None` = fondo del tema.
+    pub(crate) fn bg_image(&self) -> Option<std::path::PathBuf> {
+        crate::custom_image::resolve_static(self.config.bg_image_path())
     }
 
     fn dictionary_snapshot(&self) -> Vec<DictionaryEntry> {
@@ -2446,6 +2524,161 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            // ── Personalización III: imágenes del usuario ──────────────────
+            Message::BgImageBrowse => Task::perform(
+                async {
+                    rfd::FileDialog::new()
+                        .set_title("Elegir imagen de fondo de la ventana")
+                        .add_filter("Imagen", &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff"])
+                        .pick_file()
+                        .map(|p| p.to_string_lossy().into_owned())
+                },
+                Message::BgImagePicked,
+            ),
+            Message::BgImagePicked(path) => {
+                if let Some(p) = path {
+                    // Validación mínima al elegir: la ruta existe y la
+                    // extensión está soportada. Si falla, NO se persiste
+                    // (la app sigue con el fondo anterior o el del tema) y
+                    // se avisa por log para diagnóstico.
+                    let pb = std::path::PathBuf::from(&p);
+                    if crate::custom_image::is_loadable(&pb) {
+                        self.config.bg_image_path = Some(p);
+                        self.save_config();
+                        crate::log!(
+                            "ui",
+                            "imagen de fondo aplicada: {}",
+                            self.config.bg_image_path.as_deref().unwrap_or("")
+                        );
+                    } else {
+                        crate::log!(
+                            "ui",
+                            "imagen de fondo rechazada: «{}» no existe o \
+                             no es una imagen soportada; se conserva la \
+                             configuración anterior",
+                            pb.display()
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::BgImageClear => {
+                self.config.bg_image_path = None;
+                self.save_config();
+                Task::none()
+            }
+            Message::BubbleImageBrowse => Task::perform(
+                async {
+                    rfd::FileDialog::new()
+                        .set_title("Elegir sprite estático de la burbuja")
+                        .add_filter("Imagen", &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff"])
+                        .pick_file()
+                        .map(|p| p.to_string_lossy().into_owned())
+                },
+                Message::BubbleImagePicked,
+            ),
+            Message::BubbleImagePicked(path) => {
+                if let Some(p) = path {
+                    let pb = std::path::PathBuf::from(&p);
+                    if crate::custom_image::is_loadable(&pb) {
+                        self.config.bubble_image_path = Some(p);
+                        self.save_config();
+                        // Sprite estático siempre presente desactiva la
+                        // animación por frames: si el usuario quiere
+                        // animación debe limpiar el sprite antes de elegir
+                        // una carpeta de frames.
+                        crate::log!(
+                            "ui",
+                            "sprite de burbuja aplicado: {}",
+                            self.config.bubble_image_path.as_deref().unwrap_or("")
+                        );
+                    } else {
+                        crate::log!(
+                            "ui",
+                            "sprite de burbuja rechazado: «{}»",
+                            pb.display()
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::BubbleImageClear => {
+                self.config.bubble_image_path = None;
+                self.save_config();
+                Task::none()
+            }
+            Message::BubbleFramesBrowse => Task::perform(
+                async {
+                    rfd::FileDialog::new()
+                        .set_title("Elegir carpeta con los frames de la animación")
+                        .pick_folder()
+                        .map(|p| p.to_string_lossy().into_owned())
+                },
+                Message::BubbleFramesPicked,
+            ),
+            Message::BubbleFramesPicked(path) => {
+                if let Some(p) = path {
+                    // Validación temprana: si la carpeta está vacía o no
+                    // tiene frames, se rechaza (la app mostraría
+                    // igualmente el fallback, pero el usuario merece saber
+                    // que su selección no sirvió).
+                    if crate::custom_image::resolve_frames(Some(&p)).is_some() {
+                        self.config.bubble_frames_path = Some(p);
+                        // Reset del frame index por si la lista cambió de
+                        // tamaño entre dos elecciones distintas.
+                        self.bubble_frame_index = 0;
+                        self.save_config();
+                        crate::log!(
+                            "ui",
+                            "carpeta de frames aplicada: {}",
+                            self.config.bubble_frames_path.as_deref().unwrap_or("")
+                        );
+                    } else {
+                        crate::log!(
+                            "ui",
+                            "carpeta de frames rechazada: «{}» no contiene \
+                             imágenes soportadas",
+                            p
+                        );
+                    }
+                }
+                Task::none()
+            }
+            Message::BubbleFramesClear => {
+                self.config.bubble_frames_path = None;
+                self.bubble_frame_index = 0;
+                self.save_config();
+                Task::none()
+            }
+            Message::BubbleFpsChanged(fps) => {
+                // El slider emite 1..=30 (rango definido en la UI); el
+                // getter vuelve a clampear como red de seguridad.
+                let fps = fps.clamp(
+                    u32::from(crate::custom_image::MIN_BUBBLE_FPS),
+                    u32::from(crate::custom_image::MAX_BUBBLE_FPS),
+                ) as u8;
+                self.config.bubble_animation_fps = Some(fps);
+                self.save_config();
+                Task::none()
+            }
+            Message::AnimationTick => {
+                // Avanza el frame actual SOLO si la animación por frames
+                // está activa. Si el usuario la desactivó mientras el
+                // Poll seguía vivo, el índice se queda en 0 (la
+                // suscripción se desactiva en `subscription()` cuando no
+                // hay frames resueltos, pero por defensa también
+                // guardamos aquí).
+                if let Some(frames) = self.bubble_frames_resolved() {
+                    if !frames.is_empty() {
+                        self.bubble_frame_index =
+                            crate::custom_image::next_frame_index(
+                                self.bubble_frame_index,
+                                frames.len(),
+                            );
+                    }
+                }
+                Task::none()
+            }
             // ── Personalización II: paleta ─────────────────────────────────
             Message::PaletteFieldChanged(field, value) => {
                 // Buffer de input en vuelo (NO se persiste todavía; el
@@ -3194,7 +3427,21 @@ impl WhisprApp {
         // crearla desde `program::run`; la burbuja se identifica por el suyo).
         let opened = iced::window::open_events().map(Message::WindowOpened);
         let bubble = crate::bubble::bubble_events_subscription(self.bubble_id);
-        Subscription::batch([poll, closes, opened, bubble])
+        // Personalización III: si hay frames resueltos para animar la
+        // burbuja, añadimos un reloj que avanza el frame cada `1000/fps`
+        // ms. Cuando no hay animación activa, devolvemos
+        // `Subscription::none()` (iced detecta que la Subscription es
+        // vacía y no la crea): cero coste extra. El `interval_from_fps`
+        // cae al default si el FPS es inválido (defensa redundante: el
+        // getter ya clampea).
+        let animation = if self.bubble_frames_resolved().is_some() {
+            let fps = self.config.bubble_animation_fps();
+            let interval = crate::custom_image::interval_from_fps(fps);
+            iced::time::every(interval).map(|_| Message::AnimationTick)
+        } else {
+            Subscription::none()
+        };
+        Subscription::batch([poll, closes, opened, bubble, animation])
     }
 
     /// Tema iced según el modo resuelto (dark por defecto, auto sigue al
@@ -3522,14 +3769,50 @@ impl WhisprApp {
         // promesa de privacidad no desaparece al abrir un panel.
         content = content.push(footer);
 
-        container(content)
+        // Personalización III: si el usuario eligió una imagen de fondo,
+        // se apila DEBAJO del contenido como capa de fondo (stack con la
+        // columna actual). El contenedor usa `Length::Fill`/`Length::Fill`
+        // para ocupar la ventana completa; la imagen se estira para
+        // cubrir (ContentFit::Cover, el equivalente visual de un fondo
+        // CSS cover).
+        let has_bg_image = self.bg_image().is_some();
+
+        if has_bg_image {
+            // Stack: la imagen va al fondo, el contenido al frente.
+            // iced expone `Stack` como helper que apila elementos sin
+            // espaciado y respeta el orden de inserción: el primero es
+            // el del fondo, el último el del frente. El handle se
+            // construye dentro del match para que el borrow del PathBuf
+            // quede dentro del scope.
+            let path = self
+                .bg_image()
+                .expect("has_bg_image garantiza Some");
+            let handle = iced::widget::image::Handle::from_path(&path);
+            let bg_layer: Element<'_, Message> = container(
+                iced::widget::image(handle)
+                    .content_fit(iced::ContentFit::Cover)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .opacity(1.0),
+            )
             .width(Length::Fill)
             .height(Length::Fill)
-            .style(|th| container::Style {
-                background: Some(Background::Color(theme::tokens(&th).bg)),
-                ..Default::default()
-            })
-            .into()
+            .into();
+            let foreground: Element<'_, Message> = container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into();
+            iced::widget::stack![bg_layer, foreground].into()
+        } else {
+            container(content)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .style(|th| container::Style {
+                    background: Some(Background::Color(theme::tokens(&th).bg)),
+                    ..Default::default()
+                })
+                .into()
+        }
     }
 
     /// Pantalla de carga sencilla (requisito UX 09/09/2026): spinner
@@ -3990,8 +4273,166 @@ impl WhisprApp {
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
         );
+        // ── Personalización III: imágenes del usuario ──────────────────────
+        col = col.push(self.settings_section_images(t, fs));
         // ── Personalización II: paleta editable ─────────────────────────────
         col = col.push(self.settings_section_palette(t, fs));
+        col.into()
+    }
+
+    /// Bloque «Imágenes» dentro de Apariencia (Personalización III): el
+    /// usuario puede elegir su propia imagen de fondo de la ventana y un
+    /// sprite (estático o animado por frames) para la burbuja. Las rutas
+    /// se persisten como dato (nunca hardcoded); si fallan al renderizar,
+    /// el getter correspondiente devuelve `None` y la app pinta el
+    /// render por defecto (sin ventana negra ni crash). El botón
+    /// «Quitar» de cada control limpia la ruta en `config.json` y deja
+    /// el aspecto original.
+    fn settings_section_images(
+        &self,
+        t: &UiPalette,
+        fs: theme::FontSizes,
+    ) -> Element<'_, Message> {
+        let mut col = Column::new()
+            .spacing(theme::SPACE_2)
+            .width(Length::Fill);
+
+        // Título.
+        col = col.push(
+            text("Imágenes")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+        );
+        // Subtítulo: la regla del producto «toda opción técnica necesita
+        // label claro + ayuda corta». Lo técnico vive detrás de
+        // «Ajustes avanzados», pero aquí la regla también aplica
+        // (el formato de frames es una decisión de producto, no de
+        // motor).
+        col = col.push(
+            text("Tu propia imagen de fondo y un sprite (estático o \
+                  animado por frames) para la burbuja. Si el archivo \
+                  no existe o no es una imagen soportada, la app \
+                  vuelve al aspecto original.")
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+
+        // ── Imagen de fondo ──────────────────────────────────────────────
+        let bg_label = match self.config.bg_image_path() {
+            Some(p) => p,
+            None => "(sin imagen; usando el fondo del tema)",
+        };
+        col = col.push(
+            row![
+                text("Fondo de la ventana")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(160.0)),
+                button(text("Elegir…").size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::BgImageBrowse)
+                    .style(theme::secondary),
+                button(text("Quitar").size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::BgImageClear)
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text(format!("Ruta actual: {}", bg_label))
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+
+        // ── Sprite estático de la burbuja ─────────────────────────────────
+        let bubble_img_label = match self.config.bubble_image_path() {
+            Some(p) => p,
+            None => "(sin sprite; usando el render vectorial)",
+        };
+        col = col.push(
+            row![
+                text("Sprite de la burbuja")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(160.0)),
+                button(text("Elegir…").size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::BubbleImageBrowse)
+                    .style(theme::secondary),
+                button(text("Quitar").size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::BubbleImageClear)
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text(format!("Ruta actual: {}", bubble_img_label))
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+
+        // ── Carpeta de frames (animación) ─────────────────────────────────
+        let frames_label = match self.config.bubble_frames_path() {
+            Some(p) => p,
+            None => "(sin carpeta; solo sprite estático)",
+        };
+        col = col.push(
+            row![
+                text("Frames de animación")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .width(Length::Fixed(160.0)),
+                button(text("Elegir carpeta…").size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::BubbleFramesBrowse)
+                    .style(theme::secondary),
+                button(text("Quitar").size(fs.xxs))
+                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                    .on_press(Message::BubbleFramesClear)
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text(format!("Ruta actual: {}", frames_label))
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+
+        // ── FPS de la animación ───────────────────────────────────────────
+        let fps = self.config.bubble_animation_fps();
+        col = col.push(
+            row![
+                text(format!("Velocidad (FPS): {fps}"))
+                    .size(fs.sm)
+                    .color(t.text)
+                    .width(Length::Fixed(180.0)),
+                slider(
+                    u32::from(crate::custom_image::MIN_BUBBLE_FPS)
+                        ..=u32::from(crate::custom_image::MAX_BUBBLE_FPS),
+                    u32::from(fps),
+                    Message::BubbleFpsChanged,
+                )
+                .step(1u32)
+                .width(Length::Fill),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(iced::Alignment::Center),
+        );
+        col = col.push(
+            text("Frames por segundo de la animación de la burbuja \
+                  (rango 1–30; el default es 12). Cambiar la ruta o \
+                  pulsar «Quitar» detiene la animación sin coste extra.")
+                .size(fs.xxs)
+                .color(t.dim),
+        );
+
         col.into()
     }
 
