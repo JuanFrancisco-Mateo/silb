@@ -3782,43 +3782,44 @@ impl WhisprApp {
         // para ocupar la ventana completa; la imagen se estira para
         // cubrir (ContentFit::Cover, el equivalente visual de un fondo
         // CSS cover).
-        let has_bg_image = self.bg_image().is_some();
-
-        if has_bg_image {
-            // Stack: la imagen va al fondo, el contenido al frente.
-            // iced expone `Stack` como helper que apila elementos sin
-            // espaciado y respeta el orden de inserción: el primero es
-            // el del fondo, el último el del frente. El handle se
-            // construye dentro del match para que el borrow del PathBuf
-            // quede dentro del scope.
-            let path = self
-                .bg_image()
-                .expect("has_bg_image garantiza Some");
-            let handle = iced::widget::image::Handle::from_path(&path);
-            let bg_layer: Element<'_, Message> = container(
-                iced::widget::image(handle)
-                    .content_fit(iced::ContentFit::Cover)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .opacity(1.0),
-            )
-            .width(Length::Fill)
-            .height(Length::Fill)
-            .into();
-            let foreground: Element<'_, Message> = container(content)
+        // H7a (QA 24/09/2026): una sola consulta a `bg_image()`, resuelta con
+        // `match`. Antes se preguntaba `is_some()` y luego se hacía
+        // `expect(...)`: dos validaciones del fichero (la ruta se revalida en
+        // cada llamada, así que puede desaparecer entre ambas) y un pánico
+        // evitable en código de UI.
+        match self.bg_image() {
+            Some(path) => {
+                // Stack: la imagen va al fondo, el contenido al frente.
+                // iced expone `Stack` como helper que apila elementos sin
+                // espaciado y respeta el orden de inserción: el primero es
+                // el del fondo, el último el del frente. El handle se
+                // construye dentro del brazo para que el borrow del PathBuf
+                // quede dentro del scope.
+                let handle = iced::widget::image::Handle::from_path(&path);
+                let bg_layer: Element<'_, Message> = container(
+                    iced::widget::image(handle)
+                        .content_fit(iced::ContentFit::Cover)
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                        .opacity(1.0),
+                )
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .into();
-            iced::widget::stack![bg_layer, foreground].into()
-        } else {
-            container(content)
+                let foreground: Element<'_, Message> = container(content)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into();
+                iced::widget::stack![bg_layer, foreground].into()
+            }
+            None => container(content)
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .style(|th| container::Style {
                     background: Some(Background::Color(theme::tokens(&th).bg)),
                     ..Default::default()
                 })
-                .into()
+                .into(),
         }
     }
 
