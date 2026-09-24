@@ -1,7 +1,9 @@
 # Guía de usuario — Whispr Open
 
-Versión: 0.2.0 · Última revisión: 11/09/2026 (sección 6: paleta editable)
-y la especificación `docs/CORRECCION-VOZ.md`.
+Versión: 0.2.0 · Última revisión: 24/09/2026 (secciones de la ventana
+principal, imágenes propias que ya no se pierden al vaciar Descargas y dónde
+vive el registro; antes: 11/09/2026, paleta editable) y la especificación
+`docs/CORRECCION-VOZ.md`.
 
 Whispr Open es un dictado por voz local: hablas, la app transcribe y escribe
 el texto donde tengas el cursor. Además, **corrige lo que dices mientras
@@ -20,11 +22,18 @@ texto con el teclado, **la nota se puede editar a mano** antes de mandarla.
    - `● Corrección IA: activa · <modelo>` (verde) → listo para corregir.
    - `○ Corrección IA: inactiva — <motivo>` (ámbar) → dicta igual, sin corregir.
    - `○ Corrección IA: apagada` (gris) → actívala en Ajustes → Corrección IA.
+4. La ventana tiene **dos secciones** en la barra de arriba: **Dictado** (el
+   día a día: micrófono, medidor y tu nota) y **Ajustes** (todo lo demás). La
+   sección activa va marcada con `●`. Cambiar de sección no pierde nada de lo
+   que hayas escrito.
 
 ## 2. Dictar
 
 1. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar). Suena un «clic».
-2. Habla con naturalidad.
+2. Habla con naturalidad. La barra del micrófono pinta el **pico** del turno
+   (`pico N%`) y te avisa si algo va mal ahí mismo: «pico al máximo: el
+   micrófono puede estar saturando» o «sin señal del micrófono: ¿está
+   silenciado?».
 3. Vuelve a pulsar **Ctrl+Shift+D** (o suelta). La app transcribe y escribe el
    texto en la app que tenga el foco (Slack, Notion, VS Code…).
 
@@ -209,11 +218,15 @@ visual. Tres controles, todos opcionales e independientes:
   con un slider (1–30, default 12). Si la carpeta está vacía, la
   animación cae al sprite estático o al render vectorial.
 
-**Cómo se eligen**: «Elegir…» abre el diálogo nativo de Windows. La
-ruta se guarda en `config.json` y se aplica al instante. «Quitar»
-limpia la ruta y vuelve al aspecto original. Si el archivo se borra o
-se renombra después, la app lo detecta al renderizar y cae al
-fallback sin crash.
+**Cómo se eligen**: «Elegir…» abre el diálogo nativo de Windows. Al elegir,
+la app **copia** tu material a su carpeta de datos
+(`%APPDATA%\whispr-open\assets\`) y guarda ESA copia en `config.json`: puedes
+vaciar Descargas sin perder la personalización (antes se guardaba la ruta al
+fichero original y la personalización desaparecía en silencio). Se aplica al
+instante. «Quitar» limpia la ruta y vuelve al aspecto original. Si la ruta
+guardada ya no existe (por ejemplo, borraste la copia a mano), la app lo dice
+en el registro («asset desaparecido, cayendo al tema»), cae al fallback sin
+crash y no deja la ruta muerta en la configuración.
 
 **GIF/WebP animado nativo**: iced 0.13 no lo soporta (verificado en
 `docs/UI-FUTURA.md` §7). Por eso la animación aquí se hace por
@@ -233,7 +246,11 @@ migre a iced 0.14+, este control se reemplazará por el widget nativo.
   micro y sigue dictando: no hace falta reiniciar.
 - **Quieres ver qué ha decidido la app**: el log está en
   `%APPDATA%\whispr-open\whispr-open.log` (registra clasificación y enrutado de
-  cada turno).
+  cada turno) y **Ajustes → Avanzado** te muestra su ruta exacta con un botón
+  «Abrir carpeta del registro». El fichero **rota solo**: al pasar de 1 MB
+  pasa a `.1` y el `.1` a `.2`, así que nunca crece sin límite. Las trazas muy
+  detalladas (cada movimiento al arrastrar la burbuja) solo se escriben si
+  arrancas la app con la variable de entorno `WHISPR_DEBUG=1`.
 - **La corrección consume memoria**: el toggle de Corrección IA apagado
   descarga el modelo LLM de la RAM/VRAM. Al salir de la app, el server LLM se
   cierra solo (no queda ningún `llama-server.exe` huérfano).

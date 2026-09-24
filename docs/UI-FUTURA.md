@@ -3,8 +3,10 @@
 Base: el skill `app-design-2026` (tendencias 2026 + checklist). El rediseño
 (commit `962342c`, `src/theme.rs`) implementó gran parte del lenguaje visual y
 la fase R3/R4 (commit `7f2109e`) cerró varios puntos de esta lista. Este
-documento lista lo que faltaba y marca el **estado real a 11/09/2026**: lo
-hecho queda anotado con su commit, y lo que sigue abierto, como pendiente.
+documento lista lo que faltaba y marca el **estado real a 11/09/2026**, con la
+revisión del **24/09/2026** (`da2a622` log, `2ef87bb` assets, `e5fc6ed`
+secciones de la ventana principal): lo hecho queda anotado con su commit, y lo
+que sigue abierto, como pendiente.
 
 ---
 
@@ -15,7 +17,9 @@ hecho queda anotado con su commit, y lo que sigue abierto, como pendiente.
   `#7C6CFF`, grid de 8 px, radios 8–10 px, escala tipográfica. Cero literales
   mágicos en la UI.
 - **Calm design / progressive disclosure**: una pantalla, una pregunta (¿qué
-  estoy dictando?); ajustes ocultos tras botón, no barra llena.
+  estoy dictando?) y **dos secciones** en la ventana principal (Dictado /
+  Ajustes) con la MISMA barra de pestañas que el panel; nada de barras
+  densas ni de pestañas decorativas (`e5fc6ed`).
 - **Feedback doble** del estado del micro (color + punto + label), medidor de
   nivel, sin animaciones decorativas, sin glassmorphism/neumorphism.
 - **Estado primario visible**: el hero del micrófono es el elemento central.
@@ -45,15 +49,23 @@ y poder **corregirla/anularla**.
   calculado en código y tests que exigen ≥ 4.5:1 en texto y ≥ 3:1 en
   gráficos; el acento de texto (`ACCENT_TEXT`) es más claro que el de marca
   para cumplirlo.
-- **PENDIENTE** — **`prefers-reduced-motion`**: Iced lo respeta parcialmente
-  vía winit; falta auditar que ningún micro-feedback fuerce animación.
+- **AUDITADO** (`e5fc6ed`) — **`prefers-reduced-motion`**: no hay ninguna
+  animación decorativa que auditar. Las dos únicas suscripciones temporales
+  son el latido de estado de 100 ms (drena canales, no pinta movimiento) y la
+  animación por frames de la burbuja, que es material del PROPIO usuario y
+  solo se agenda si tiene frames configurados (sin frames,
+  `Subscription::none()`). No queda micro-feedback forzado; si algún día se
+  añade un fundido, debe mirar antes la preferencia del sistema (winit).
 - **HECHO donde el framework lo permite** (`7f2109e`) — **Foco de teclado
   visible**: el `text_input` y el editor dibujan un anillo de acento de 1.5 px
   al enfocar. En botón, checkbox y `pick_list` iced 0.13 no expone estado de
   foco (limitación del framework, anotada en `NOTA-SESION.md`).
-- **PENDIENTE** — **Targets táctiles**: el círculo del hero y la burbuja
-  (56 px) ya son grandes; los botones secundarios («Copiar», «Limpiar») pueden
-  necesitar más área de hit.
+- **HECHO** (`e5fc6ed`) — **Targets táctiles**: el círculo del hero y la
+  burbuja (56 px) ya eran grandes; los botones secundarios («Copiar»,
+  «Limpiar», «Inyectar», «Deshacer», «Descartar») pasan por
+  `secondary_button()` con el padding táctil del tema
+  (`SECONDARY_BUTTON_PADDING`, pasos del grid de 8 px) en vez del padding por
+  defecto de iced.
 
 ### P2 — Estado y feedback fino — PARCIAL
 
@@ -62,9 +74,12 @@ y poder **corregirla/anularla**.
   (`friendly_download_error` y compañía); el detalle técnico queda en el log.
 - **HECHO** (R4) — **Estado de descarga del modelo**: además del porcentaje se
   muestra el tamaño (`descargado / total`) y el tiempo restante estimado.
-- **PENDIENTE** — **Nivel de micrófono con marcador de pico**: el pico ya se
-  calcula y se expone desde `AudioCapture`, pero la UI aún dibuja una barra
-  plana; falta el indicador de pico (mic saturado o mudo).
+- **HECHO** (`e5fc6ed`) — **Nivel de micrófono con marcador de pico**: la
+  barra dibuja el PICO que retiene `AudioCapture`, así que se etiqueta
+  (`pico N%`) y avisa cuando aporta algo: «sin señal del micrófono: ¿está
+  silenciado?» pasado un margen de turno (`MIC_SILENT_SECS`) y «pico al
+  máximo: el micrófono puede estar saturando» al saturar. Función pura
+  `mic_peak_hint` + colores del tema (claro y oscuro) y texto, no solo color.
 
 ### P3 — Personalidad (opcional, bajo coste)
 
@@ -102,10 +117,47 @@ de GIF/WebP), pero el usuario puede poner su propio material visual:
 
 Las rutas se persisten como dato en `config.json`
 (`bg_image_path`, `bubble_image_path`, `bubble_frames_path`,
-`bubble_animation_fps`). Validación en el render: si la ruta
-desaparece o cambia a formato no soportado, el getter
-correspondiente devuelve `None` y la UI pinta el aspecto original sin
-crash.
+`bubble_animation_fps`). Desde el 24/09/2026 (`2ef87bb`, H4) lo que se
+guarda NO es el fichero que eligió el usuario, sino una **copia** en
+`%APPDATA%\whispr-open\assets\`: si vacía Descargas, la personalización
+sigue ahí (antes desaparecía en silencio). Una config vieja con ruta externa
+que siga existiendo se respeta tal cual; solo al arrancar se quitan del
+config las rutas que ya no apuntan a nada. Validación en el render: si el
+getter correspondiente no resuelve, la UI pinta el aspecto original sin crash
+y queda «asset desaparecido, cayendo al tema» en el log.
+
+## 8. Secciones de la VENTANA PRINCIPAL (HECHO, `e5fc6ed`)
+
+«Ajustes ya tiene pestañas» pasó a ser «la app entera tiene pestañas». La
+ventana principal reorganiza lo que ya existía en dos secciones — **Dictado**
+(chip del corrector, hero del micro, nota, acciones del turno) y **Ajustes**
+(el panel completo) — con la MISMA barra de pestañas (`src/ui/tabs.rs`,
+`tab_bar`), que ahora comparten Ajustes y la ventana:
+
+- Una sola implementación de pestañas: la activa con `●` + fondo + borde de
+  acento; el texto siempre visible (no se identifica solo por color).
+- No hay estado nuevo: la sección es una LECTURA de `settings_open`
+  (`WhisprApp::window_section`), así que los handlers de Ajustes y su
+  persistencia no cambian. Abrir «Ajustes» abre el panel; volver a «Dictado»
+  lo cierra y deja la pestaña General.
+- La cabecera se queda solo con el conmutador de tema; el botón «Ajustes ▸»
+  desaparece.
+- Todo color/espacio/radio sale de `src/theme.rs` (cero literales nuevos).
+
+## 9. Registro con rotación (H2, `da2a622`)
+
+El log había llegado a 1,14 MB / 11.102 líneas, de las que el 79% (8.761) eran
+una línea por evento de ratón del arrastre de la burbuja. Ahora:
+
+- **Rotación por tamaño** en `src/log.rs` (std, sin dependencias): al pasar de
+  ~1 MB el fichero pasa a `.1` y el `.1` a `.2` (dos históricos), y se sigue
+  escribiendo en el nuevo.
+- Las trazas de alta frecuencia (`drag start` / `drag target`) son de nivel
+  **debug**: solo se escriben con `WHISPR_DEBUG=1`. Por defecto el log no se
+  ensucia.
+- El arranque registra la **ruta del log**, y **Ajustes → Avanzado** la
+  muestra con un botón «Abrir carpeta del registro» (además del estado de
+  `WHISPR_DEBUG` y de dónde viven las imágenes propias).
 
 ## 3. Cómo aplicar (patrones Iced, del propio skill)
 
