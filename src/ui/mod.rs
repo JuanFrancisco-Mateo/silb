@@ -7,6 +7,8 @@
 //! - `settings_handlers`: manejadores de los mensajes de Ajustes (dictado,
 //!   corrección IA, nota, listas, apariencia, paleta y motor de voz).
 //! - `recording`: grabación, transcripción y ajustes del dictado.
+//! - `poll`: tick del `Poll` (canales de los hilos, plazos y animación).
+pub mod poll;
 pub mod recording;
 pub mod settings;
 pub mod settings_handlers;
