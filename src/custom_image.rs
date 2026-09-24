@@ -33,7 +33,10 @@
 //! se cachea el Handle porque un reload rápido en caliente (al
 //! re-elegir el mismo fichero) debe reflejarse inmediatamente.
 
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 /// Extensiones aceptadas para imágenes (en minúsculas, sin el punto).
 /// Coincide con las capacidades del crate `image` 0.25 (PNG, JPEG,
@@ -194,6 +197,264 @@ pub fn tick_to_instant(_instant: std::time::Instant) -> std::time::Instant {
     // lógica del tick (p. ej. detectar stalls) sin tocar el message
     // dispatch de la UI.
     std::time::Instant::now()
+}
+
+/// ── Persistencia de assets (H4 del QA 24/09/2026) ─────────────────────────
+///
+/// El usuario elegía el fondo o los frames desde `Descargas` y el config
+/// guardaba ESA ruta: al vaciar Descargas, la personalización desaparecía sin
+/// avisar. Ahora `import_asset` / `import_frames_dir` copian el material a
+/// `%APPDATA%/whispr-open/assets/` y el config guarda la copia, así que sobrevive
+/// a limpiezas de carpetas temporales.
+///
+/// Compatibilidad: una config vieja con una ruta externa que SIGUE existiendo
+/// se respeta tal cual (no se migra a la fuerza); solo se limpia del config
+/// cuando apunta a algo que ya no está (`sanitize_config_assets`).
+
+/// Carpeta de datos de la app (`%APPDATA%/whispr-open/`): la misma que usa el
+/// log (`crate::log::log_dir`), para que un backup de esa carpeta lo incluya todo.
+pub fn app_data_dir() -> PathBuf {
+    crate::log::log_dir()
+}
+
+/// Carpeta donde la app guarda copia de los assets elegidos por el usuario:
+/// `%APPDATA%/whispr-open/assets/`.
+pub fn assets_dir() -> PathBuf {
+    app_data_dir().join("assets")
+}
+
+/// Rutas ya avisadas como desaparecidas: el render valida la ruta en cada
+/// frame (~60 Hz), así que el aviso se emite UNA vez por ruta y no inunda el log.
+static WARNED_MISSING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
+
+/// Registra «asset desaparecido, cayendo al tema» una sola vez por
+/// `kind`+`path`. Devuelve `true` si esta llamada fue la que avisó (los tests
+/// lo usan para comprobar la deduplicación).
+pub fn warn_missing_once(kind: &str, path: &str) -> bool {
+    let key = format!("{kind}|{path}");
+    let mut guard = WARNED_MISSING.lock().unwrap_or_else(|e| e.into_inner());
+    let seen = guard.get_or_insert_with(HashSet::new);
+    if !seen.insert(key) {
+        return false;
+    }
+    drop(guard);
+    crate::log!(
+        "custom",
+        "asset desaparecido, cayendo al tema: {kind} «{path}»"
+    );
+    true
+}
+
+/// Como [`resolve_static`] pero avisa (una vez por ruta) cuando la ruta
+/// configurada ya no sirve. Es lo que deben usar los getters de la UI: el
+/// fallback deja de ser silencioso.
+pub fn resolve_static_or_warn(kind: &str, path: Option<&str>) -> Option<PathBuf> {
+    let resolved = resolve_static(path);
+    if resolved.is_none() {
+        if let Some(p) = path.map(str::trim).filter(|s| !s.is_empty()) {
+            warn_missing_once(kind, p);
+        }
+    }
+    resolved
+}
+
+/// Como [`resolve_frames`] pero avisa (una vez por ruta) cuando la carpeta
+/// configurada ya no existe o se quedó sin imágenes.
+pub fn resolve_frames_or_warn(kind: &str, path: Option<&str>) -> Option<Vec<PathBuf>> {
+    let resolved = resolve_frames(path);
+    if resolved.is_none() {
+        if let Some(p) = path.map(str::trim).filter(|s| !s.is_empty()) {
+            warn_missing_once(kind, p);
+        }
+    }
+    resolved
+}
+
+/// Comprueba una ruta de imagen configurada:
+///
+/// - Ruta vacía o en blanco → `None` (desactivado a propósito, sin aviso).
+/// - Ruta utilizable → `Some(ruta original, sin tocar)`.
+/// - Ruta que ya no existe / formato no soportado → aviso al log + `None`
+///   (el caller la borra del config: no se deja una ruta muerta).
+pub fn sanitize_static_path(kind: &str, path: Option<&str>) -> Option<String> {
+    let trimmed = path.map(str::trim).filter(|s| !s.is_empty())?;
+    if is_loadable(Path::new(trimmed)) {
+        return Some(trimmed.to_string());
+    }
+    warn_missing_once(kind, trimmed);
+    None
+}
+
+/// Igual que [`sanitize_static_path`] para la carpeta de frames: se mantiene
+/// solo si el directorio existe y contiene al menos una imagen soportada.
+pub fn sanitize_frames_path(kind: &str, path: Option<&str>) -> Option<String> {
+    let trimmed = path.map(str::trim).filter(|s| !s.is_empty())?;
+    if resolve_frames(Some(trimmed)).is_some() {
+        return Some(trimmed.to_string());
+    }
+    warn_missing_once(kind, trimmed);
+    None
+}
+
+/// Sanea las tres rutas de personalización de `config` (H4). Devuelve `true`
+/// si algo cambió — el caller decide persistir el config.
+///
+/// No migra rutas que siguen funcionando (compatibilidad con configs viejas):
+/// solo quita las que apuntan a ficheros/carpetas inexistentes, después de
+/// decirlo en el log.
+pub fn sanitize_config_assets(config: &mut crate::config::Config) -> bool {
+    let mut changed = false;
+
+    let bg = sanitize_static_path("imagen de fondo de la ventana", config.bg_image_path.as_deref());
+    if bg != config.bg_image_path {
+        config.bg_image_path = bg;
+        changed = true;
+    }
+    let sprite = sanitize_static_path("sprite de la burbuja", config.bubble_image_path.as_deref());
+    if sprite != config.bubble_image_path {
+        config.bubble_image_path = sprite;
+        changed = true;
+    }
+    let frames = sanitize_frames_path(
+        "carpeta de frames de la burbuja",
+        config.bubble_frames_path.as_deref(),
+    );
+    if frames != config.bubble_frames_path {
+        config.bubble_frames_path = frames;
+        changed = true;
+    }
+
+    if changed {
+        crate::log!(
+            "custom",
+            "rutas de personalización inexistentes eliminadas del config (la app usa el tema)"
+        );
+    }
+    changed
+}
+
+/// Nombre de fichero para la copia de un asset: componente saneado + huella
+/// corta de la ruta de origen, para que dos ficheros homónimos de carpetas
+/// distintas no se pisen.
+fn asset_file_name(src: &Path) -> Option<String> {
+    let stem = src.file_stem()?.to_string_lossy().into_owned();
+    let ext = src.extension()?.to_string_lossy().to_ascii_lowercase();
+    let stem = sanitize_component(&stem);
+    let fingerprint = short_fingerprint(&[&src.to_string_lossy()]);
+    Some(format!("{stem}-{fingerprint}.{ext}"))
+}
+
+/// Nombre de carpeta para la copia de una secuencia de frames: nombre saneado
+/// + huella de la lista de frames (contar distintos juegos de frames de una
+/// misma carpeta no debe pisarse).
+fn frames_dir_name(src: &Path, frames: &[PathBuf]) -> Option<String> {
+    let stem = sanitize_component(&src.file_name()?.to_string_lossy());
+    let mut parts: Vec<String> = vec![src.to_string_lossy().into_owned()];
+    parts.push(frames.len().to_string());
+    for f in frames {
+        if let Some(n) = f.file_name() {
+            parts.push(n.to_string_lossy().into_owned());
+        }
+    }
+    let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+    let fingerprint = short_fingerprint(&refs);
+    Some(format!("{stem}-{fingerprint}"))
+}
+
+/// Componente de ruta seguro (sin separadores ni caracteres de control): solo
+/// alfanuméricos, `-`, `_` y `.`; el resto pasa a `_`. Vacío → `asset`.
+fn sanitize_component(raw: &str) -> String {
+    let cleaned: String = raw
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(48)
+        .collect();
+    let cleaned = cleaned.trim_matches(['_', '.']).to_string();
+    if cleaned.is_empty() {
+        "asset".to_string()
+    } else {
+        cleaned
+    }
+}
+
+/// Huella estable de 8 dígitos hexadecimales de los datos dados. `DefaultHasher`
+/// no es criptográfico: aquí solo sirve para no colisionar nombres de copia.
+fn short_fingerprint(parts: &[&str]) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for p in parts {
+        p.hash(&mut hasher);
+        0xffu8.hash(&mut hasher);
+    }
+    format!("{:08x}", (hasher.finish() & 0xffff_ffff) as u32)
+}
+
+/// ¿`path` vive dentro del directorio `dir`? Ambos se comparan
+/// canonicalizados: en Windows `canonicalize` devuelve el prefijo `\\?\`, que
+/// rompería un `starts_with` contra la ruta escrita a mano.
+fn path_inside(dir: &Path, path: &Path) -> bool {
+    let dir_abs = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+    path.starts_with(&dir_abs)
+}
+
+/// Copia `src` (una imagen utilizable) a `base` y devuelve la copia.
+/// `None` si `src` no es una imagen soportada o si la copia falla.
+///
+/// Si `src` YA vive dentro de `base` se devuelve tal cual (re-elegir la copia
+/// no genera copias anidadas).
+pub fn import_asset_into(base: &Path, src: &Path) -> Option<PathBuf> {
+    if !is_loadable(src) {
+        return None;
+    }
+    let src_abs = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
+    if path_inside(base, &src_abs) {
+        return Some(src_abs);
+    }
+    std::fs::create_dir_all(base).ok()?;
+    let dest = base.join(asset_file_name(&src_abs)?);
+    if !path_inside(&dest, &src_abs) {
+        std::fs::copy(&src_abs, &dest).ok()?;
+    }
+    Some(dest)
+}
+
+/// Copia `src` a `%APPDATA%/whispr-open/assets/` y devuelve la copia (la ruta
+/// que debe quedar en config).
+pub fn import_asset(src: &Path) -> Option<PathBuf> {
+    import_asset_into(&assets_dir(), src)
+}
+
+/// Copia la carpeta de frames `src` a `<base>/frames/<nombre>-<huella>` y
+/// devuelve la copia. `None` si `src` no es una carpeta con imágenes
+/// soportadas o si la copia falla.
+pub fn import_frames_dir_into(base: &Path, src: &Path) -> Option<PathBuf> {
+    let frames = resolve_frames(Some(&src.to_string_lossy()))?;
+    let src_abs = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
+    if path_inside(base, &src_abs) {
+        return Some(src_abs);
+    }
+    std::fs::create_dir_all(base).ok()?;
+    let dest = base.join("frames").join(frames_dir_name(&src_abs, &frames)?);
+    if !path_inside(&dest, &src_abs) {
+        std::fs::create_dir_all(&dest).ok()?;
+        for frame in &frames {
+            let name = frame.file_name()?;
+            std::fs::copy(frame, dest.join(name)).ok()?;
+        }
+    }
+    Some(dest)
+}
+
+/// Copia la carpeta de frames `src` a `%APPDATA%/whispr-open/assets/frames/`
+/// y devuelve la copia (la ruta que debe quedar en config).
+pub fn import_frames_dir(src: &Path) -> Option<PathBuf> {
+    import_frames_dir_into(&assets_dir(), src)
 }
 
 #[cfg(test)]
@@ -402,5 +663,243 @@ mod tests {
         // rango.
         assert!(DEFAULT_BUBBLE_FPS >= MIN_BUBBLE_FPS);
         assert!(DEFAULT_BUBBLE_FPS <= MAX_BUBBLE_FPS);
+    }
+
+    // ── H4: persistencia de assets y aviso de asset desaparecido ──────────
+
+    /// Directorio temporal propio de cada test (se borra al salir).
+    struct TempDir(PathBuf);
+
+    impl TempDir {
+        fn new(tag: &str) -> TempDir {
+            let dir = std::env::temp_dir().join(format!(
+                "whispr_asset_{tag}_{}_{}",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0)
+            ));
+            std::fs::create_dir_all(&dir).expect("crear temp dir");
+            TempDir(dir)
+        }
+
+        fn join(&self, name: &str) -> PathBuf {
+            self.0.join(name)
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn write_png(path: &Path) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, b"\x89PNG\r\n\x1a\n").unwrap();
+    }
+
+    #[test]
+    fn assets_dir_cuelga_de_appdata() {
+        let dir = assets_dir();
+        assert!(dir.to_string_lossy().contains("whispr-open"));
+        assert!(dir.to_string_lossy().contains("assets"));
+        // Misma carpeta raíz que el log: un backup de %APPDATA%/whispr-open
+        // se lleva config, log y assets.
+        assert!(dir.starts_with(app_data_dir()));
+        assert_eq!(app_data_dir(), crate::log::log_dir());
+    }
+
+    #[test]
+    fn import_asset_copia_fuera_de_downloads_y_sanea_el_nombre() {
+        let src_dir = TempDir::new("src");
+        let base = TempDir::new("base");
+        let src = src_dir.join("mi fondo (1).PNG");
+        write_png(&src);
+
+        let dest = import_asset_into(&base.0, &src).expect("copia");
+        assert!(dest.starts_with(&base.0), "la copia vive en la base: {dest:?}");
+        assert!(dest.is_file(), "la copia existe en disco");
+        assert_eq!(
+            std::fs::read(&dest).unwrap(),
+            std::fs::read(&src).unwrap(),
+            "contenido idéntico al original"
+        );
+        // El nombre pierde espacios, paréntesis y mayúsculas de extensión.
+        let name = dest.file_name().unwrap().to_string_lossy().into_owned();
+        assert!(!name.contains(' '), "nombre saneado: {name}");
+        assert!(!name.contains('('), "nombre saneado: {name}");
+        assert!(name.ends_with(".png"), "extensión normalizada: {name}");
+
+        // Re-elegir el mismo fichero no genera una copia nueva (mismo destino).
+        let again = import_asset_into(&base.0, &src).expect("copia repetida");
+        assert_eq!(dest, again, "el destino es estable");
+        let copias = std::fs::read_dir(&base.0)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .count();
+        assert_eq!(copias, 1, "no se acumulan copias del mismo asset");
+    }
+
+    #[test]
+    fn import_asset_de_la_propia_carpeta_no_anida_copias() {
+        let base = TempDir::new("base");
+        let ya_dentro = base.join("fondo-1234abcd.png");
+        write_png(&ya_dentro);
+        let devuelto = import_asset_into(&base.0, &ya_dentro).expect("ruta válida");
+        let copias = std::fs::read_dir(&base.0)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.path().is_file())
+            .count();
+        assert_eq!(copias, 1, "re-elegir la copia no crea otra copia");
+        assert!(devuelto.is_file());
+    }
+
+    #[test]
+    fn import_asset_rechaza_lo_que_no_es_imagen() {
+        let src_dir = TempDir::new("src");
+        let base = TempDir::new("base");
+        let txt = src_dir.join("notas.txt");
+        std::fs::write(&txt, b"hola").unwrap();
+        assert_eq!(import_asset_into(&base.0, &txt), None);
+        assert_eq!(import_asset_into(&base.0, &src_dir.join("nada.png")), None);
+        assert!(!base.0.join("nada.png").exists());
+    }
+
+    #[test]
+    fn import_frames_dir_copia_la_secuencia_completa() {
+        let src_dir = TempDir::new("frames_src");
+        let base = TempDir::new("base");
+        let frames = src_dir.join("frames");
+        for name in ["a.png", "b.png", "c.png"] {
+            write_png(&frames.join(name));
+        }
+        // Un fichero que NO es imagen: no debe copiarse como frame.
+        std::fs::write(frames.join("leeme.txt"), b"txt").unwrap();
+
+        let dest = import_frames_dir_into(&base.0, &frames).expect("copia");
+        assert!(dest.starts_with(base.0.join("frames")), "vive en frames/: {dest:?}");
+        // La copia es una carpeta de frames utilizable por el render.
+        let resueltos = resolve_frames(Some(&dest.to_string_lossy())).expect("frames copiados");
+        assert_eq!(resueltos.len(), 3, "solo imágenes soportadas");
+        // El .txt no se copia.
+        assert!(!dest.join("leeme.txt").exists());
+        // Re-elegir la copia no anida otra carpeta: devuelve la que ya existe.
+        let again = import_frames_dir_into(&base.0, &dest).expect("ruta ya copiada");
+        assert_eq!(
+            std::fs::canonicalize(&dest).unwrap(),
+            std::fs::canonicalize(&again).unwrap(),
+            "re-elegir la copia devuelve la misma carpeta"
+        );
+        let subcarpetas = std::fs::read_dir(base.0.join("frames"))
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .count();
+        assert_eq!(subcarpetas, 1, "no se anidan copias de la copia");
+    }
+
+    #[test]
+    fn sanitize_static_path_limpia_lo_muerto_y_respeta_lo_vivo() {
+        let dir = TempDir::new("sanitize");
+        let vivo = dir.join("fondo.png");
+        write_png(&vivo);
+        let viva_s = vivo.to_string_lossy().into_owned();
+
+        // Ruta que existe: se devuelve tal cual (sin migrar a la fuerza).
+        assert_eq!(
+            sanitize_static_path("fondo de ventana", Some(&viva_s)),
+            Some(viva_s.clone())
+        );
+        // Vacía / en blanco: desactivado a propósito, sin ruido.
+        assert_eq!(sanitize_static_path("fondo de ventana", Some("   ")), None);
+        assert_eq!(sanitize_static_path("fondo de ventana", None), None);
+        // Desaparecida: se limpia.
+        let muerta = dir.join("borrado.png").to_string_lossy().into_owned();
+        assert_eq!(sanitize_static_path("fondo de ventana", Some(&muerta)), None);
+        // Y con extensión no soportada, también.
+        let txt = dir.join("foto.txt").to_string_lossy().into_owned();
+        assert_eq!(sanitize_static_path("fondo de ventana", Some(&txt)), None);
+    }
+
+    #[test]
+    fn sanitize_frames_path_exige_directorio_con_imagenes() {
+        let dir = TempDir::new("frames_sanitize");
+        let con_frames = dir.join("frames");
+        write_png(&con_frames.join("a.png"));
+        let viva = con_frames.to_string_lossy().into_owned();
+        assert_eq!(sanitize_frames_path("frames de la burbuja", Some(&viva)), Some(viva));
+
+        let vacia = dir.join("vacia");
+        std::fs::create_dir_all(&vacia).unwrap();
+        let vacia_s = vacia.to_string_lossy().into_owned();
+        assert_eq!(sanitize_frames_path("frames de la burbuja", Some(&vacia_s)), None);
+
+        let inexistente = dir.join("no_existe").to_string_lossy().into_owned();
+        assert_eq!(
+            sanitize_frames_path("frames de la burbuja", Some(&inexistente)),
+            None
+        );
+    }
+
+    #[test]
+    fn el_aviso_de_asset_desaparecido_solo_sale_una_vez_por_ruta() {
+        // Clave única por test para no chocar con el estado estático global.
+        let kind = "test-dedupe";
+        let path = format!("C:\\nope\\desaparecido_{}.png", std::process::id());
+        assert!(warn_missing_once(kind, &path), "el primer aviso se emite");
+        assert!(
+            !warn_missing_once(kind, &path),
+            "el segundo ya no (el render valida ~60 veces/s)"
+        );
+        // Y `resolve_*_or_warn` no resuelve, pero avisa una sola vez.
+        assert_eq!(resolve_static_or_warn(kind, Some(&path)), None);
+        assert!(
+            !warn_missing_once(kind, &path),
+            "tras el getter sigue sin repetirse"
+        );
+    }
+
+    #[test]
+    fn sanitize_config_assets_quita_rutas_muertas_y_conserva_las_vivas() {
+        let dir = TempDir::new("config_assets");
+        let vivo = dir.join("fondo.png");
+        write_png(&vivo);
+        let viva_s = vivo.to_string_lossy().into_owned();
+        let muerta = dir.join("borrado.png").to_string_lossy().into_owned();
+        let frames_dir = dir.join("frames_viejos");
+        std::fs::create_dir_all(&frames_dir).unwrap();
+        let frames_s = frames_dir.to_string_lossy().into_owned();
+
+        let mut config = crate::config::Config::default();
+        config.bg_image_path = Some(viva_s.clone());
+        config.bubble_image_path = Some(muerta.clone());
+        config.bubble_frames_path = Some(frames_s.clone());
+
+        let changed = sanitize_config_assets(&mut config);
+        assert!(changed, "se limpiaron rutas muertas");
+        assert_eq!(config.bg_image_path.as_deref(), Some(viva_s.as_str()));
+        assert_eq!(config.bubble_image_path, None);
+        assert_eq!(config.bubble_frames_path, None);
+
+        // Un config ya sano no se toca (segunda pasada: idempotente).
+        assert!(
+            !sanitize_config_assets(&mut config),
+            "sin cambios no hay nada que persistir"
+        );
+    }
+
+    #[test]
+    fn config_sin_assets_no_se_toca() {
+        let mut config = crate::config::Config::default();
+        assert!(
+            !sanitize_config_assets(&mut config),
+            "todo desactivado = nada que limpiar"
+        );
+        assert_eq!(config.bg_image_path, None);
     }
 }

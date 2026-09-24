@@ -569,13 +569,30 @@ impl WhisprApp {
                     // se avisa por log para diagnóstico.
                     let pb = std::path::PathBuf::from(&p);
                     if crate::custom_image::is_loadable(&pb) {
-                        self.config.bg_image_path = Some(p);
-                        self.save_config();
-                        crate::log!(
-                            "ui",
-                            "imagen de fondo aplicada: {}",
-                            self.config.bg_image_path.as_deref().unwrap_or("")
-                        );
+                        // H4 (QA 24/09/2026): el asset se COPIA a
+                        // `%APPDATA%/whispr-open/assets/` y en config queda esa
+                        // copia. Antes se guardaba la ruta de origen (p. ej.
+                        // Descargas) y al vaciarla la personalización
+                        // desaparecía sin avisar.
+                        if let Some(dest) = crate::custom_image::import_asset(&pb) {
+                            crate::log!(
+                                "ui",
+                                "imagen de fondo aplicada: «{}» → copia persistente «{}»",
+                                pb.display(),
+                                dest.display()
+                            );
+                            self.config.bg_image_path =
+                                Some(dest.to_string_lossy().into_owned());
+                            self.save_config();
+                        } else {
+                            crate::log!(
+                                "ui",
+                                "no se pudo copiar la imagen de fondo «{}» a la \
+                                 carpeta de datos; se conserva la configuración \
+                                 anterior",
+                                pb.display()
+                            );
+                        }
                     } else {
                         crate::log!(
                             "ui",
@@ -607,17 +624,31 @@ impl WhisprApp {
                 if let Some(p) = path {
                     let pb = std::path::PathBuf::from(&p);
                     if crate::custom_image::is_loadable(&pb) {
-                        self.config.bubble_image_path = Some(p);
-                        self.save_config();
                         // Sprite estático siempre presente desactiva la
                         // animación por frames: si el usuario quiere
                         // animación debe limpiar el sprite antes de elegir
                         // una carpeta de frames.
-                        crate::log!(
-                            "ui",
-                            "sprite de burbuja aplicado: {}",
-                            self.config.bubble_image_path.as_deref().unwrap_or("")
-                        );
+                        // H4: el sprite se copia a la carpeta de datos y se
+                        // guarda la COPIA en config (Descargas puede vaciarse).
+                        if let Some(dest) = crate::custom_image::import_asset(&pb) {
+                            crate::log!(
+                                "ui",
+                                "sprite de burbuja aplicado: «{}» → copia persistente «{}»",
+                                pb.display(),
+                                dest.display()
+                            );
+                            self.config.bubble_image_path =
+                                Some(dest.to_string_lossy().into_owned());
+                            self.save_config();
+                        } else {
+                            crate::log!(
+                                "ui",
+                                "no se pudo copiar el sprite de burbuja «{}» a la \
+                                 carpeta de datos; se conserva la configuración \
+                                 anterior",
+                                pb.display()
+                            );
+                        }
                     } else {
                         crate::log!(
                             "ui",
@@ -648,16 +679,23 @@ impl WhisprApp {
                     // tiene frames, se rechaza (la app mostraría
                     // igualmente el fallback, pero el usuario merece saber
                     // que su selección no sirvió).
-                    if crate::custom_image::resolve_frames(Some(&p)).is_some() {
-                        self.config.bubble_frames_path = Some(p);
+                    // H4 (QA 24/09/2026): la secuencia se COPIA a
+                    // `%APPDATA%/whispr-open/assets/frames/` y en config queda la
+                    // copia (vaciando la carpeta original no se pierde la
+                    // animación).
+                    let pb = std::path::PathBuf::from(&p);
+                    if let Some(dest) = crate::custom_image::import_frames_dir(&pb) {
                         // Reset del frame index por si la lista cambió de
                         // tamaño entre dos elecciones distintas.
                         self.bubble_frame_index = 0;
+                        self.config.bubble_frames_path =
+                            Some(dest.to_string_lossy().into_owned());
                         self.save_config();
                         crate::log!(
                             "ui",
-                            "carpeta de frames aplicada: {}",
-                            self.config.bubble_frames_path.as_deref().unwrap_or("")
+                            "carpeta de frames aplicada: «{}» → copia persistente «{}»",
+                            pb.display(),
+                            dest.display()
                         );
                     } else {
                         crate::log!(
