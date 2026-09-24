@@ -2095,9 +2095,10 @@ impl WhisprApp {
     }
 
     /// Dibuja la ventana principal: pantalla de carga hasta que el arranque
-    /// termine; después, header + chip de corrección IA + hero del
-    /// micrófono + nota editable + acciones + feedback + pie de confianza
-    /// (o el panel de Ajustes en la zona central).
+    /// termine; después, header + barra de SECCIONES (Dictado / Ajustes) y el
+    /// cuerpo de la sección activa: «Dictado» reúne chip de corrección IA,
+    /// hero del micrófono, nota editable, acciones y feedback; «Ajustes» es el
+    /// panel de siempre. El pie de confianza va siempre.
     pub fn view(&self) -> Element<'_, Message> {
         // R7-II: instala la paleta resuelta en el thread-local de `theme` para
         // que los style closures de los widgets (`primary`, `secondary`, …)
