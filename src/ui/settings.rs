@@ -1287,94 +1287,86 @@ impl WhisprApp {
     /// este lands de aterrizaje es la casa natural de futuras opciones
     /// avanzadas (p. ej. reset completo, importación/export global,
     /// diagnóstico del server LLM). En fases siguientes puede poblarse.
-    pub(crate) fn settings_section_advanced(&self, _t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
-        container(
-            column![
-                text("Avanzado")
-                    .size(fs.lg)
-                    .font(Font::MONOSPACE)
-                    .color(crate::theme::tokens(&self.theme()).text),
-                text(
-                    "Aquí irán las opciones que no encajan en General, \
-                     Apariencia, Dictado o Corrección IA. De momento no \
-                     hay ninguna."
-                )
-                .size(fs.sm),
+    pub(crate) fn settings_section_advanced(
+        &self,
+        t: &UiPalette,
+        fs: theme::FontSizes,
+    ) -> Element<'_, Message> {
+        // H2 (QA 24/09/2026): el usuario no encontraba el log. Su ruta se
+        // muestra aquí y hay un botón que abre la carpeta en el Explorador
+        // (también viven ahí config.json y assets/).
+        let log_path = crate::log::log_path();
+        let debug_on = crate::log::debug_enabled();
+        let registro = column![
+            text("Dónde queda todo")
+                .size(fs.lg)
+                .font(Font::MONOSPACE)
+                .color(t.text),
+            text("Registro de la app")
+                .size(fs.sm)
+                .color(t.dim),
+            text(log_path.to_string_lossy().into_owned()).size(fs.sm),
+            text(
+                "Rota solo: al pasar de 1 MB el fichero pasa a .1 y el .1 a \
+                 .2, así que nunca crece sin límite. Las trazas de alta \
+                 frecuencia (cada movimiento al arrastrar la burbuja) solo se \
+                 escriben con la variable de entorno WHISPR_DEBUG=1."
+            )
+            .size(fs.sm),
+            row![
+                button(ui_text("Abrir carpeta del registro"))
+                    .on_press(Message::OpenLogFolder)
+                    .padding(theme::SECONDARY_BUTTON_PADDING)
+                    .style(theme::primary),
+                text(if debug_on {
+                    "WHISPR_DEBUG activado: el registro es detallado"
+                } else {
+                    "WHISPR_DEBUG desactivado"
+                })
+                .size(fs.xxs)
+                .color(if debug_on { t.accent_text } else { t.dim }),
             ]
-            .spacing(theme::SPACE_3),
-        )
-        .width(Length::Fill)
-        .into()
+            .spacing(theme::SPACE_3)
+            .align_y(iced::Alignment::Center),
+            text("Imágenes y animación propias").size(fs.sm).color(t.dim),
+            text(
+                "Al elegir una imagen o una carpeta de frames en Apariencia, \
+                 la app guarda una COPIA en la carpeta de arriba (assets/): \
+                 puedes vaciar Descargas sin perder tu personalización."
+            )
+            .size(fs.sm),
+        ]
+        .spacing(theme::SPACE_3);
+
+        container(registro)
+            .width(Length::Fill)
+            .into()
     }
 }
 
 /// Fila de pestañas del panel de Ajustes (R7 — Personalización I).
-/// Renderiza los cinco botones de sección; la activa lleva un prefijo `●`,
-/// fondo destacado y borde inferior, para que sea identificable sin
-/// depender solo del color (requisito 4 de R7: accesibilidad).
+///
+/// Los botones y su estilo viven ahora en [`crate::ui::tabs`], compartidos con
+/// las secciones de la ventana principal (mismo lenguaje en las dos
+/// superficies, un solo sitio que mantener). La activa lleva el prefijo `●`,
+/// fondo destacado y borde de acento: se identifica sin depender solo del
+/// color (requisito 4 de R7: accesibilidad).
 fn settings_tab_bar(
     active: SettingsSection,
     _t: &UiPalette,
     fs: theme::FontSizes,
 ) -> Element<'static, Message> {
-    let mut bar = row![].spacing(theme::SPACE_1).align_y(iced::Alignment::Center);
-    for section in SettingsSection::ALL {
-        let is_active = section == active;
-        let label = if is_active {
-            format!("● {}", section.label())
-        } else {
-            section.label().to_string()
-        };
-        let tab: Element<'static, Message> = if is_active {
-            // Estilo «activo»: fondo surface_alt + texto accent + borde
-            // inferior de 2 px. El borde inferior se simula con un
-            // container con padding inferior grueso más un Border
-            // inferior 2 px. iced 0.13 no soporta borde por lado, así
-            // que el «borde inferior» va en el `Border` regular (que
-            // iced pinta en los 4 lados) — pero al ser del color del
-            // fondo el efecto visual es solo el del borde grueso
-            // uniforme, que también comunica «pestaña activa» sin
-            // depender del color.
-            button(text(label).size(fs.sm))
-                .on_press(Message::SettingsSectionSelected(section))
-                .style(|th, status| {
-                    let tokens = theme::tokens(th);
-                    let bg = match status {
-                        iced::widget::button::Status::Hovered
-                        | iced::widget::button::Status::Pressed => tokens.surface,
-                        _ => tokens.surface_alt,
-                    };
-                    let border_color = match status {
-                        iced::widget::button::Status::Active => tokens.accent,
-                        _ => tokens.border,
-                    };
-                    iced::widget::button::Style {
-                        background: Some(iced::Background::Color(bg)),
-                        text_color: tokens.accent_text,
-                        border: iced::Border {
-                            color: border_color,
-                            width: 2.0,
-                            radius: Radius::from(theme::RADIUS_SM),
-                        },
-                        shadow: Default::default(),
-                    }
-                })
-                .into()
-        } else {
-            button(text(label).size(fs.sm))
-                .on_press(Message::SettingsSectionSelected(section))
-                .style(theme::secondary)
-                .into()
-        };
-        bar = bar.push(tab);
-    }
-    container(bar)
-        .width(Length::Fill)
-        .padding(iced::Padding {
-            top: 0.0,
-            bottom: theme::SPACE_1 as f32,
-            left: 0.0,
-            right: 0.0,
-        })
-        .into()
+    crate::ui::tabs::tab_bar(
+        SettingsSection::ALL
+            .iter()
+            .map(|section| {
+                crate::ui::tabs::Tab::new(
+                    section.label(),
+                    Message::SettingsSectionSelected(*section),
+                    *section == active,
+                )
+            })
+            .collect(),
+        fs,
+    )
 }

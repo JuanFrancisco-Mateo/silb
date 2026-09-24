@@ -10,9 +10,11 @@
 //! - `bubble`: eventos de la ventana de la burbuja flotante.
 //! - `window_tray`: ventana principal, bandeja y arranque.
 //! - `poll`: tick del `Poll` (canales de los hilos, plazos y animación).
+//! - `tabs`: barra de pestañas compartida (Ajustes y ventana principal).
 pub mod bubble;
 pub mod poll;
 pub mod recording;
 pub mod settings;
 pub mod settings_handlers;
+pub mod tabs;
 pub mod window_tray;
