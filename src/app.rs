@@ -5669,12 +5669,18 @@ fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicB
 }
 
 /// Carga el contexto whisper del modelo con UNA recuperación ante fichero
-/// dañado: si el modelo está en disco pero no carga (truncado por una copia
-/// manual, descarga antigua interrumpida, corrupción), se borra, se
+/// dañado: si el modelo está en disco pero es un GGML inválido (truncado por
+/// una copia manual, descarga antigua interrumpida, corrupción), se borra, se
 /// re-descarga limpio (con eventos de progreso) y se re-intenta una única
 /// vez. Sin esto, «Reintentar» de la pantalla de error volvía a entregar el
 /// mismo fichero dañado una y otra vez: bucle infinito de fallo (requisito
 /// de robustez del arranque).
+///
+/// H3 (QA 24/09/2026): un fichero VÁLIDO que no carga (error de CUDA/memoria
+/// al crear el contexto) NO se toca. Antes se borraba siempre que `preload`
+/// fallara, así que con la red caída el dictado entraba en un bucle infinito
+/// («Dns Failed: resolve failure», 47 veces en el log del 24/09): el usuario
+/// perdía un modelo bueno y cada intento volvía a intentar descargarlo.
 fn preload_with_recovery(model: Model, tx: &Sender<StartupEvent>) -> Result<(), String> {
     let first = crate::transcribe::preload(model);
     if first.is_ok() {
@@ -5687,16 +5693,54 @@ fn preload_with_recovery(model: Model, tx: &Sender<StartupEvent>) -> Result<(), 
         // re-descargar no arregla nada, se reporta el error tal cual.
         return Err(err);
     }
+    if !discard_corrupt_model(&path) {
+        // El fichero es un GGML sano: el fallo es de carga (GPU/memoria) y
+        // re-descargar no arregla nada. Se conserva el modelo local y se
+        // propaga el fallo de carga (el usuario lo ve en la pantalla de
+        // error; aquí no se borra nada ni se toca la red).
+        return Err(format!(
+            "{err} (el fichero del modelo en disco es válido: se conserva el modelo local)"
+        ));
+    }
+    let redownload = crate::transcribe::ensure_model(model, |downloaded, total| {
+        let _ = tx.send(StartupEvent::WhisperProgress { downloaded, total });
+    });
+    // Fallo al re-descargar (p. ej. sin red): mensaje clasificado y accionable
+    // en español para la UI y detalle técnico en el log (dice qué se hizo).
+    redownload.map_err(|error| download_failure_message(model, &error))?;
+    crate::transcribe::preload(model)
+}
+
+/// ¿Hay que reciclar (borrar para re-descargar) el fichero del modelo que
+/// acaba de fallar al cargar? Devuelve `true` SOLO si el fichero existe y no
+/// es un GGML válido: en ese caso lo borra y lo deja dicho en el log.
+///
+/// Devuelve `false` —sin tocar nada— cuando no hay fichero o cuando el
+/// fichero es válido: en ambos casos el fallo es ambiental (GPU, memoria…) y
+/// borrar el modelo bueno solo provoca el bucle de descarga de H3.
+///
+/// La validez la decide `transcribe::model_file_is_valid` (única fuente de
+/// verdad del formato GGML), no esta función.
+fn discard_corrupt_model(path: &std::path::Path) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    if crate::transcribe::model_file_is_valid(path) {
+        crate::log!(
+            "startup",
+            "el modelo en {} no se pudo cargar, pero el fichero es un GGML válido \
+             (fallo de GPU/memoria, no del fichero): se conserva el modelo local, sin re-descargar",
+            path.display()
+        );
+        return false;
+    }
     crate::log!(
         "startup",
-        "el modelo {} está en disco pero no carga: se borra y re-descarga por si está truncado",
-        model.id()
+        "el modelo en {} no es un GGML válido (truncado o corrupto): se borra y se re-descarga",
+        path.display()
     );
-    let _ = std::fs::remove_file(&path);
-    crate::transcribe::ensure_model(model, |downloaded, total| {
-        let _ = tx.send(StartupEvent::WhisperProgress { downloaded, total });
-    })?;
-    crate::transcribe::preload(model)
+    let _ = std::fs::remove_file(path);
+    true
 }
 
 /// Fase LLM del arranque (o del toggle de corrección IA en caliente):
@@ -5949,6 +5993,55 @@ mod tests {
             result.is_err(),
             "sin fichero en disco, cargar el contexto debe fallar con error"
         );
+    }
+
+    /// H3 (QA 24/09/2026): con el modelo YA en disco, un fallo de carga NO
+    /// puede borrarlo. Antes `preload_with_recovery` borraba el fichero ante
+    /// cualquier fallo de `preload` y re-descargaba: con la red caída eso es
+    /// un bucle infinito («Dns Failed: resolve failure», 47 veces en el log
+    /// del 24/09) que además destruía el modelo bueno del usuario. Un fichero
+    /// truncado/corrupto SÍ se recicla (única re-descarga legítima).
+    #[test]
+    fn h3_modelo_valido_se_conserva_y_el_truncado_se_recicla() {
+        let dir = std::env::temp_dir().join(format!("whispr-h3-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("dir temporal del test");
+
+        // GGML válido de mentira: magic de whisper.cpp y tamaño sobre el
+        // mínimo que exige `model_file_is_valid`.
+        let valido = dir.join("ggml-valido.bin");
+        let mut bytes = vec![0x6c, 0x6d, 0x67, 0x67];
+        bytes.resize(1024 * 1024 + 16, 0);
+        std::fs::write(&valido, &bytes).expect("escribir modelo válido");
+        assert!(crate::transcribe::model_file_is_valid(&valido));
+
+        assert!(
+            !discard_corrupt_model(&valido),
+            "un GGML válido no se recicla: el fallo fue de GPU/memoria, no del fichero"
+        );
+        assert!(
+            valido.is_file(),
+            "el modelo local se conserva (sin re-descarga, sin tocar la red)"
+        );
+
+        // Truncado (magic correcto pero tamaño por debajo del mínimo): se
+        // recicla para que la descarga lo reponga.
+        let truncado = dir.join("ggml-truncado.bin");
+        std::fs::write(&truncado, [0x6c, 0x6d, 0x67, 0x67, 0x00]).expect("escribir truncado");
+        assert!(!crate::transcribe::model_file_is_valid(&truncado));
+        assert!(
+            discard_corrupt_model(&truncado),
+            "un fichero truncado sí se recicla"
+        );
+        assert!(
+            !truncado.exists(),
+            "el fichero inválido se borra para poder re-descargarlo"
+        );
+
+        // Sin fichero no hay nada que reciclar: el fallo es ambiental.
+        assert!(!discard_corrupt_model(&dir.join("no-hay.bin")));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // ── Nota editable (requisito R3) ────────────────────────────────────
