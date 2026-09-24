@@ -134,7 +134,7 @@ enum LlmMode {
     InTurn,
 }
 
-struct LlmPending {
+pub(crate) struct LlmPending {
     mode: LlmMode,
     instruction: String,
     /// Último turno dictado que la instrucción pretende corregir
@@ -158,7 +158,7 @@ pub enum LlmResult {
     Redacted(String),
 }
 
-struct PendingDiff {
+pub(crate) struct PendingDiff {
     diff: crate::domain::corrective::Diff,
     target: String,
     force_inject: bool,
@@ -415,52 +415,52 @@ pub enum Message {
 /// y los canales de los hilos de trabajo. Es la única estructura con
 /// acceso a la UI; todo lo demás son módulos sin estado.
 pub struct WhisprApp {
-    config: Config,
-    status: Status,
-    transcript: String,
-    last_turn: String,
-    removed_fillers: Vec<String>,
-    last_correction: Option<String>,
-    session: CorrectionSession,
-    audio: Option<AudioCapture>,
-    input_devices: Vec<String>,
-    transcribe_rx: Option<Receiver<Result<String, String>>>,
-    hotkey_rx: crossbeam_channel::Receiver<GlobalHotKeyEvent>,
-    hotkey: HotkeyManager,
+    pub(crate) config: Config,
+    pub(crate) status: Status,
+    pub(crate) transcript: String,
+    pub(crate) last_turn: String,
+    pub(crate) removed_fillers: Vec<String>,
+    pub(crate) last_correction: Option<String>,
+    pub(crate) session: CorrectionSession,
+    pub(crate) audio: Option<AudioCapture>,
+    pub(crate) input_devices: Vec<String>,
+    pub(crate) transcribe_rx: Option<Receiver<Result<String, String>>>,
+    pub(crate) hotkey_rx: crossbeam_channel::Receiver<GlobalHotKeyEvent>,
+    pub(crate) hotkey: HotkeyManager,
     /// Etiqueta canónica del atajo global registrado («Ctrl+Shift+D» o el
     /// `shortcut` de config.json) para los textos de la UI.
-    hotkey_label: String,
+    pub(crate) hotkey_label: String,
     /// Placeholder del editor de la nota (vive como campo porque la API
     /// del editor pide un `&str` prestado por frame).
-    placeholder_text: String,
+    pub(crate) placeholder_text: String,
     /// Editor multilínea del transcript (requisito R3: la nota se puede
     /// corregir a mano). Es la vista viva del texto; `transcript` sigue
     /// siendo la fuente de verdad del pipeline (inyección, correcciones,
     /// copiado) y se sincroniza en cada acción de edición.
-    transcript_editor: text_editor::Content,
+    pub(crate) transcript_editor: text_editor::Content,
     /// Momento del último «Copiar» con éxito: alimenta la confirmación
     /// visual breve del botón («✓ Copiado», ~2 s, requisito R3).
-    copied_at: Option<std::time::Instant>,
+    pub(crate) copied_at: Option<std::time::Instant>,
     /// El botón «Limpiar» está armado esperando la confirmación explícita
     /// («Sí, borrar» / «No») — borrar la nota es destructivo y debe ser
     /// una acción deliberada (requisito R3). Caduca a los 5 s.
-    clear_armed: bool,
-    clear_armed_at: Option<std::time::Instant>,
+    pub(crate) clear_armed: bool,
+    pub(crate) clear_armed_at: Option<std::time::Instant>,
     /// Backup (transcript, last_turn) del último borrado, para «Deshacer
     /// borrado» (requisito R3: reversible).
-    cleared_backup: Option<(String, String)>,
+    pub(crate) cleared_backup: Option<(String, String)>,
     /// Velocidad de descarga estimada (EMA de bytes/s) para el tiempo
     /// restante del estado de descarga (requisito R4: MB + ETA, no solo %).
-    dl_rate: Option<f64>,
+    pub(crate) dl_rate: Option<f64>,
     /// Última muestra de progreso (bytes, instante) para la EMA.
-    dl_last: Option<(u64, std::time::Instant)>,
-    entry_from: String,
-    entry_to: String,
+    pub(crate) dl_last: Option<(u64, std::time::Instant)>,
+    pub(crate) entry_from: String,
+    pub(crate) entry_to: String,
     /// Muletilla en curso de escritura (Ajustes → Muletillas).
-    filler_input: String,
+    pub(crate) filler_input: String,
     /// Categoría seleccionada en el `pick_list` de muletillas.
-    filler_category: FillerCategory,
-    settings_open: bool,
+    pub(crate) filler_category: FillerCategory,
+    pub(crate) settings_open: bool,
     /// Pestaña activa dentro del panel de Ajustes (R7 — Personalización I).
     /// In-memory; NO se persiste en config.json (regla del producto: la
     /// última sección abierta solo se recuerda dentro de la sesión).
@@ -468,7 +468,7 @@ pub struct WhisprApp {
     /// al volver a abrirse el usuario aterrice en lo más común (requisito
     /// 5 de la tarea R7: «recordar la última sección solo en el estado de
     /// sesión»).
-    settings_section: SettingsSection,
+    pub(crate) settings_section: SettingsSection,
     // ── Personalización II (R7): buffers de input por campo de paleta ────────
     /// Texto en vuelo del input hex de cada campo de la paleta (lo que el
     /// usuario está tecleando, antes de pulsar «Aplicar» o pasar a otro
@@ -476,91 +476,91 @@ pub struct WhisprApp {
     /// con el hex actual de cada campo (o vacío si está en default). La razón
     /// de vivir aquí (vs. un `State` de iced): queremos comparar contra el
     /// valor persistido para no machacar lo que el usuario está escribiendo.
-    palette_inputs: std::collections::HashMap<theme::PaletteField, String>,
+    pub(crate) palette_inputs: std::collections::HashMap<theme::PaletteField, String>,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
-    bubble_id: Option<window::Id>,
-    bubble_pressed: bool, // botón izquierdo pulsado (graba)
-    bubble_last_pos: Point,
+    pub(crate) bubble_id: Option<window::Id>,
+    pub(crate) bubble_pressed: bool, // botón izquierdo pulsado (graba)
+    pub(crate) bubble_last_pos: Point,
     /// Escritura de configuración diferida para no bloquear la UI al teclear
     /// endpoint/model/key ni al mover sliders.
-    config_save_deadline: Option<std::time::Instant>,
+    pub(crate) config_save_deadline: Option<std::time::Instant>,
     /// Botón derecho: solo arrastra la burbuja (nunca graba ni abre nada).
-    bubble_right: crate::bubble::RightDragState,
+    pub(crate) bubble_right: crate::bubble::RightDragState,
     /// Captura del ratón + seguimiento de la posición durante el arrastre.
-    bubble_drag: Option<crate::bubble::BubbleDrag>,
-    pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
+    pub(crate) bubble_drag: Option<crate::bubble::BubbleDrag>,
+    pub(crate) pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
     /// Índice de frame actual en la animación por conmutación de la
     /// burbuja. Avanzado por `Message::AnimationTick` (enviado desde la
     /// suscripción de `iced::time::every` cuando hay frames resueltos).
     /// `0` por defecto; se reinicia al elegir una nueva carpeta de
     /// frames (ver `Message::BubbleFramesPicked`).
-    bubble_frame_index: usize,
+    pub(crate) bubble_frame_index: usize,
     // ── Corrección IA (LLM) ────────────────────────────────────────────────
-    llm_rx: Option<Receiver<Result<LlmResult, String>>>,
+    pub(crate) llm_rx: Option<Receiver<Result<LlmResult, String>>>,
     /// Instrucción en ruta al LLM (con el target capturado): si la llamada
     /// falla o el diff no aplica, se reinserta como dictado normal.
-    llm_pending: Option<LlmPending>,
+    pub(crate) llm_pending: Option<LlmPending>,
     /// Diff pendiente de confirmación. Conserva también el turno objetivo y
     /// el modo de inyección para que dictados posteriores no redirijan la
     /// corrección a otro texto.
-    pending_diff: Option<PendingDiff>,
+    pub(crate) pending_diff: Option<PendingDiff>,
     /// Undo de 1 nivel: (transcript, last_turn) antes de la última corrección.
-    undo_state: Option<(String, String)>,
+    pub(crate) undo_state: Option<(String, String)>,
     // ── Bandeja del sistema ───────────────────────────────────────────────
-    tray: Option<crate::tray::SystemTray>,
+    pub(crate) tray: Option<crate::tray::SystemTray>,
     /// Id de la ventana principal (se descubre con `window::open_events()`:
     /// iced no lo expone al crear la ventana desde `program::run`).
-    main_window_id: Option<window::Id>,
+    pub(crate) main_window_id: Option<window::Id>,
     /// Si la ventana principal está visible (controla el texto del menú).
-    main_visible: bool,
+    pub(crate) main_visible: bool,
     // ── Apariencia (tema auto + auto-ocultar de la burbuja) ──────────────
     /// Último estado conocido del tema del SISTEMA (AppsUseLightTheme). Se
     /// cachea aquí porque el view se redibuja ~10×/s y leer el registro en
     /// cada redibujo sería derrochador; el Poll lo refresca cada 5 s.
-    system_dark: bool,
+    pub(crate) system_dark: bool,
     /// Última vez que se refrescó `system_dark` (tema auto, cada 5 s).
-    last_theme_check: std::time::Instant,
+    pub(crate) last_theme_check: std::time::Instant,
     /// Cuándo auto-ocultar la burbuja (Some = timer armado tras un turno).
     /// `None` = visible sin plazo (Nunca o turno sin terminar).
-    bubble_hide_deadline: Option<std::time::Instant>,
+    pub(crate) bubble_hide_deadline: Option<std::time::Instant>,
     /// La burbuja está oculta por el auto-ocultar (evita re-enviar
     /// change_mode(Windowed) a una ventana que ya está visible).
-    bubble_hidden: bool,
+    pub(crate) bubble_hidden: bool,
     // ── Arranque (prerroll whisper + server LLM) ─────────────────────────
     /// Fase de arranque: Loading/Ready/Failed. Mientras no esté Ready la
     /// vista principal es solo la pantalla de carga y el dictado está
     /// bloqueado.
-    startup: StartupPhase,
+    pub(crate) startup: StartupPhase,
     /// Estado del corrector LLM tras el auto-inicio (gate del enrutado).
-    llm_status: LlmStatus,
+    pub(crate) llm_status: LlmStatus,
     /// Canal de eventos del hilo de arranque (se drena en el Poll; None al
     /// terminar o si no hay arranque en curso).
-    startup_rx: Option<Receiver<StartupEvent>>,
+    pub(crate) startup_rx: Option<Receiver<StartupEvent>>,
     /// Token de cancelación de la fase LLM en vuelo (toggle off en caliente):
     /// cuando el usuario apaga la corrección IA, la fase que esté lanzando o
     /// esperando al server debe abortar sin dejar modelo cargado. Cada fase
     /// nueva recibe su propio `AtomicBool` compartido con su hilo.
-    llm_phase_cancel: Option<Arc<AtomicBool>>,
+    pub(crate) llm_phase_cancel: Option<Arc<AtomicBool>>,
     /// Texto de la línea de estado de la pantalla de carga («Cargando modelo
     /// de voz…», «Preparando corrección IA…», …).
-    startup_label: String,
+    pub(crate) startup_label: String,
     /// Tick de animación del spinner de carga (lo avanza el Poll a 10 Hz).
-    startup_tick: u32,
+    pub(crate) startup_tick: u32,
     // ── Robustez de grabación ────────────────────────────────────────────
     /// Cuándo empezó el turno en curso (`None` = no se está grabando). El
     /// Poll lo vigila: al llegar a `audio::MAX_RECORDING_SECS` el turno se
     /// detiene solo (memoria acotada en dictados maratonianos) y el audio
     /// grabado hasta ahí se transcribe con normalidad.
-    recording_started: Option<std::time::Instant>,
+    pub(crate) recording_started: Option<std::time::Instant>,
     /// El turno en curso terminó porque el micrófono murió a mitad (el
     /// mensaje de `AudioDeviceLost`). La transcripción resultante se
     /// acompaña de un aviso claro en vez de aparecer como si nada.
-    device_lost: bool,
+    pub(crate) device_lost: bool,
     /// Nota pendiente de mostrar cuando llegue la transcripción del turno
     /// (p. ej. el aviso del tope de duración). `apply_pipeline` limpia
     /// `last_correction` al procesar un turno normal, así que la nota se
     /// aplica DESPUÉS, al recibir `TranscriptionDone`.
-    pending_turn_note: Option<String>,
+    pub(crate) pending_turn_note: Option<String>,
 }
 
 impl WhisprApp {
