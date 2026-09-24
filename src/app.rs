@@ -1,6 +1,27 @@
 //! UI de Whispr Open con Iced: dictado por turnos, transcript acumulado,
 //! limpieza de muletillas, diccionario personal, selector de modelo e
 //! inyección en la app activa.
+//!
+//! # Mapa de módulos (refactor de organización; cero cambio de conducta)
+//!
+//! Este fichero se queda con el estado y el esqueleto de la app: el struct
+//! `WhisprApp`, `new`, el despachador `update` (un `match` que delega en un
+//! manejador por familia de mensajes), `subscription`, `theme`, `view` y los
+//! helpers pequeños de estado. El resto de la UI vive en `src/ui/`:
+//!
+//! - `ui::settings`: las vistas del panel de Ajustes (`settings_view`,
+//!   `settings_tab_bar`, `settings_section_*`) y los helpers de paleta.
+//! - `ui::settings_handlers`: manejadores de Ajustes (`handle_note`,
+//!   `handle_lists`, `handle_dictation_engine`, `handle_appearance_settings`,
+//!   `handle_palette_settings`, `handle_corrector_settings`).
+//! - `ui::recording`: grabación y transcripción
+//!   (`handle_recording_control`, `handle_transcription_done`,
+//!   `handle_dictation_settings`).
+//! - `ui::poll`: el tick periódico (`handle_poll`).
+//! - `ui::bubble`: los eventos de la burbuja flotante
+//!   (`handle_bubble_events`).
+//! - `ui::window_tray`: ventana, bandeja y arranque
+//!   (`handle_window_and_tray`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
