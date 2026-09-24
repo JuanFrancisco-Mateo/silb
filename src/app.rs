@@ -1189,15 +1189,22 @@ impl WhisprApp {
             self.save_config();
             return Task::none();
         }
-        // Guard numérico determinista (t_1fc864ef). El corrector
-        // local (Qwen3.5-0.8B-Q8) concatena numerales en lugar de
-        // sustituirlos cuando el usuario rectifica un dígito: «me comí
+        // Guard numérico determinista (t_1fc864ef, ampliado t_d64797c2). El
+        // corrector local (Qwen3.5-0.8B-Q8) concatena numerales en lugar de
+        // sustituirlos cuando el usuario rectifica un número: «me comí
         // cuatro digo cinco peras» → «me comí cuatro cinco peras» (sin
-        // «digo», con los dos números juntos). Este guard detecta el
-        // patrón «NUM_A [marcador] NUM_B» en el INPUT y reconstruye
-        // determinísticamente la sustitución. Si el LLM ya acertó la
-        // sustitución (contiene NUM_B pero no NUM_A), el guard NO
-        // interviene y deja pasar el output tal cual.
+        // «digo», con los dos números juntos); y en frases naturales se
+        // queda con el número VIEJO y borra la meta-lengua («a tres
+        // personas, digo cuatro personas» → «a tres personas») — frase
+        // plausible y FALSA (log 14/09 03:19 y 13/09 01:37). Este guard
+        // detecta el patrón «NUM_A [texto] [marcador] NUM_B» en el INPUT y
+        // reconstruye determinísticamente la sustitución. Si el LLM ya
+        // acertó (contiene NUM_B pero no NUM_A), el guard NO interviene y
+        // deja pasar el output tal cual.
+        //
+        // El texto del guard es el que se inyecta (`effective_clean_text`,
+        // usado más abajo): antes se calculaba pero se descartaba, así que
+        // la reconstrucción nunca llegaba al usuario.
         let effective_clean_text = match crate::llm::guard_numeric_substitution(&input, clean_text)
         {
             Ok(reconstructed) => {
@@ -1222,13 +1229,15 @@ impl WhisprApp {
         // queda desproporcionadamente corta respecto al input sin
         // auto-corrección inequívoca que lo justifique, se descarta y se
         // inyecta el input ORIGINAL — nunca se pierde ni se recorta el
-        // dictado (ver `guard_anti_truncacion`).
-        if crate::llm::guard_anti_truncacion(&input, clean_text) != clean_text {
+        // dictado (ver `guard_anti_truncacion`). Se evalúa sobre el texto
+        // que de verdad se va a inyectar (reconstrucción incluida): los
+        // umbrales y la lógica del guard no cambian.
+        if crate::llm::guard_anti_truncacion(&input, &effective_clean_text) != effective_clean_text {
             crate::log!(
                 "llm",
                 "in-turn: respuesta recortada respecto al input (guard anti-truncación), fallback al input bruto: input={:?} output={:?}",
                 input,
-                clean_text
+                effective_clean_text
             );
             self.last_correction = Some(
                 "La corrección IA devolvió un resumen del turno; se mantiene el texto original"
@@ -1244,7 +1253,7 @@ impl WhisprApp {
             crate::log!(
                 "llm",
                 "in-turn: la respuesta todavía contiene meta-lengua correctiva ({:?}), fallback al input bruto",
-                clean_text
+                effective_clean_text
             );
             self.last_correction = Some(
                 "Corrección IA no pudo limpiar el turno (sigue con meta-lengua)".to_string(),
@@ -1257,9 +1266,12 @@ impl WhisprApp {
         }
 
         // Caso normal: tenemos texto limpio. Lo aplicamos como el
-        // turno completo. Undo antes de mutar.
+        // turno completo. Undo antes de mutar. El texto aplicado es el
+        // que resolvieron los guards (`effective_clean_text`): la
+        // reconstrucción numérica determinista, si la hubo, ES el texto
+        // final (t_1fc864ef + t_d64797c2).
         self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
-        let clean = clean_text.to_string();
+        let clean = effective_clean_text.clone();
         self.transcript = crate::domain::correction::append_transcript(
             &self.transcript,
             &clean,
