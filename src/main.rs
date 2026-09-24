@@ -13,6 +13,14 @@ fn main() -> iced::Result {
         "Whispr Open {} iniciando",
         env!("CARGO_PKG_VERSION")
     );
+    // H2 (QA 24/09/2026): el usuario se pierde buscando el log. La ruta
+    // queda dicha al arrancar (en consola y en el propio fichero) y también
+    // se muestra en Ajustes → Avanzado, con botón «Abrir carpeta».
+    whispr_open::log!(
+        "main",
+        "registro en: {} (rota a .1/.2 al pasar de 1 MB; trazas de depuración con WHISPR_DEBUG=1)",
+        whispr_open::log::log_path().display()
+    );
 
     // Guard de instancia única (requisito de robustez): la segunda
     // ejecución no registra atajo global (Windows lo denegaría a ciegas),
