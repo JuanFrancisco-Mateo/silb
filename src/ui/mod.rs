@@ -8,9 +8,11 @@
 //!   corrección IA, nota, listas, apariencia, paleta y motor de voz).
 //! - `recording`: grabación, transcripción y ajustes del dictado.
 //! - `bubble`: eventos de la ventana de la burbuja flotante.
+//! - `window_tray`: ventana principal, bandeja y arranque.
 //! - `poll`: tick del `Poll` (canales de los hilos, plazos y animación).
 pub mod bubble;
 pub mod poll;
 pub mod recording;
 pub mod settings;
 pub mod settings_handlers;
+pub mod window_tray;
