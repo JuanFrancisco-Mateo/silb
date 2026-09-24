@@ -10,7 +10,10 @@
 //! - `fonts`: carga de la fuente emoji (Segoe UI Emoji) para que los símbolos
 //!   de la UI (✓ ☀ ☾ ▾ ▸ ● → ✕) no se vean como cajas vacías.
 //! - `tray`: bandeja del sistema (icono + menú Mostrar/Ocultar/Salir).
-//! - `app`: UI Iced.
+//! - `app`: UI Iced (estado + `update` + `view`; los manejadores y las vistas
+//!   grandes viven en `ui`).
+//! - `ui`: submódulos de UI extraídos de `app` (vistas de Ajustes, manejadores
+//!   de mensajes).
 
 pub mod app;
 pub mod audio;
@@ -28,3 +31,4 @@ pub mod single_instance;
 pub mod theme;
 pub mod transcribe;
 pub mod tray;
+pub mod ui;
