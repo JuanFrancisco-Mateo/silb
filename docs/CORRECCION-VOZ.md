@@ -2,8 +2,10 @@
 
 Versión de diseño: **10/09/2026** — consolidada tras t_9fbc886f (server LLM
 nativo y ruta configurable), t_6b9348de (guard anti-truncación), t_301476a8
-(ciclo de vida de memoria), t_e25f8ab7 (UX de opciones y transparencia) y
-t_c2b0a22f (proveedores Local/Custom/Cloud). Este documento es la fuente de
+(ciclo de vida de memoria), t_e25f8ab7 (UX de opciones y transparencia),
+t_c2b0a22f (proveedores Local/Custom/Cloud), t_1fc864ef (guard numérico
+determinista) y t_d64797c2 (ampliación de ese guard a frases naturales + la
+reconstrucción como texto realmente inyectado). Este documento es la fuente de
 verdad de **cómo funciona hoy** el corrector IA; los nombres de archivos y
 funciones que se citan están verificados contra el código (rama `native-iced`).
 
@@ -321,7 +323,45 @@ input → feedback «La corrección IA devolvió un resumen del turno; se mantie
 el texto original» y se inyecta el input; aún contiene meta-lengua
 (`contains_in_turn_marker`) → texto bruto.
 
-### 6.5 Caso canónico
+### 6.5 Guard numérico determinista (t_1fc864ef, ampliado en t_d64797c2)
+
+`src/llm.rs::guard_numeric_substitution(input, output) -> Result<String, ()>`
+es la red de seguridad de CÓDIGO para las auto-correcciones con **numerales**
+(«3 digo 4», «tres, digo, cuatro»), donde el modelo local pequeño
+(Qwen3.5-0.8B-Q8) es poco fiable. En el INPUT se busca el patrón inequívoco
+«NUM_A [texto] [marcador] NUM_B» y, si el output del LLM no lo resolvió, se
+reconstruye la sustitución deterministamente:
+`input[..NUM_A] + NUM_B + input[NUM_B..]` (desaparecen NUM_A, el marcador y la
+meta-lengua que va entre ambos).
+
+- Marcadores reconocidos: `digo`, `diga`, `dime`, `quiero decir`,
+  `quise decir`, `mejor dicho`, `en vez de`, `en lugar de` y la construcción
+  `no X sino Y`. El regex vive en `NUMERIC_MARKER_REGEX` (auto-contenido en
+  `llm.rs`, más estricto que el clasificador `IN_TURN_MARKERS`).
+- Numerales: dígitos y la lista corta de palabras (`NUM_WORDS`: uno–quince,
+  veinte–noventa, cien, mil). No es un parser de números universal.
+- **NUM_A es el último NUMERAL del fragmento anterior al marcador**, no el
+  último token: en habla natural el numeral lleva detrás sintagma nominal y/o
+  verbo («me encontré a **tres personas**, digo **cuatro personas**»), y
+  exigir el último token dejaba fuera esos casos. Lo que ahora NO se tolera es
+  la ambigüedad: si el fragmento anterior tiene 2+ numerales, no se puede saber
+  cuál rectifica el usuario y el guard **no toca nada** (precisión > recall).
+- El guard NO interviene (devuelve `Err(())`) si el LLM ya acertó (su output
+  contiene NUM_B y no NUM_A) ni cuando no hay patrón inequívoco. En esos casos
+  el caller acepta el output del LLM tal cual.
+- Cuando SÍ interviene, el texto reconstruido es el que se aplica: en
+  `handle_llm_redaction` (app.rs) la reconstrucción es `effective_clean_text`,
+  se evalúa contra el guard anti-truncación (§6.4) y es lo que se inyecta.
+
+Cobertura verificada por tests (los casos reales del log del usuario, §H1 de
+`QA-REPORT-DEPURACION.md`):
+
+| Log | Input del turno | Output del LLM (erróneo) | Inyectado |
+|---|---|---|---|
+| 14/09 03:19 | «…me encontré a **tres personas, digo cuatro personas**, que iban por la acera…» | «…me encontré a **tres** personas que iban por la acera…» (numeral VIEJO, meta-lengua borrada) | «…me encontré a **cuatro** personas, que iban por la acera…» |
+| 13/09 01:37 | «…me encontré a **23** personas que iban, **digo**, a **24** personas que iban…» | «…me encontré a **23** personas que iban a **24** personas…» (concatenación) | «…me encontré a **24** personas que iban por la calle…» |
+
+### 6.6 Caso canónico
 
 | Paso | Valor |
 |---|---|
@@ -501,7 +541,7 @@ La corrección LLM añade **~4–6 s solo cuando se detecta intención correctiv
 | Archivo | Símbolos | Papel |
 |---|---|---|
 | `src/config.rs` | `CorrectionProvider` (+`label`), `Config::correction_provider()`, `Config::llm_settings()`, `llm_api_key` (skip_serializing), `API_KEY_CREDENTIAL_TARGET = "WhisprOpen/llm-api-key"`, `load/save_api_key_secret` (wincred) | persistencia, defaults por proveedor, API key segura |
-| `src/llm.rs` | `LlmConfig`, `correct`, `redact`, `clean_redact_output`, `guard_anti_truncacion`, `has_unambiguous_in_turn_marker`, `parse_diff`, `extract_message_text`, `server_alive(_auth)`, `is_local_endpoint`, `port_from_base_url`, `launch_server`, `resolve_server_path`, `resolve_model_path`, `wait_for_server`, `LAUNCHED_SERVER_PID`, `kill_launched_server` | cliente OpenAI-compatible (ureq), prompts, guard, ciclo de vida del server nativo |
+| `src/llm.rs` | `LlmConfig`, `correct`, `redact`, `clean_redact_output`, `guard_anti_truncacion`, `has_unambiguous_in_turn_marker`, `guard_numeric_substitution`, `parse_numeric_correction`, `is_numeric_token`, `count_numeric_tokens`, `parse_diff`, `extract_message_text`, `server_alive(_auth)`, `is_local_endpoint`, `port_from_base_url`, `launch_server`, `resolve_server_path`, `resolve_model_path`, `wait_for_server`, `LAUNCHED_SERVER_PID`, `kill_launched_server` | cliente OpenAI-compatible (ureq), prompts, guards (anti-truncación y numérico), ciclo de vida del server nativo |
 | `src/domain/corrective.rs` | `classify`, `classify_with`, `classify_in_turn(_with)`, `contains_in_turn_marker`, `strip_in_turn_meta`, `apply_diff`, `replace_last_turn`, `Diff`, `CorrectiveDecision` | clasificadores puros (sin I/O) + aplicación de diff |
 | `src/domain/correction.rs` | `apply_correction`, `CorrectionSession`, `append_transcript`, `replace_last_sentence` | corrección por reglas (fallback barato) |
 | `src/app.rs` | `Message::TranscriptionDone` (routing en cascada), `ToggleAiCorrection`, `CorrectionProviderChanged`, `spawn_llm_startup`, `run_startup_thread`, `run_llm_phase`, `disable_ai_correction_now`, `restore_pending_as_dictation`, `llm_status_ui`, `remote_endpoint_reason`, `auto_server_placeholder`, `LlmStatus`, `Status::Correcting`, botones Undo/Deshacer | UI, máquina de estados, hilos LLM (std::thread + mpsc), chip de estado |
@@ -513,13 +553,16 @@ Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
 
 ## 12. Criterios de aceptación (cómo se verifica)
 
-- `cargo test` verde (**271 passed + 1 ignored** a 11/09/2026, incluidos los que
+- `cargo test` verde (**304 passed + 1 ignored** a 24/09/2026, incluidos los que
   añadió t_c2b0a22f sobre el selector de proveedor y la degradación remota).
   Cubren: clasificadores
   cross-turn e in-turn (caso canónico de Juanfri «que calor en murcia digo
   cartagena» + variantes), `apply_diff` (numerales, «lo último», diff inválido
   no muta), undo, `clean_redact_output`, `contains_in_turn_marker` /
-  `strip_in_turn_meta`, guard anti-truncación (casos largo y corto), estado del
+  `strip_in_turn_meta`, guard anti-truncación (casos largo y corto), guard
+  numérico (§6.5: concatenación, numeral viejo en frase natural —los dos casos
+  del log del usuario—, borrado de numerales, `no…sino`, ambigüedad que NO se
+  toca y caso de control sin corrección), estado del
   chip, etiquetas de proveedor, defaults de `llm_settings` por proveedor.
 - `cargo check` sin errores.
 - Casos canónicos: cross-turn «la reunión es a las 4 en punto» + «no no lo
@@ -543,6 +586,11 @@ Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
   el input y el output a la vez).
 - Guard anti-truncación **en código, no en prompt** (9 variantes probadas en
   runtime; el prompt sin refuerzo preserva las correcciones).
+- Guard numérico con **precisión > recall**: si el fragmento anterior al
+  marcador tiene 2+ numerales, no se puede saber cuál rectifica el usuario y el
+  guard no toca nada (el peor caso es inyectar el output del LLM o el texto
+  bruto, nunca inventar una cifra). Cuando sí decide, su reconstrucción es el
+  texto que se aplica e inyecta.
 - Confirmación: off por defecto (aplicar + aviso + undo); `ai_correction_confirm`
   la activa desde Ajustes.
 - API key exclusivamente en Credential Manager (Windows), `skip_serializing` en
