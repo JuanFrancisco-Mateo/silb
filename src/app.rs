@@ -32,7 +32,7 @@ use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
     button, column, container, pick_list, progress_bar, row, scrollable, text, text_editor,
-    Column, Space, Text,
+    Button, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
 
@@ -331,6 +331,16 @@ pub enum Message {
     /// Cambia la pestaña activa dentro del panel de Ajustes (R7). Solo
     /// relevante mientras `settings_open` sea true.
     SettingsSectionSelected(SettingsSection),
+    /// Cambia la SECCIÓN de la ventana principal (H2 — UI 24/09/2026):
+    /// `Dictado` (hero del micro + nota) o `Ajustes` (panel completo). El
+    /// estado sigue siendo `settings_open`: esta sección es solo su lectura
+    /// desde la vista, para que la ventana tenga pestañas como Ajustes en vez
+    /// de una columna de cosas.
+    WindowSectionSelected(WindowSection),
+    /// Abre en el Explorador la carpeta donde vive el registro
+    /// (`%APPDATA%/whispr-open/`). Pedido del usuario: «me pierdo buscando el
+    /// log» (H2 del QA 24/09/2026).
+    OpenLogFolder,
     Poll,
     // ── Personalización II (R7): paleta editable ─────────────────────────
     /// Texto del campo hex de un campo concreto de la paleta. Cada tecla
@@ -1620,6 +1630,33 @@ impl WhisprApp {
     }
 
     /// Nivel del micrófono en % (0-100) mientras se graba.
+    /// Sección visible de la ventana principal (UI 24/09/2026).
+    ///
+    /// `settings_open` sigue siendo el ÚNICO estado (lo tocan los handlers de
+    /// Ajustes y su persistencia); aquí solo se LEE para saber qué pestaña
+    /// está activa. Así la vista gana pestañas sin duplicar estado.
+    pub(crate) fn window_section(&self) -> WindowSection {
+        if self.settings_open {
+            WindowSection::Ajustes
+        } else {
+            WindowSection::Dictado
+        }
+    }
+
+    /// Segundos que lleva el turno en curso (0 si no se está grabando). Lo
+    /// usa el aviso de «sin señal» del medidor para no parpadear en el
+    /// primer instante del turno.
+    fn recording_secs(&self) -> u64 {
+        self.recording_started
+            .map(|inicio| inicio.elapsed().as_secs())
+            .unwrap_or(0)
+    }
+
+    /// Aviso de nivel del turno en curso (`None` si el nivel es normal).
+    fn mic_peak_hint(&self) -> Option<MicPeakHint> {
+        mic_peak_hint(self.mic_level_percent(), self.recording_secs())
+    }
+
     fn mic_level_percent(&self) -> u32 {
         self.audio
             .as_ref()
@@ -1805,7 +1842,8 @@ impl WhisprApp {
                 | Message::PaletteImportPicked(..)
                 | Message::ToggleSettings
                 | Message::ToggleAdvancedSettings
-                | Message::SettingsSectionSelected(..)) => self.handle_palette_settings(m),
+                | Message::SettingsSectionSelected(..)
+                | Message::WindowSectionSelected(..)) => self.handle_palette_settings(m),
             m @ Message::Poll => self.handle_poll(m),
             m @ (Message::BubbleOpened(..)
                 | Message::BubblePress
@@ -1819,7 +1857,8 @@ impl WhisprApp {
                 | Message::ToggleMainWindow
                 | Message::FontLoaded(..)
                 | Message::Startup(..)
-                | Message::RetryStartup) => self.handle_window_and_tray(m),
+                | Message::RetryStartup
+                | Message::OpenLogFolder) => self.handle_window_and_tray(m),
             // Cierre de la ventana principal → se oculta a la bandeja (la app
             // sigue viva: burbuja, atajo global y bandeja). El cierre lo
             // gestionamos nosotros (`exit_on_close_request = false` en ambas
@@ -2085,26 +2124,37 @@ impl WhisprApp {
             ThemeMode::Claro => "☀ Claro",
             ThemeMode::Oscuro => "☾ Oscuro",
         };
-        let settings_label = if self.settings_open {
-            "Ajustes ▾"
-        } else {
-            "Ajustes ▸"
-        };
+        // El botón «Ajustes ▸» de la cabecera desaparece: abrir Ajustes es
+        // ahora una PESTAÑA de la ventana (barra de secciones, abajo).
         let header = row![
             text("Whispr Open")
                 .size(fs.xl)
                 .font(Font::MONOSPACE)
                 .color(t.text),
             Space::with_width(Length::Fill),
-            button(ui_text(theme_toggle))
-                .on_press(Message::ToggleTheme)
-                .style(theme::secondary),
-            button(ui_text(settings_label))
-                .on_press(Message::ToggleSettings)
-                .style(theme::secondary),
+            secondary_button(theme_toggle).on_press(Message::ToggleTheme),
         ]
         .spacing(theme::SPACE_2)
         .align_y(iced::Alignment::Center);
+
+        // ── Secciones de la VENTANA (UI 24/09/2026) ────────────────────────
+        // Mismo lenguaje que Ajustes: la fila de pestañas va ARRIBA y la
+        // sección activa se marca con `●` además del color. Dos secciones,
+        // una pregunta cada una: «Dictado» (hero + nota) y «Ajustes» (panel).
+        let window_section = self.window_section();
+        let window_tabs = crate::ui::tabs::tab_bar(
+            WindowSection::ALL
+                .iter()
+                .map(|section| {
+                    crate::ui::tabs::Tab::new(
+                        section.label(),
+                        Message::WindowSectionSelected(*section),
+                        window_section == *section,
+                    )
+                })
+                .collect(),
+            fs,
+        );
 
         // ── Estado del corrector IA (chip) ─────────────────────────────────
         // Transparencia (requisito UX 10/09/2026): el usuario ve SIEMPRE si
@@ -2148,11 +2198,25 @@ impl WhisprApp {
         // Micro-feedback (>= 200 ms) no decorativo: nivel del mic / progreso.
         match &self.status {
             Status::Recording => {
+                let level = self.mic_level_percent();
                 hero_content = hero_content.push(
-                    progress_bar(0.0..=100.0, self.mic_level_percent() as f32)
+                    progress_bar(0.0..=100.0, level as f32)
                         .width(Length::Fill)
                         .style(move |th| theme::progress(th, t.accent)),
                 );
+                // Pico del turno (UI-FUTURA P2): la barra dibuja el PICO que
+                // retiene `AudioCapture`, así que se etiqueta como tal y se
+                // avisa cuando el micro va mudo o saturado. Se pinta con
+                // tokens del tema (funciona igual en claro y oscuro).
+                let mut fila = row![
+                    text(format!("pico {level}%")).size(fs.xxs).color(t.dim),
+                    Space::with_width(Length::Fill),
+                ]
+                .align_y(iced::Alignment::Center);
+                if let Some(hint) = self.mic_peak_hint() {
+                    fila = fila.push(ui_text(hint.label()).size(fs.xxs).color(t.warn));
+                }
+                hero_content = hero_content.push(fila);
             }
             Status::Downloading {
                 downloaded, total, ..
@@ -2215,31 +2279,25 @@ impl WhisprApp {
                 text("¿Borrar la nota?").size(fs.sm).color(t.warn),
                 button(ui_text("Sí, borrar"))
                     .on_press(Message::ClearTranscript)
+                    .padding(theme::SECONDARY_BUTTON_PADDING)
                     .style(theme::primary),
-                button("No")
-                    .on_press(Message::ClearPressed)
-                    .style(theme::secondary),
+                secondary_button("No").on_press(Message::ClearPressed),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center)
             .into()
         } else {
-            button("Limpiar")
+            secondary_button("Limpiar")
                 .on_press(Message::ClearPressed)
-                .style(theme::secondary)
                 .into()
         };
         let actions = row![
-            button(ui_text(copy_label))
-                .on_press(Message::CopyTranscript)
-                .style(theme::secondary),
+            secondary_button(copy_label).on_press(Message::CopyTranscript),
             clear_controls,
             if self.last_turn.is_empty() {
-                button(inject_label).style(theme::secondary)
+                secondary_button(inject_label)
             } else {
-                button(inject_label)
-                    .on_press(Message::InjectLast)
-                    .style(theme::secondary)
+                secondary_button(inject_label).on_press(Message::InjectLast)
             },
         ]
         .spacing(theme::SPACE_2)
@@ -2264,10 +2322,9 @@ impl WhisprApp {
                     .shaping(Shaping::Advanced),
                 button(ui_text("Aplicar"))
                     .on_press(Message::ApplyPendingDiff)
+                    .padding(theme::SECONDARY_BUTTON_PADDING)
                     .style(theme::primary),
-                button(ui_text("Descartar"))
-                    .on_press(Message::DiscardPendingDiff)
-                    .style(theme::secondary),
+                secondary_button("Descartar").on_press(Message::DiscardPendingDiff),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center)
@@ -2288,18 +2345,15 @@ impl WhisprApp {
             .align_y(iced::Alignment::Center);
             if self.undo_state.is_some() {
                 row_el = row_el.push(
-                    button(ui_text("↩ Deshacer"))
-                        .on_press(Message::UndoLastCorrection)
-                        .style(theme::secondary),
+                    secondary_button("↩ Deshacer").on_press(Message::UndoLastCorrection),
                 );
             }
             // Reversibilidad del borrado (requisito R3): junto al aviso
             // «Nota borrada» vive el deshacer específico del borrado.
             if self.cleared_backup.is_some() {
                 row_el = row_el.push(
-                    button(ui_text("↩ Deshacer borrado"))
-                        .on_press(Message::UndoClearTranscript)
-                        .style(theme::secondary),
+                    secondary_button("↩ Deshacer borrado")
+                        .on_press(Message::UndoClearTranscript),
                 );
             }
             row_el.into()
@@ -2315,17 +2369,23 @@ impl WhisprApp {
             text("").into()
         };
 
-        // ── Zona central: transcript o ajustes (progressive disclosure) ──────
-        // En portrait el ancho es pequeño: los ajustes se apoderan de la zona
-        // central con su propio scroll en vez de empujar el transcript hacia
-        // abajo (el transcript conserva su scroll independiente).
-        let middle: Element<'_, Message> = if self.settings_open {
+        // ── Cuerpo de la sección activa ────────────────────────────────────
+        // «Dictado» reúne lo del turno (chip del corrector, hero, nota y sus
+        // acciones) en una columna; «Ajustes» es el panel de siempre con su
+        // propio scroll. La nota conserva su scroll independiente y no se
+        // empuja hacia abajo al abrir Ajustes.
+        let section_body: Element<'_, Message> = if self.settings_open {
             scrollable(self.settings_view(&t))
                 .style(theme::scrollable)
                 .height(Length::Fill)
                 .into()
         } else {
-            transcript_card.into()
+            let mut dictado = column![llm_chip, hero, transcript_card]
+                .spacing(theme::SPACE_3)
+                .height(Length::Fill);
+            // Las acciones y el feedback operan sobre la nota: van con ella.
+            dictado = dictado.push(actions).push(feedback);
+            dictado.into()
         };
 
         // ── Pie de confianza (requisito R4): siempre visible, discreto ─────
@@ -2344,14 +2404,9 @@ impl WhisprApp {
             .align_x(iced::alignment::Horizontal::Center)
             .padding(theme::SPACE_1);
 
-        let mut content = column![header, llm_chip, hero, middle]
+        let mut content = column![header, window_tabs, section_body]
             .spacing(theme::SPACE_3)
             .padding(theme::SPACE_3);
-        // Las acciones y el feedback operan sobre el transcript: solo se
-        // muestran cuando este está visible, no dentro de los ajustes.
-        if !self.settings_open {
-            content = content.push(actions).push(feedback);
-        }
         // El pie de confianza va SIEMPRE (también dentro de Ajustes): la
         // promesa de privacidad no desaparece al abrir un panel.
         content = content.push(footer);
@@ -2507,6 +2562,85 @@ impl std::fmt::Display for SettingsSection {
     }
 }
 
+/// Aviso del medidor del micrófono (UI-FUTURA P2). El nivel que se dibuja
+/// es el PICO que retiene `AudioCapture` durante el turno, así que el aviso
+/// es honesto: dice «pico» y solo aparece cuando aporta algo (micro mudo o
+/// saturado). Texto, no solo color (accesibilidad).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum MicPeakHint {
+    /// Sin señal apreciable pasado el margen inicial del turno.
+    Silent,
+    /// Pico al máximo: el micro puede estar saturando.
+    Clipping,
+}
+
+impl MicPeakHint {
+    /// Frase accionable para el usuario (en su idioma).
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            MicPeakHint::Silent => "sin señal del micrófono: ¿está silenciado?",
+            MicPeakHint::Clipping => "pico al máximo: el micrófono puede estar saturando",
+        }
+    }
+}
+
+/// Pico (%) a partir del cual se avisa de saturación.
+pub(crate) const MIC_CLIP_PERCENT: u32 = 97;
+/// Pico (%) por debajo del cual, pasados `MIC_SILENT_SECS`, se avisa de mudo.
+pub(crate) const MIC_SILENT_PERCENT: u32 = 2;
+/// Segundos mínimos de turno antes de acusar «sin señal» (evita el aviso
+/// parpadeante del primer instante de la grabación).
+pub(crate) const MIC_SILENT_SECS: u64 = 2;
+
+/// Decide el aviso del medidor a partir del pico y de los segundos de
+/// turno. Función pura (sin estado) para que los tests la cubran.
+pub(crate) fn mic_peak_hint(level_percent: u32, recording_secs: u64) -> Option<MicPeakHint> {
+    if level_percent >= MIC_CLIP_PERCENT {
+        Some(MicPeakHint::Clipping)
+    } else if recording_secs >= MIC_SILENT_SECS && level_percent < MIC_SILENT_PERCENT {
+        Some(MicPeakHint::Silent)
+    } else {
+        None
+    }
+}
+
+/// Sección visible de la VENTANA PRINCIPAL (UI 24/09/2026).
+///
+/// La ventana principal era un hero del micrófono + transcript + controles
+/// sueltos; Ajustes ya tenía pestañas. Ahora las dos superficies hablan el
+/// mismo idioma con dos secciones y una sola pregunta cada una:
+///
+/// - `Dictado`: ¿qué estoy dictando? (hero, estado, medidor, nota y acciones).
+/// - `Ajustes`: ¿cómo quiero que funcione? (el panel que ya existía).
+///
+/// El estado NO se duplica: `settings_open` sigue siendo la única fuente de
+/// verdad ([`WhisprApp::window_section`] lo lee) para no tocar los handlers de
+/// Ajustes ni su lógica de persistencia.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowSection {
+    Dictado,
+    Ajustes,
+}
+
+impl WindowSection {
+    /// Orden visual de las pestañas.
+    pub(crate) const ALL: [WindowSection; 2] = [WindowSection::Dictado, WindowSection::Ajustes];
+
+    /// Etiqueta legible en español (texto, no solo icono).
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            WindowSection::Dictado => "Dictado",
+            WindowSection::Ajustes => "Ajustes",
+        }
+    }
+}
+
+impl std::fmt::Display for WindowSection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// Categoría de una muletilla en Ajustes. Cada variante corresponde a una
 /// regla distinta de `cleanup.rs`: inequívoca (cualquier posición), solo
 /// antes de pausa, o solo abriendo el turno. Se usa en el `pick_list` de
@@ -2566,6 +2700,15 @@ impl std::fmt::Display for FillerCategory {
 /// arranque en `fonts.rs`.
 pub(crate) fn ui_text<'a>(content: impl Into<String>) -> Text<'a> {
     text(content.into()).shaping(Shaping::Advanced)
+}
+
+/// Botón secundario de la UI con el padding táctil del tema (UI-FUTURA P1:
+/// los targets de los botones secundarios se quedaban cortos). Evita
+/// repetir `button(ui_text(..)).padding(...)` por toda la vista.
+pub(crate) fn secondary_button<'a>(label: impl Into<String>) -> Button<'a, Message> {
+    button(ui_text(label))
+        .padding(theme::SECONDARY_BUTTON_PADDING)
+        .style(theme::secondary)
 }
 
 /// Placeholder del campo «Server LLM» de Ajustes: muestra la ruta que se
@@ -3396,5 +3539,41 @@ mod tests {
         let cloud = CorrectionProvider::Cloud.label();
         assert!(cloud.contains("Cloud"));
         assert!(cloud.contains("OpenAI"));
+    }
+    // ── UI 24/09/2026: secciones de la ventana y aviso del medidor ──────────
+
+    #[test]
+    fn la_ventana_tiene_dos_secciones_con_etiqueta_visible() {
+        // Una pantalla, una pregunta: no se inventan pestañas de más.
+        assert_eq!(WindowSection::ALL.len(), 2);
+        assert_eq!(WindowSection::ALL[0], WindowSection::Dictado);
+        assert_eq!(WindowSection::ALL[1], WindowSection::Ajustes);
+        assert_eq!(WindowSection::Dictado.label(), "Dictado");
+        assert_eq!(WindowSection::Ajustes.label(), "Ajustes");
+        // La sección se identifica por texto (accesible sin depender del color).
+        assert!(WindowSection::Dictado.to_string().contains("Dictado"));
+    }
+
+    #[test]
+    fn el_aviso_del_medidor_solo_sale_cuando_aporta() {
+        assert_eq!(mic_peak_hint(50, 30), None, "nivel normal: sin aviso");
+        assert_eq!(mic_peak_hint(MIC_SILENT_PERCENT, 30), None);
+        assert_eq!(mic_peak_hint(MIC_CLIP_PERCENT - 1, 30), None);
+        // Saturado: avisa desde el primer instante del turno.
+        assert_eq!(
+            mic_peak_hint(MIC_CLIP_PERCENT, 0),
+            Some(MicPeakHint::Clipping)
+        );
+        assert_eq!(mic_peak_hint(100, 0), Some(MicPeakHint::Clipping));
+        // Mudo: solo pasado el margen inicial (no parpadea al empezar a grabar).
+        assert_eq!(mic_peak_hint(0, 0), None);
+        assert_eq!(mic_peak_hint(0, MIC_SILENT_SECS - 1), None);
+        assert_eq!(
+            mic_peak_hint(0, MIC_SILENT_SECS),
+            Some(MicPeakHint::Silent)
+        );
+        // Los avisos se leen: texto accionable, no solo color.
+        assert!(MicPeakHint::Silent.label().contains("sin señal"));
+        assert!(MicPeakHint::Clipping.label().contains("satur"));
     }
 }

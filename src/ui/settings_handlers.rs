@@ -10,7 +10,10 @@ use std::time::Duration;
 use iced::{Task, window};
 
 use crate::theme;
-use crate::app::{LlmStatus, Message, SettingsSection, Status, WhisprApp, last_turn_from_transcript};
+use crate::app::{
+    LlmStatus, Message, SettingsSection, Status, WhisprApp, WindowSection,
+    last_turn_from_transcript,
+};
 use crate::config::dictionary_path;
 use crate::domain::dictionary::{DictionaryEntry, export_dictionary_to, import_dictionary_from};
 
@@ -904,6 +907,19 @@ impl WhisprApp {
             }
             Message::SettingsSectionSelected(section) => {
                 self.settings_section = section;
+                Task::none()
+            }
+            Message::WindowSectionSelected(section) => {
+                // La sección de la VENTANA (UI 24/09/2026) es una lectura
+                // de `settings_open` (ver `WhisprApp::window_section`):
+                // «Ajustes» abre el panel y «Dictado» lo cierra. Al cerrar
+                // se vuelve a la pestaña General — la misma regla del botón
+                // Ajustes original (recordar la sección solo en la sesión).
+                let abrir_ajustes = matches!(section, WindowSection::Ajustes);
+                self.settings_open = abrir_ajustes;
+                if !abrir_ajustes {
+                    self.settings_section = SettingsSection::General;
+                }
                 Task::none()
             }
             _ => Task::none(),

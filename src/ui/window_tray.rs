@@ -60,6 +60,18 @@ impl WhisprApp {
                 self.llm_phase_cancel = Some(startup_cancel);
                 Task::none()
             }
+            Message::OpenLogFolder => {
+                // H2 (QA 24/09/2026): el usuario no encontraba el log.
+                // Abrimos en el Explorador la carpeta que lo contiene (ahí
+                // viven también config.json y assets/).
+                let dir = crate::log::log_dir();
+                let _ = std::fs::create_dir_all(&dir);
+                match std::process::Command::new("explorer.exe").arg(&dir).spawn() {
+                    Ok(_) => crate::log!("ui", "carpeta del registro abierta: {}", dir.display()),
+                    Err(e) => crate::log!("ui", "no se pudo abrir «{}»: {e}", dir.display()),
+                }
+                Task::none()
+            }
             _ => Task::none(),
         }
     }

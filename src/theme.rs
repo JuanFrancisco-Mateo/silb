@@ -882,6 +882,11 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
+/// Padding de los botones secundarios («Copiar», «Limpiar», …). Área de hit
+/// táctil (UI-FUTURA P1): el padding por defecto de iced deja botones bajos de
+/// más para un dedo o un toque rápido. 8 px verticales × 16 horizontales.
+pub const SECONDARY_BUTTON_PADDING: [f32; 2] = [SPACE_2 as f32, SPACE_3 as f32];
+
 /// Botón secundario (acciones discretas): transparente, texto dim → texto al hover.
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
@@ -893,6 +898,32 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
         background: bg.map(Background::Color),
         text_color: fg,
         border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Pestaña de sección (Ajustes y la ventana principal comparten este estilo).
+/// La activa lleva fondo `surface_alt`, texto de acento y borde de 2 px; las
+/// inactivas son el botón secundario de siempre. El indicador `●` de la
+/// etiqueta lo pone la barra de pestañas: la sección activa se distingue sin
+/// depender solo del color (requisito de accesibilidad R7).
+pub fn tab(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    if !active {
+        return secondary(theme, status);
+    }
+    let t = tokens(theme);
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => t.surface,
+        _ => t.surface_alt,
+    };
+    let border_color = match status {
+        button::Status::Active => t.accent,
+        _ => t.border,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: t.accent_text,
+        border: border(border_color, 2.0, RADIUS_SM),
         shadow: Shadow::default(),
     }
 }
