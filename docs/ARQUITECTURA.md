@@ -96,7 +96,13 @@ arranca y apaga la propia app.
 | Fichero | Qué hace | Por qué es así |
 |---|---|---|
 | `src/inject.rs` | Escribe el texto en la app que tiene el foco: lo copia al portapapeles y simula Ctrl+V (o teclea directo, si lo configuras). | Pegar es lo más compatible. Si no hay ninguna ventana con foco, el texto queda en el portapapeles con aviso: nunca se pierde. |
-| `src/app.rs` | La ventana principal: la nota **editable**, los botones, los Ajustes, y el «director de orquesta» que conecta todos los módulos anteriores. | Es el único fichero grande porque es el único que toca la UI; la lógica vive en los demás. |
+| `src/app.rs` | La ventana principal: la nota **editable**, los botones y el «director de orquesta» que conecta todos los módulos anteriores. Se queda con el estado (struct `WhisprApp`), `new`, el despachador `update`, `subscription`, `theme`, `view` y los helpers pequeños de estado. | Antes era un monolito de 6.000 líneas; ahora cada mensaje se despacha a un manejador de `src/ui/` y el fichero se lee de arriba abajo sin perderse en 1.500 líneas de `match`. |
+| `src/ui/settings.rs` | Las **vistas** del panel de Ajustes: `settings_view`, `settings_tab_bar`, las 6 `settings_section_*` y los helpers de paleta. | Es la parte más «de pintar» de la UI: aislada para retocarla sin acercarse a la lógica. |
+| `src/ui/settings_handlers.rs` | Los **manejadores** de los mensajes de Ajustes: `handle_note`, `handle_lists`, `handle_dictation_engine`, `handle_appearance_settings`, `handle_palette_settings`, `handle_corrector_settings`. | Un sitio por familia de mensajes: cada bloque del `match` pasa a ser una función con nombre. |
+| `src/ui/recording.rs` | Grabación y transcripción: `handle_recording_control`, `handle_transcription_done`, `handle_dictation_settings`. | El ciclo del dictado (empezar, parar, transcribir, limpiar) junto, sin mezclarse con la UI. |
+| `src/ui/poll.rs` | El tick periódico (`handle_poll`): drena los canales de audio, transcripción y LLM, y refresca el progreso de descarga. | Era el bloque más grande de `update()` (248 líneas); el latido de la app merecía su fichero. |
+| `src/ui/bubble.rs` | Los eventos de la **burbuja flotante** (`handle_bubble_events`): abrir, pulsar, arrastrar, soltar. | El arrastre tiene reglas propias (captura del ratón, anclaje) y estaban ahogadas en el `match`. |
+| `src/ui/window_tray.rs` | Ventana principal, **bandeja** del sistema y arranque (`handle_window_and_tray`). | Ciclo de vida de las ventanas aparte: es lo primero que se revisa cuando algo «no aparece». |
 | `src/theme.rs` | Los colores, tamaños y radios de toda la interfaz, con el contraste **medido** (fórmulas WCAG) en tests. | Un solo sitio donde cambiar el aspecto; los tests impiden que un cambio rompa la legibilidad. |
 | `src/fonts.rs` | Carga la fuente de emoji de Windows para que símbolos como ✓ y ↩ no salgan como cajas vacías. | El renderizador de texto de la UI no hace «fallback» de fuente por defecto. |
 
@@ -157,12 +163,14 @@ Detalles que no se ven en el dibujo pero importan:
 | El comportamiento del corrector IA | `src/llm.rs` | `SYSTEM_PROMPT` / `SYSTEM_PROMPT_IN_TURN` y el guard anti-truncación |
 | Dónde se instalan los modelos | `src/transcribe.rs` | `models_dir()` |
 | Cómo se escribe en otras apps | `src/inject.rs` | `inject_text_into_active_app` (paste/type) |
-| Textos de la interfaz | `src/app.rs` | directamente en la vista (están en español y sin constantes: son fáciles de encontrar con Ctrl+F) |
+| Textos de la interfaz | `src/app.rs` y `src/ui/settings.rs` | directamente en la vista (están en español y sin constantes: son fáciles de encontrar con Ctrl+F) |
 | El tiempo máximo de una nota | `src/audio.rs` | `MAX_RECORDING_SECS` |
+| Qué hace cada mensaje de la UI | `src/ui/*.rs` | un manejador por familia en `src/ui/`; `update()` en `app.rs` solo reparte |
 
 Regla de oro del repo: **la lógica va en `src/domain/` (pura, sin I/O,
-testeable) y la UI en `src/app.rs`**. Si añades una feature, primero la
-función pura con sus tests, luego el cableado en `app.rs`.
+testeable) y la UI en `src/app.rs` + `src/ui/`**. Si añades una feature, primero la
+función pura con sus tests, luego el cableado en `app.rs` (estado y `view`) y su
+manejador en `src/ui/`.
 
 ---
 
