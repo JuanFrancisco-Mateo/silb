@@ -1764,50 +1764,11 @@ impl WhisprApp {
                 | Message::BubbleCursorMoved(..)
                 | Message::BubbleCursorLeft) => self.handle_bubble_events(m),
             // ── Bandeja del sistema ─────────────────────────────────────────
-            Message::WindowOpened(id) => {
-                // La ventana principal abre antes que la burbuja; pero para no
-                // depender de ordenes, se descarta la del id conocido de la
-                // burbuja: la primera distinta es la principal.
-                if self.main_window_id.is_none() && Some(id) != self.bubble_id {
-                    self.main_window_id = Some(id);
-                    crate::log!("tray", "ventana principal registrada (id={id})");
-                }
-                Task::none()
-            }
-            Message::ToggleMainWindow => {
-                if self.main_visible {
-                    self.hide_main_window()
-                } else {
-                    self.show_main_window()
-                }
-            }
-            Message::FontLoaded(result) => {
-                // `iced::font::Error` es ininhabitable en iced 0.13; el arm
-                // Err queda como red de seguridad si cambia en el futuro.
-                match result {
-                    Ok(()) => crate::log!("fonts", "fuente emoji registrada en el FontSystem"),
-                    Err(e) => crate::log!("fonts", "error cargando la fuente emoji: {e:?}"),
-                }
-                Task::none()
-            }
-            Message::Startup(event) => self.handle_startup_event(event),
-            Message::RetryStartup => {
-                crate::log!("startup", "«Reintentar»: relanzando arranque completo");
-                self.startup = StartupPhase::Loading;
-                self.startup_label = "Preparando la app…".to_string();
-                self.llm_status = LlmStatus::Unknown;
-                self.startup_tick = 0;
-                let (startup_tx, startup_rx) = mpsc::channel();
-                let startup_config = self.config.clone();
-                let startup_cancel = Arc::new(AtomicBool::new(false));
-                let startup_cancel_thread = startup_cancel.clone();
-                std::thread::spawn(move || {
-                    run_startup_thread(startup_config, startup_tx, startup_cancel_thread)
-                });
-                self.startup_rx = Some(startup_rx);
-                self.llm_phase_cancel = Some(startup_cancel);
-                Task::none()
-            }
+            m @ (Message::WindowOpened(..)
+                | Message::ToggleMainWindow
+                | Message::FontLoaded(..)
+                | Message::Startup(..)
+                | Message::RetryStartup) => self.handle_window_and_tray(m),
             // Cierre de la ventana principal → se oculta a la bandeja (la app
             // sigue viva: burbuja, atajo global y bandeja). El cierre lo
             // gestionamos nosotros (`exit_on_close_request = false` en ambas
@@ -1836,7 +1797,7 @@ impl WhisprApp {
     /// Loading → (WhisperFailed) → Failed · Loading → … → Ready. Cuando el
     /// arranque ya terminó (re-fase LLM en caliente por el toggle), solo
     /// actualiza `llm_status` y el aviso.
-    fn handle_startup_event(&mut self, event: StartupEvent) -> Task<Message> {
+    pub(crate) fn handle_startup_event(&mut self, event: StartupEvent) -> Task<Message> {
         match event {
             StartupEvent::WhisperProgress { downloaded, total } => {
                 // La velocidad estimada (EMA) se alimenta aquí: la pantalla
@@ -1964,7 +1925,7 @@ impl WhisprApp {
 
     /// Oculta la ventana principal (se queda en la bandeja) y actualiza el
     /// texto del ítem del menú.
-    fn hide_main_window(&mut self) -> Task<Message> {
+    pub(crate) fn hide_main_window(&mut self) -> Task<Message> {
         let Some(id) = self.main_window_id else {
             return Task::none();
         };
@@ -1977,7 +1938,7 @@ impl WhisprApp {
     }
 
     /// Vuelve a mostrar (y enfocar) la ventana principal desde la bandeja.
-    fn show_main_window(&mut self) -> Task<Message> {
+    pub(crate) fn show_main_window(&mut self) -> Task<Message> {
         let Some(id) = self.main_window_id else {
             return Task::none();
         };
@@ -2856,7 +2817,7 @@ pub(crate) fn download_failure_message(model: Model, raw: &str) -> String {
 /// Fase whisper del arranque: descarga el modelo si falta (con progreso) y
 /// lo carga en el cache de contexto (prerroll: la primera pulsación del
 /// atajo no paga la carga). Luego delega en `run_llm_phase` si aplica.
-fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>) {
+pub(crate) fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>) {
     let model = cfg.selected_model();
     if !crate::transcribe::model_exists(model) {
         crate::log!(
