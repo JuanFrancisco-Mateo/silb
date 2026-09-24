@@ -2346,11 +2346,17 @@ mod tests {
             "el numeral corregido DEBE estar en el texto inyectado: {result:?}"
         );
         // La reconstrucción no debe caer en el guard anti-truncación (es
-        // el mismo criterio que aplica app.rs antes de inyectar).
+        // el mismo criterio que aplica app.rs antes de inyectar) ni
+        // contener meta-lengua residual (eso haría que app.rs inyectase el
+        // texto bruto y se perdiese la corrección).
         assert_eq!(
             guard_anti_truncacion(input, &result),
             result,
             "la reconstrucción es más corta que el input pero NO es un resumen"
+        );
+        assert!(
+            !crate::domain::corrective::contains_in_turn_marker(&result),
+            "sin meta-lengua residual: app.rs no debe descartar la corrección: {result:?}"
         );
     }
 
@@ -2376,6 +2382,10 @@ mod tests {
             guard_anti_truncacion(input, &result),
             result,
             "la reconstrucción pasa el guard anti-truncación"
+        );
+        assert!(
+            !crate::domain::corrective::contains_in_turn_marker(&result),
+            "sin meta-lengua residual: app.rs no debe descartar la corrección: {result:?}"
         );
     }
 
