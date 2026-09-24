@@ -4,6 +4,9 @@
 //! pequeños de estado; aquí vive el resto:
 //!
 //! - `settings`: vistas del panel de Ajustes y sus widgets.
+//! - `settings_handlers`: manejadores de los mensajes de Ajustes (dictado,
+//!   corrección IA, nota, listas, apariencia, paleta y motor de voz).
 //! - `recording`: grabación, transcripción y ajustes del dictado.
 pub mod recording;
 pub mod settings;
+pub mod settings_handlers;
