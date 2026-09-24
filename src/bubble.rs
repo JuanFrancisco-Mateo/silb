@@ -762,7 +762,9 @@ impl BubbleDrag {
                 return None;
             }
             let size = (rect.right - rect.left, rect.bottom - rect.top);
-            crate::log!(
+            // Ruido de alta frecuencia (H2 del QA 24/09/2026): en modo normal
+            // este trazo no se escribe; `WHISPR_DEBUG=1` lo enciende.
+            crate::log_debug!(
                 "bubble",
                 "drag start: ventana=({},{}) size=({},{}) cursor=({},{})",
                 rect.left,
@@ -819,7 +821,9 @@ impl BubbleDrag {
                 return;
             }
             self.last = (x, y);
-            crate::log!(
+            // Una línea por evento de ratón (~1.000/s): solo con
+            // `WHISPR_DEBUG=1` (H2 del QA 24/09/2026).
+            crate::log_debug!(
                 "bubble",
                 "drag target=({},{}) grab=({},{}) cursor=({},{})",
                 x,
