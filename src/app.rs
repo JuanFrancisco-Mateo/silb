@@ -1706,7 +1706,14 @@ impl WhisprApp {
                 let show = self.show_bubble();
                 let device = self.config.input_device.clone();
                 match AudioCapture::start(device.as_deref()) {
-                    Ok(capture) => {
+                    Ok(mut capture) => {
+                        // H6: si el micrófono configurado ya no estaba, se
+                        // dictó igual con el dispositivo por defecto. El
+                        // aviso va a la línea de feedback: el usuario ve qué
+                        // micro se está usando de verdad.
+                        if let Some(notice) = capture.take_fallback_notice() {
+                            self.last_correction = Some(notice);
+                        }
                         self.audio = Some(capture);
                         self.status = Status::Recording;
                         // Marcador de inicio para el tope de duración del
@@ -5952,6 +5959,12 @@ mod tests {
             "Dictado larguísimo: parado a las 2 h para no agotar la memoria."
         ));
         assert!(feedback_is_warning("Esperando el resto de la corrección…"));
+        // H6: el aviso de «micro configurado ausente, se usa el por defecto»
+        // también es un aviso ámbar, no una confirmación verde.
+        assert!(feedback_is_warning(&crate::audio::fallback_notice(
+            "Línea (4- AudioBox USB)",
+            "Micrófono (Realtek(R) Audio)"
+        )));
         // Confirmaciones: verde.
         assert!(!feedback_is_warning("Texto escrito en la app activa ✓"));
         assert!(!feedback_is_warning("Corrección IA aplicada: «4» → «2»"));

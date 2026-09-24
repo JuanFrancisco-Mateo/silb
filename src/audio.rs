@@ -27,6 +27,92 @@ pub fn input_devices() -> Vec<String> {
     }
 }
 
+/// Decisión (pura, sin cpal) sobre qué dispositivo de entrada abrir según la
+/// config y los dispositivos que el sistema ofrece. Separarla del hardware
+/// permite fijar la regla «el configurado desapareció → se cae al por
+/// defecto» con un test.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DeviceSelection {
+    /// El dispositivo configurado está entre los disponibles: se usa ese.
+    Configured,
+    /// El configurado NO está (USB desenchufado, driver recargado, nombre
+    /// cambiado…): se usa el dispositivo por defecto del sistema.
+    Fallback { configured: String },
+    /// No hay dispositivo configurado: se usa el por defecto, sin aviso.
+    Default,
+}
+
+/// Decide qué dispositivo abrir. `available` son los nombres que devuelve
+/// `host.input_devices()`.
+pub fn select_device(configured: Option<&str>, available: &[String]) -> DeviceSelection {
+    match configured {
+        Some(name) if available.iter().any(|device| device == name) => DeviceSelection::Configured,
+        Some(name) => DeviceSelection::Fallback {
+            configured: name.to_string(),
+        },
+        None => DeviceSelection::Default,
+    }
+}
+
+/// Aviso en español para la UI cuando hubo que dictar con el dispositivo por
+/// defecto porque el configurado no estaba (H6). Nombra ambos para que el
+/// usuario sepa qué se usó de verdad y cómo arreglarlo; nunca un error seco.
+pub fn fallback_notice(configured: &str, used: &str) -> String {
+    format!(
+        "El micrófono configurado («{configured}») no está disponible; se usa «{used}». \
+         Revísalo en Ajustes si no es el que quieres."
+    )
+}
+
+/// Abre el dispositivo pedido por nombre. Si ya no está entre los
+/// disponibles, cae al dispositivo por defecto del sistema y devuelve el
+/// aviso para la UI: sin este fallback el dictado quedaba muerto hasta que
+/// el usuario entrara a Ajustes (H6). Si tampoco hay default, error en
+/// español.
+///
+/// Una sola enumeración: se resuelve el dispositivo y, a la vez, se recogen
+/// los nombres para la decisión pura (`select_device`).
+fn open_configured_device(
+    host: &cpal::Host,
+    name: &str,
+) -> Result<(cpal::Device, Option<String>), String> {
+    let mut available: Vec<String> = Vec::new();
+    let mut target: Option<cpal::Device> = None;
+    for device in host
+        .input_devices()
+        .map_err(|error| format!("no se pudo listar los micrófonos: {error}"))?
+    {
+        let label = device.name().unwrap_or_default();
+        let is_target = label == name;
+        available.push(label);
+        if is_target {
+            target = Some(device);
+        }
+    }
+
+    match select_device(Some(name), &available) {
+        DeviceSelection::Configured => Ok((
+            target.ok_or_else(|| format!("micrófono \"{name}\" no encontrado"))?,
+            None,
+        )),
+        DeviceSelection::Fallback { .. } | DeviceSelection::Default => {
+            let device = host.default_input_device().ok_or_else(|| {
+                format!(
+                    "micrófono \"{name}\" no encontrado y no hay dispositivo de entrada por defecto"
+                )
+            })?;
+            let used = device
+                .name()
+                .unwrap_or_else(|_| "dispositivo por defecto".to_string());
+            crate::log!(
+                "audio",
+                "el micrófono configurado \"{name}\" no está disponible; se usa \"{used}\""
+            );
+            Ok((device, Some(fallback_notice(name, &used))))
+        }
+    }
+}
+
 /// Captura de micrófono por turnos: el callback de CPAL (en sus propios
 /// hilos) acumula muestras f32 mono; aquí se expone el nivel reciente y los
 /// errores del stream a la UI.
@@ -42,26 +128,30 @@ pub struct AudioCapture {
     /// esto, un micro que muere dejaba la app «Grabando» para siempre con
     /// un stream muerto que no acumulaba nada.
     errors: mpsc::Receiver<String>,
+    /// Aviso para la UI cuando el micrófono configurado ya no estaba y se
+    /// dictó con el dispositivo por defecto (H6). `None` = se usó el
+    /// configurado (o el por defecto sin incidencias).
+    fallback_notice: Option<String>,
 }
 
 impl AudioCapture {
     /// Abre el dispositivo por nombre (si `device_name` es Some y existe);
-    /// si no, usa el dispositivo de entrada por defecto.
+    /// si no, usa el dispositivo de entrada por defecto. Un nombre
+    /// configurado que ya no existe NO mata el dictado: se cae al
+    /// dispositivo por defecto avisando en la UI (H6).
     ///
     /// El stream se crea y se reproduce antes de devolver `Ok`, de modo que
     /// cualquier fallo real llega al estado de error de la UI. CPAL mantiene
     /// el callback activo mientras `stream` siga vivo.
     pub fn start(device_name: Option<&str>) -> Result<Self, String> {
         let host = cpal::default_host();
-        let device = match device_name {
-            Some(name) => host
-                .input_devices()
-                .map_err(|error| format!("no se pudo listar los micrófonos: {error}"))?
-                .find(|device| device.name().map(|value| value == name).unwrap_or(false))
-                .ok_or_else(|| format!("micrófono \"{name}\" no encontrado"))?,
-            None => host
-                .default_input_device()
-                .ok_or_else(|| "no hay dispositivo de entrada (micrófono)".to_string())?,
+        let (device, fallback) = match device_name {
+            Some(name) => open_configured_device(&host, name)?,
+            None => (
+                host.default_input_device()
+                    .ok_or_else(|| "no hay dispositivo de entrada (micrófono)".to_string())?,
+                None,
+            ),
         };
 
         let config = device
@@ -91,7 +181,15 @@ impl AudioCapture {
             rate,
             stream: Some(stream),
             errors: err_rx,
+            fallback_notice: fallback,
         })
+    }
+
+    /// Se lleva el aviso de fallback (una sola vez) para que la UI lo muestre
+    /// en su línea de feedback: el usuario ve que el micrófono configurado no
+    /// estaba y cuál se está usando de verdad (H6).
+    pub fn take_fallback_notice(&mut self) -> Option<String> {
+        self.fallback_notice.take()
     }
 
     /// Detiene la captura y devuelve muestras f32 mono a 16 kHz.
@@ -352,5 +450,46 @@ mod tests {
         // (~460 MB peor caso a 16 kHz f32; a 48 kHz nativos se remuestrea al
         // parar, así que el tope nativo equivale a 2 h de audio real).
         assert_eq!(MAX_RECORDING_SECS, 2 * 60 * 60);
+    }
+
+    /// H6 (QA 24/09/2026): si el micrófono configurado desaparece (el USB de
+    /// `input_device: "Línea (4- AudioBox USB)"` desenchufado), el dictado NO
+    /// puede quedarse muerto con un error seco: se cae al dispositivo por
+    /// defecto. El audio real lo prueba el usuario; aquí se fija la decisión.
+    #[test]
+    fn h6_dispositivo_configurado_ausente_cae_al_por_defecto() {
+        let disponibles = vec![
+            "Micrófono (Realtek(R) Audio)".to_string(),
+            "Línea (4- AudioBox USB)".to_string(),
+        ];
+        // Está → se usa el configurado, sin aviso de fallback.
+        assert_eq!(
+            select_device(Some("Línea (4- AudioBox USB)"), &disponibles),
+            DeviceSelection::Configured
+        );
+        // Sin configurar → se usa el por defecto, sin aviso.
+        assert_eq!(select_device(None, &disponibles), DeviceSelection::Default);
+        // Ausente → marca de fallback al dispositivo por defecto.
+        assert_eq!(
+            select_device(
+                Some("Línea (4- AudioBox USB)"),
+                &["Micrófono (Realtek(R) Audio)".to_string()],
+            ),
+            DeviceSelection::Fallback {
+                configured: "Línea (4- AudioBox USB)".to_string(),
+            }
+        );
+    }
+
+    /// H6: el fallback no es silencioso. El aviso nombra el dispositivo
+    /// configurado, el que se usa de verdad y cómo arreglarlo (el usuario lo
+    /// ve en la UI, que lo pinta como aviso ámbar).
+    #[test]
+    fn h6_el_aviso_de_fallback_nombra_los_dos_dispositivos() {
+        let aviso = fallback_notice("Línea (4- AudioBox USB)", "Micrófono (Realtek(R) Audio)");
+        assert!(aviso.contains("Línea (4- AudioBox USB)"), "{aviso}");
+        assert!(aviso.contains("Micrófono (Realtek(R) Audio)"), "{aviso}");
+        assert!(aviso.contains("no está disponible"), "{aviso}");
+        assert!(aviso.contains("Ajustes"), "dice cómo arreglarlo: {aviso}");
     }
 }
