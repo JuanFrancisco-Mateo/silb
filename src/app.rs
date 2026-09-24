@@ -595,6 +595,13 @@ impl WhisprApp {
         // en VRAM.
         let mut config = Config::load();
         let _ = config.heal_llama_server_path();
+        // H4 (QA 24/09/2026): las rutas de personalización que ya no apuntan a
+        // nada se quitan del config al arrancar (avisando en el log). El
+        // usuario que vacía Descargas deja de arrastrar una ruta muerta; una
+        // config vieja con una ruta externa que SIGUE existiendo no se toca.
+        if crate::custom_image::sanitize_config_assets(&mut config) {
+            config.save();
+        }
         let (hotkey, hotkey_rx) = match HotkeyManager::register(&config.shortcut()) {
             Ok(m) => {
                 let rx = m.listen();
@@ -1564,7 +1571,12 @@ impl WhisprApp {
     pub(crate) fn bubble_frames_resolved(
         &self,
     ) -> Option<Vec<std::path::PathBuf>> {
-        crate::custom_image::resolve_frames(self.config.bubble_frames_path())
+        // `*_or_warn` (H4): si la carpeta configurada desapareció, queda dicho
+        // en el log («asset desaparecido, cayendo al tema») una sola vez.
+        crate::custom_image::resolve_frames_or_warn(
+            "carpeta de frames de la burbuja",
+            self.config.bubble_frames_path(),
+        )
     }
 
     /// Frame actual del sprite animado (la ruta del fichero a mostrar).
@@ -1588,13 +1600,19 @@ impl WhisprApp {
     pub(crate) fn bubble_static_image(
         &self,
     ) -> Option<std::path::PathBuf> {
-        crate::custom_image::resolve_static(self.config.bubble_image_path())
+        crate::custom_image::resolve_static_or_warn(
+            "sprite de la burbuja",
+            self.config.bubble_image_path(),
+        )
     }
 
     /// Ruta de la imagen de fondo de la ventana principal (validada).
     /// `None` = fondo del tema.
     pub(crate) fn bg_image(&self) -> Option<std::path::PathBuf> {
-        crate::custom_image::resolve_static(self.config.bg_image_path())
+        crate::custom_image::resolve_static_or_warn(
+            "imagen de fondo de la ventana",
+            self.config.bg_image_path(),
+        )
     }
 
     fn dictionary_snapshot(&self) -> Vec<DictionaryEntry> {
