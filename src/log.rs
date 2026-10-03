@@ -48,11 +48,19 @@ pub fn log_path() -> PathBuf {
 }
 
 /// Carpeta donde vive el log (y los assets de personalización):
-/// `%APPDATA%/whispr-open/`. La UI la usa para «Abrir carpeta».
+/// `%APPDATA%/whispr-open/` (Windows) o `~/.local/share/whispr-open/`
+/// (Linux, respeta `$XDG_DATA_HOME`). La UI la usa para «Abrir carpeta».
+#[cfg(target_os = "windows")]
 pub fn log_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("whispr-open")
+}
+
+/// Linux: log y assets en XDG data.
+#[cfg(not(target_os = "windows"))]
+pub fn log_dir() -> PathBuf {
+    crate::paths::app_data_dir()
 }
 
 /// Macro de log con tag, mismo estilo que `eprintln!`:
