@@ -1,26 +1,35 @@
 //! Inyección de texto en la aplicación activa (la que tiene el foco).
 //! Port del command `type_text` de la versión Tauri: copia al portapapeles
-//! con arboard y simula Ctrl+V con enigo. Solo Windows.
+//! con arboard y simula Ctrl+V con enigo (Windows); en Linux el pegado va
+//! por herramientas del compositor/teclado (wl-copy/wtype/ydotool) porque
+//! Wayland no permite a una app simular el teclado de otra (sin singleton
+//! global tipo LogitechHook).
 //!
 //! Comportamiento configurable (config.json → `Config::inject_settings`):
-//! - formato: `Paste` (portapapeles + Ctrl+V, el de siempre) o `Type`
-//!   (tecleo directo con enigo, sin tocar el portapapeles del usuario);
+//! - formato: `Paste` (portapapeles + pegado, el de siempre) o `Type`
+//!   (tecleo directo, sin tocar el portapapeles del usuario);
 //! - retardo opcional antes de pegar/teclear (ms; 0 = sin retardo);
 //! - filtro por título de la ventana activa: si no coincide, NO se inyecta
 //!   (y se devuelve `InjectOutcome::Skipped` para avisar sin tratarlo como
 //!   error).
+//! - backend de Linux (solo Linux): `wl-clipboard`, `ydotool` o `wtype`
+//!   (`inject_backend` en config.json; consulte CODIGO-CORE.md del port).
+//!
+//! Regla de la casa (port del original): NUNCA se pierde texto. La primera
+//! acción de todo pegado es copiar el turno al portapapeles; si el backend
+//! de teclado falla, queda ahí para el pegado manual.
 
 use std::time::Duration;
 
 /// Formato de inyección del turno en la app activa.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InjectFormat {
-    /// Copia al portapapeles (arboard) y pega con Ctrl+V. Default: la app
-    /// destino recibe el texto como pegado nativo (funciona en casi todo).
+    /// Copia al portapapeles (arboard / wl-copy) y pega con la combinación
+    /// del sistema (Ctrl+V en Windows; Ctrl+V con `wtype` en Linux).
     Paste,
-    /// Teclea el texto carácter a carácter con enigo (entrada unicode), sin
-    /// pisar el portapapeles del usuario. Más lento, pero no clobberea lo
-    /// que el usuario tuviera copiado.
+    /// Teclea el texto carácter a carácter (enigo en Windows; `ydotool type`
+    /// o `wtype` en Linux), sin pisar el portapapeles del usuario. Más lento,
+    /// pero no clobber-ea lo que el usuario tuviera copiado.
     Type,
 }
 
@@ -34,7 +43,62 @@ impl InjectFormat {
     }
 }
 
+/// Backend de inyección en LINUX (lo que en Windows hace enigo). Se elige
+/// con `inject_backend` en config.json; el valor por defecto es
+/// `wl-clipboard` (el que no requiere daemon ni permisos de grupo).
+///
+/// - `WlClipboard`: usa `wl-copy` (portapapeles Wayland) + `wtype` para la
+///   pulsación de Ctrl+V en la app con foco (byte \x16 por stdin). Sin
+///   daemons, sin autostart.
+/// - `Ydotool`: teclea con `ydotool` (uinput /dev/uinput del kernel), que
+///   inyecta en cualquier app y en cualquier compositor (Xwayland
+///   incluido), PERO exige `ydotoold` corriendo con acceso a /dev/uinput
+///   (permisos o grupo input). Si el daemon no está, degrada: el texto se
+///   copia al portapapeles y se avisa (nunca se pierde).
+/// - `Wtype`: teclea con `wtype`, binario ligero Wayland puro. Solo funciona
+///   en clientes Wayland; las apps que bloquean el teclado virtual
+///   (zwp_virtual_keyboard_v1) lo rechazan → se avisa y queda el
+///   portapapeles.
+///
+/// A validar en binario: el pegado via wtype en apps Electron/Qt concretas
+/// (algunas expresan su propio atajo de pegado) y el path del socket de
+/// ydotoold en Arch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LinuxInjectBackend {
+    /// wl-copy (portapapeles) + wtype para la pulsación del pegado,
+    /// sin daemons. Default.
+    WlClipboard,
+    /// ydotool (uinput vía `ydotoold`): tecleo directo, universal
+    /// (Xwayland incluido). Requiere daemon + permiso de /dev/uinput.
+    Ydotool,
+    /// wtype puro-Wayland: tecleo directo como teclado virtual.
+    Wtype,
+}
+
+impl LinuxInjectBackend {
+    /// Nombre en config.json del backend (`inject_backend`).
+    pub fn as_config_str(self) -> &'static str {
+        match self {
+            LinuxInjectBackend::WlClipboard => "wl-clipboard",
+            LinuxInjectBackend::Ydotool => "ydotool",
+            LinuxInjectBackend::Wtype => "wtype",
+        }
+    }
+
+    /// Etiqueta en español del selector de Ajustes.
+    pub fn label(self) -> &'static str {
+        match self {
+            LinuxInjectBackend::WlClipboard => "wl-clipboard (portapapeles + wtype)",
+            LinuxInjectBackend::Ydotool => "ydotool (uinput, requiere ydotoold)",
+            LinuxInjectBackend::Wtype => "wtype (teclea directo)",
+        }
+    }
+}
+
 /// Comportamiento de inyección (lo construye `Config::inject_settings`).
+/// Los tres campos comunes los lee también Ajustes; `backend` solo forma
+/// parte del struct en Linux (el selector enigo/ydotool/wtype no existe en
+/// Windows, donde enigo es el único backend).
 #[derive(Debug, Clone)]
 pub struct InjectSettings {
     pub format: InjectFormat,
@@ -44,6 +108,9 @@ pub struct InjectSettings {
     /// Filtro por título de la ventana activa (substring, sin distinguir
     /// mayúsculas): `None`/vacío = inyectar en cualquier app.
     pub window_filter: Option<String>,
+    /// Backend Linux (`inject_backend` en config.json). Solo Unix.
+    #[cfg(unix)]
+    pub backend: LinuxInjectBackend,
 }
 
 impl Default for InjectSettings {
@@ -63,10 +130,9 @@ pub enum InjectOutcome {
     Injected,
     /// La ventana activa (título) no pasó el filtro configurado.
     Skipped(String),
-    /// No había NINGUNA ventana con el foco al inyectar (escritorio al
-    /// descubierto, transición entre apps). Pegar a ciegas no tiene
-    /// destino: mejor avisar y dejar el texto en el portapapeles (lo copia
-    /// la app al recibir este resultado).
+    /// No había NINGUNA ventana con el foco (o el compositor no informa) al
+    /// inyectar. Pegar a ciegas no tiene destino: mejor avisar y dejar el
+    /// texto en el portapapeles (lo copia la app al recibir este resultado).
     NoForegroundWindow,
 }
 
@@ -97,6 +163,49 @@ pub fn window_matches_filter(title: &str, filter: Option<&str>) -> bool {
     }
 }
 
+/// Escanea una cadena JSON para extraer el valor string de un campo
+/// `"campo": "valor"`. Sin dependencias nuevas (std): extrae `title`/`class`
+/// del JSON plano de `hyprctl activewindow -j`. Nota: serde_json YA es
+/// dependencia del crate, pero este parser mínimo evita un roundtrip de
+/// tipos por solo dos campos. Función pura testeable en cualquier target.
+pub fn json_string_field(raw: &str, field: &str) -> Option<String> {
+    let needle = format!("\"{field}\"");
+    let start = raw.find(&needle)? + needle.len();
+    let rest = &raw[start..];
+    let colon = rest.find(':')?;
+    let rest = &rest[colon + 1..];
+    let rest = rest.trim_start();
+    let rest = rest.strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = rest.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '"' => return Some(out),
+            '\\' => {
+                let esc = chars.next()?;
+                out.push(match esc {
+                    'n' => '\n',
+                    't' => '\t',
+                    'r' => '\r',
+                    '"' => '"',
+                    '\\' => '\\',
+                    // \uXXXX: demasiado raro en título de ventana; se
+                    // inserta tal cual y se confía en la app destino.
+                    'u' => {
+                        let hex: String = chars.by_ref().take(4).collect();
+                        let cp = u32::from_str_radix(&hex, 16).ok()?;
+                        out.push(char::from_u32(cp)?);
+                        continue;
+                    }
+                    other => other,
+                });
+            }
+            other => out.push(other),
+        }
+    }
+    None
+}
+
 /// Copia `text` al portapapeles (best-effort, para cuando la inyección no
 /// puede hacerse: sin ventana activa, app destino que no acepta pegado…).
 /// El texto nunca se pierde si el usuario puede pegarlo a mano donde quiera.
@@ -110,20 +219,57 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
         .map_err(|err| format!("no se pudo copiar el texto al portapapeles: {err}"))
 }
 
-/// Stub fuera de Windows: mismo contrato que la versión Windows, pero aquí
-/// siempre `Err` (arboard contra el portapapeles del sistema es de Windows).
-#[cfg(not(target_os = "windows"))]
-pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
-    Err("el portapapeles solo está disponible en Windows".to_string())
+/// Linux: portapapeles Wayland vía `wl-copy` (wl-clipboard). Los bytes van
+/// por stdin (no CLI args: sin límite ni fuga de datos por `ps`). wl-copy
+/// se bifurca para servir el portapapeles y el padre sale → `output()`
+/// vuelve rápido.
+#[cfg(unix)]
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("wl-copy")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| {
+            format!("no se pudo lanzar wl-copy para el portapapeles (`pacman -S wl-clipboard`): {err}")
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(text.as_bytes())
+            .and_then(|_| stdin.flush())
+            .map_err(|err| format!("no se pudo escribir el texto en wl-copy: {err}"))?;
+    }
+    let salida = child
+        .wait_with_output()
+        .map_err(|err| format!("wl-copy terminó mal: {err}"))?;
+    if salida.status.success() {
+        Ok(())
+    } else {
+        // wl-copy limpia el stdin y bifurca aun si el compositor se saturó:
+        // un exit-code != 0 es el único indicio fiable de que el portapapeles
+        // no llegó a asignarse.
+        Err(format!(
+            "wl-copy terminó con error {}: no se pudo copiar al portapapeles Wayland",
+            salida.status
+        ))
+    }
 }
 
-/// Escribe `text` en la app que tiene el foco, según `opts` (formato, retardo
-/// y filtro de ventana).
-///
-/// Devuelve `Ok(InjectOutcome)` con el desenlace real —«omitida por filtro» y
-/// «sin ventana activa» NO son errores— o `Err` con mensaje en español si
-/// falla el portapapeles o el simulador de teclado. Nunca simula teclado a
-/// ciegas: sin ventana con el foco no hay destino donde pegar.
+/// Stub en targets que no sean Windows ni UNIX: sin portapapeles del sistema.
+#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
+    Err("el portapapeles solo está disponible en Windows/Linux".to_string())
+}
+
+/// Escribe `text` en la app con foco, según `opts` (formato, retardo y
+/// filtro de ventana). En Windows usa arboard + enigo (Ctrl+V / tecleo
+/// unicode); en Linux usa wl-copy/wtype/ydotool según `inject_backend` de
+/// config.json. Devuelve `Ok(InjectOutcome)` con el desenlace real y un
+/// `Err` con mensaje en español si falla el portapapeles o el teclado
+/// virtual. Nunca teclea a ciegas: sin ventana con el foco no hay destino.
 #[cfg(target_os = "windows")]
 pub fn inject_text_into_active_app(
     text: &str,
@@ -191,38 +337,214 @@ pub fn inject_text_into_active_app(
     }
 }
 
-/// Título de la ventana con foco (foreground) vía Win32. `None` si no hay
-/// ninguna; título vacío si la ventana no tiene texto.
-#[cfg(target_os = "windows")]
-fn foreground_window_title() -> Option<String> {
-    use std::ffi::OsString;
-    use std::os::windows::ffi::OsStringExt;
-    use winapi::um::winuser::{GetForegroundWindow, GetWindowTextLengthW, GetWindowTextW};
+// ---------------------------------------------------------------------------
+// Linux (Wayland/Hyprland): ninguna API permite simular el teclado de otra
+// app (no hay singleton global). El portapapeles va por wl-copy y la
+// «pulsación de Ctrl+V» la hace el teclado virtual disponible. Tres
+// backends + degradación elegante.
+// ---------------------------------------------------------------------------
 
-    unsafe {
-        let hwnd = GetForegroundWindow();
-        if hwnd.is_null() {
-            return None;
-        }
-        let len = GetWindowTextLengthW(hwnd);
-        let mut buf = vec![0u16; (len + 1) as usize];
-        let n = GetWindowTextW(hwnd, buf.as_mut_ptr(), buf.len() as i32);
-        if n <= 0 {
-            return Some(String::new());
-        }
-        buf.truncate(n as usize);
-        Some(OsString::from_wide(&buf).to_string_lossy().into_owned())
+/// Título de la ventana con foco, con `hyprctl activewindow -j` (Hyprland).
+/// `None` si no hay ventana activa (escritorio al descubierto) o si el
+/// compositor no respondió. Para Xwayland también funciona (el compositor
+/// ve sus ventanas anidadas).
+///
+/// A validar: en KDE/GNOME Wayland el mismo dato requeriría `swaymsg -t
+/// get_tree` / `kdotool`; si no se resuelve, el guard de foco se salta y el
+/// pegado cae en el portapapeles (no se teclea a ciegas nunca).
+#[cfg(unix)]
+fn foreground_window_title() -> Option<String> {
+    let output = std::process::Command::new("hyprctl")
+        .args(["activewindow", "-j"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let raw = String::from_utf8_lossy(&output.stdout);
+    // Un tile sin barra de título suele dar title "" pero class útil: el
+    // filtro del usuario se evalúa sobre title, y si viene vacío probamos
+    // con class (p. ej. "firefox" como clase de Firefox).
+    let title = json_string_field(&raw, "title").unwrap_or_default();
+    let class = json_string_field(&raw, "class").unwrap_or_default();
+    if title.is_empty() && !class.is_empty() {
+        Some(class)
+    } else {
+        Some(title)
     }
 }
 
-/// Stub fuera de Windows: la inyección (portapapeles + enigo) es de
-/// escritorio Windows; aquí siempre `Err`, con el mismo contrato.
-#[cfg(not(target_os = "windows"))]
+/// En targets que no son Windows ni UNIX no hay interrogado que hacer.
+#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+fn foreground_window_title() -> Option<String> {
+    None
+}
+
+/// ¿Está accesible el socket de `ydotoold`? Sin él, ydotool no puede
+/// inyectar nada (el binario cliente solo reconoce el daemon).
+/// Rutas típicas de Arch/Omarchy: /run/ydotoold/.socket o la estándar de
+/// XDG runtime dir. A validar en el binario.
+#[cfg(unix)]
+fn ydotoold_reachable() -> bool {
+    use std::path::Path;
+    let xdg = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    [
+        Path::new("/run/ydotoold/.socket"),
+        Path::new("/run/user/1000/.ydotool_socket"),
+        xdg.join(".ydotool_socket"),
+    ]
+    .iter()
+    .any(|path| path.exists())
+}
+
+/// Aviso del caso de degradación del backend ydotool: el daemon no está
+/// (`ydotoold` sin arrancar o el socket no accesible). Se degrada como
+/// `Ok(NoForegroundWindow)`: el caller de app.rs copia el texto al
+/// portapapeles y muestra «el texto quedó copiado en el portapapeles» —
+/// cierto, aunque no nombra al daemon culpable. Para no mentir, el detalle
+/// queda en el log de esta función (ver `ydotoold_reachable`).
+#[cfg(unix)]
+fn inject_with_ydotool(text: &str) -> Result<InjectOutcome, String> {
+    if !ydotoold_reachable() {
+        crate::log!(
+            "inject",
+            "backend ydotool sin ydotoold corriendo: el texto queda en el portapapeles \
+             (arranque del daemon: `ydotoold &` y permiso de grupo input en /dev/uinput)"
+        );
+        return Ok(InjectOutcome::NoForegroundWindow);
+    }
+    // `ydotool type -- <texto>` teclea el texto completo (modo unicode).
+    // Un ydotool que TERMINA con error puede haber dejado el texto a medias
+    // en el destino: se avisa con Ctrl+Z como rescate (mismo contrato que
+    // el mensaje del modo Type de Windows).
+    let status = std::process::Command::new("ydotool")
+        .arg("type")
+        .arg("--key-delay")
+        .arg("12")
+        .arg("--")
+        .arg(text)
+        .status()
+        .map_err(|err| format!("no se pudo lanzar ydotool (paquete `ydotool`): {err}"))?;
+    if !status.success() {
+        return Err("ydotool terminó con error: el texto puede haber quedado a medias (Ctrl+Z en la app destino lo deshace)".to_string());
+    }
+    Ok(InjectOutcome::Injected)
+}
+
+/// wtype: teclear el texto por stdin (no CLI args, sin límite). Solo
+/// funciona si el destino es un cliente Wayland que no bloquee el teclado
+/// virtual (zwp_virtual_keyboard_v1); sin `wtype` en PATH → mensaje con
+/// cómo instalarlo (`pacman -S wtype`).
+#[cfg(unix)]
+fn inject_with_wtype(text: &str) -> Result<InjectOutcome, String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("wtype")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|err| {
+            format!("no se pudo lanzar wtype (paquete `wtype` de Arch extra): {err}")
+        })?;
+    if let Some(mut stdin) = child.stdin.take() {
+        stdin
+            .write_all(text.as_bytes())
+            .and_then(|_| stdin.flush())
+            .map_err(|err| format!("no se pudo escribir el texto en wtype: {err}"))?;
+    }
+    let salida = child
+        .wait_with_output()
+        .map_err(|err| format!("wtype terminó mal: {err}"))?;
+    if salida.status.success() {
+        Ok(())
+    } else {
+        Err("wtype terminó con error: la app destino puede estar bloqueando el teclado virtual \
+             (zwp_virtual_keyboard_v1); prueba con el portapapeles o el backend ydotool"
+            .to_string())
+    }
+}
+
+/// `wl-copy` + pulsación de pegado con `wtype`: wtype interpreta el byte de
+/// control \x16 (SYN, el código del Ctrl+V en streams de terminal) como la
+/// secuencia Ctrl+V y no como texto («wtype type: reads from stdin... byte
+/// sequences for modifier prefixes»). En Wayland NO hay Ctrl+V global
+/// fiable, pero aquí el destino TIENE el foco (sin foco se corta antes): la
+/// pulsación virtual entra directa en la app que el usuario ya está
+/// mirando. A validar en binario: compositor y app destino concretos.
+#[cfg(unix)]
+fn inject_with_wl_clipboard(text: &str) -> Result<InjectOutcome, String> {
+    copy_to_clipboard(text)?;
+    inject_with_wtype("\x16") // \x16 a wtype = pulso Ctrl+V
+}
+
+/// Inyección Linux completa: ventana → filtro → retardo → backend.
+#[cfg(unix)]
+pub fn inject_text_into_active_app(
+    text: &str,
+    opts: &InjectSettings,
+) -> Result<InjectOutcome, String> {
+    // 1) ¿Hay app con foco a la que inyectar? Mismo guard que en Windows:
+    //    pegar a ciegas no tiene destino (aunque sin título no se pueda
+    //    filtrar, al menos evita el disparo al vacío).
+    let Some(title) = foreground_window_title() else {
+        crate::log!(
+            "inject",
+            "no hay ventana con el foco (o sin hyprctl); inyección omitida"
+        );
+        return Ok(InjectOutcome::NoForegroundWindow);
+    };
+    // 2) Filtro por título ANTES de tocar portapapeles o teclado.
+    if !window_matches_filter(&title, opts.window_filter.as_deref()) {
+        crate::log!(
+            "inject",
+            "ventana activa «{title}» no pasa el filtro «{}»; inyección omitida",
+            opts.window_filter.as_deref().unwrap_or_default()
+        );
+        return Ok(InjectOutcome::Skipped(title));
+    }
+    // 3) Retardo configurable (idéntico al camino Windows).
+    std::thread::sleep(opts.delay);
+    // 4) Backend elegido en config.
+    match opts.backend {
+        LinuxInjectBackend::WlClipboard => match opts.format {
+            InjectFormat::Paste => inject_with_wl_clipboard(text),
+            InjectFormat::Type => inject_with_wtype(text),
+        },
+        LinuxInjectBackend::Ydotool => match opts.format {
+            // Pegar con ydotool = copiar al portapapeles y hacer que teclee
+            // el atajo Ctrl+V (el byte \x16 llega al keymap virtual como la
+            // combinación del pegado). A validar en binario: con ydotoold
+            // corriendo, la app destino tiene que aceptar el Ctrl+V.
+            InjectFormat::Paste => {
+                copy_to_clipboard(text)?;
+                inject_with_ydotool("\x16")
+            }
+            // Teclear es ydotool de siempre (ydotool type -- <texto>).
+            InjectFormat::Type => inject_with_ydotool(text),
+        },
+        LinuxInjectBackend::Wtype => match opts.format {
+            // Con wtype como teclado, el pegado clásico también puede
+            // hacerse (portapapeles + Ctrl+V virtual), manteniendo el texto
+            // copiado primero (regla «nunca se pierde texto»).
+            InjectFormat::Paste => inject_with_wl_clipboard(text),
+            InjectFormat::Type => inject_with_wtype(text),
+        },
+    }
+}
+
+/// Stub en targets que no son Windows ni UNIX: mismo contrato que en el
+/// resto de plataformas, siempre `Err`.
+#[cfg(not(any(target_os = "windows", target_os = "unix")))]
 pub fn inject_text_into_active_app(
     _text: &str,
     _opts: &InjectSettings,
 ) -> Result<InjectOutcome, String> {
-    Err("la inyección de texto solo está disponible en Windows".to_string())
+    Err("la inyección de texto está disponible en Windows y Linux".to_string())
 }
 
 #[cfg(test)]
@@ -259,6 +581,16 @@ mod tests {
     }
 
     #[test]
+    fn labels_de_backend_linux() {
+        assert_eq!(
+            LinuxInjectBackend::WlClipboard.as_config_str(),
+            "wl-clipboard"
+        );
+        assert_eq!(LinuxInjectBackend::Ydotool.as_config_str(), "ydotool");
+        assert_eq!(LinuxInjectBackend::Wtype.as_config_str(), "wtype");
+    }
+
+    #[test]
     fn cada_resultado_de_inyeccion_tiene_su_aviso_en_espanol() {
         // Requisito de robustez: ningún resultado se queda mudo; los tres
         // casos terminan en una frase corta y accionable para la UI.
@@ -272,10 +604,33 @@ mod tests {
         assert!(no_window.contains("portapapeles"), "{no_window}");
     }
 
-    #[cfg(not(target_os = "windows"))]
     #[test]
-    fn stub_falla_fuera_de_windows() {
-        let opts = InjectSettings::default();
-        assert!(inject_text_into_active_app("hola", &opts).is_err());
+    fn json_string_field_saca_el_campo_de_hyprctl_activewindow() {
+        // Muestra real (recortada) de `hyprctl activewindow -j`.
+        let raw = r#"{"address":"0x5f33e1d5f60","title":" • Minano - kanban — Zona","initialTitle":"Minano","class":"Minano","xwayland":false}"#;
+        assert_eq!(
+            json_string_field(raw, "title"),
+            Some(" • Minano - kanban — Zona".to_string())
+        );
+        assert_eq!(json_string_field(raw, "class"), Some("Minano".to_string()));
+        assert_eq!(json_string_field(raw, "missing"), None);
+        // Escapes: \n y \" dentro del título.
+        let con_escapes = r#"{"title":"línea\nvacia y \"cita\""}"#;
+        assert_eq!(
+            json_string_field(con_escapes, "title"),
+            Some("línea\nvacia y \"cita\"".to_string())
+        );
+    }
+
+    #[test]
+    fn backend_labels_no_vacios() {
+        for b in [
+            LinuxInjectBackend::WlClipboard,
+            LinuxInjectBackend::Ydotool,
+            LinuxInjectBackend::Wtype,
+        ] {
+            assert!(!b.label().is_empty());
+            assert!(!b.as_config_str().is_empty());
+        }
     }
 }

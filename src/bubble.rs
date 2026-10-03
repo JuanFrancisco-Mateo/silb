@@ -192,6 +192,13 @@ fn corner_bottom_left(win: Size, monitor: Size) -> Point {
 /// mapean a winit (`WindowAttributesExtWindows`, `with_window_level`,
 /// `with_transparent`).
 ///
+/// En Linux (winit Wayland): `transparent` funciona sobre el alpha del
+/// buffer; `level` AlwaysOnTop llega como preferencia al compositor
+/// (Hyprland la honra con windowrule o la ignora — se recomienda el
+/// `float, pin` por title), `skip_taskbar` el equivalente (dock to all
+/// workspaces) lo maneja el compositor. Nada de esto rompe: son
+/// preferencias y el fallback es el comportamiento natural de Hyprland.
+///
 /// Parámetros del Config (Ajustes → Apariencia): tamaño del círculo
 /// (`bubble_size`) y esquina de anclaje (`bubble_corner`). El min/max de la
 /// ventana es el rango COMPLETO 48–72: si fuese el tamaño fijo, el resize en
@@ -474,99 +481,127 @@ impl iced_winit::Program for WhisprApp {
 // WS_EX_NOACTIVATE: la burbuja nunca roba el foco
 // ---------------------------------------------------------------------------
 
-/// Aplica a la burbuja lo que dicta el `Config`, en cuanto la ventana existe:
-/// WS_EX_NOACTIVATE (+TOOLWINDOW, para que los clics no roben el foco),
-/// posición —la persistida del último arrastre si existe, si no la esquina
-/// configurada— y tamaño. Se lanza en un hilo porque la ventana puede tardar
-/// unas decenas de ms en crearse (el llamador es `Message::BubbleOpened`).
+/// Aplica a la burbuja lo que dicta el `Config`, en cuanto la ventana existe.
+///
+/// El doc-comment original (Windows) describe el detalle winapi; en Linux el
+/// caso es DISTINTO y merece su propia explicación:
+/// - El siempre-encima NO lo maneja winit: un `float, pin` por título en
+///   hyprland.conf hace el papel de WS_EX_TOPMOST (así se recomienda, con
+///   pasos en docs/PORT-LINUX/CODIGO-CORE.md).
+/// - WS_EX_NOACTIVATE equivale a NO pedir nunca el foco: ni `gain_focus`,
+///   ni `request_user_attention`, ni acciones que roben el foco; en Wayland
+///   el foco de otra app pasa por xdg_activation_v1 (token del cliente con
+///   foco), así que la app necesita estar activa para pedirlo — en iced 0.13
+///   `window::gain_focus` es Unsupported en Wayland (docs de window::Action).
+/// - Arrastre sin captura global: ver los stubs de ratón más abajo.
+#[cfg(target_os = "windows")]
 pub fn apply_bubble_extras(cfg: &Config) {
-    #[cfg(target_os = "windows")]
-    {
-        let corner = cfg.bubble_corner();
-        let size = cfg.bubble_size().px();
-        let pos = cfg.bubble_position();
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            loop {
-                if let Some(hwnd) = find_bubble_hwnd() {
-                    apply_noactivate(hwnd);
-                    let (x, y) = match pos {
-                        Some((x, y)) => (x, y),
-                        None => corner_position(corner, hwnd, size),
-                    };
-                    let s = size as i32;
-                    unsafe {
-                        SetWindowPos(
-                            hwnd,
-                            std::ptr::null_mut(),
-                            x,
-                            y,
-                            s,
-                            s,
-                            SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
-                    }
-                    crate::log!("bubble", "burbuja aplicada: noact+pos ({x},{y})+tamaño {s}");
-                    return;
-                }
-                if std::time::Instant::now() >= deadline {
-                    crate::log!(
-                        "bubble",
-                        "no se encontró la ventana de la burbuja para aplicar los extras"
+    let corner = cfg.bubble_corner();
+    let size = cfg.bubble_size().px();
+    let pos = cfg.bubble_position();
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(hwnd) = find_bubble_hwnd() {
+                apply_noactivate(hwnd);
+                let (x, y) = match pos {
+                    Some((x, y)) => (x, y),
+                    None => corner_position(corner, hwnd, size),
+                };
+                let s = size as i32;
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        std::ptr::null_mut(),
+                        x,
+                        y,
+                        s,
+                        s,
+                        SWP_NOZORDER | SWP_NOACTIVATE,
                     );
-                    return;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                crate::log!("bubble", "burbuja aplicada: noact+pos ({x},{y})+tamaño {s}");
+                return;
             }
-        });
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = cfg;
-    }
+            if std::time::Instant::now() >= deadline {
+                crate::log!(
+                    "bubble",
+                    "no se encontró la ventana de la burbuja para aplicar los extras"
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
+/// Linux: los extras nativos (noactivate forzado por exstyle, mover por
+/// hwnd) no existen; la ventana nace ya sin robo de foco y Hyprland se
+/// encarga del pin. Solo queda el log informativo (la burbuja ya es visible
+/// por diseño, con los settings iced de `bubble_settings`).
+#[cfg(not(target_os = "windows"))]
+pub fn apply_bubble_extras(cfg: &Config) {
+    crate::log!(
+        "bubble",
+        "burbuja Linux: sin WS_EX_NOACTIVATE; el no-robo de foco es el default de \
+         Wayland y el always-on-top se recomienda via windowrulev2 (float, pin) \
+         por title/class «{BUBBLE_TITLE}»"
+    );
+    let _ = cfg;
 }
 
 /// Mueve la burbuja EN CALIENTE a la esquina seleccionada en Ajustes.
 /// Reposiciona sin cambiar el tamaño (el resize es competencia de
 /// `BubbleSizeChanged` / `window::resize`). Se usa un hilo porque la ventana
 /// puede no existir todavía (mismo patrón que `apply_bubble_extras`).
+#[cfg(target_os = "windows")]
 pub fn move_to_corner(corner: BubbleCorner, size: f32) {
-    #[cfg(target_os = "windows")]
-    {
-        std::thread::spawn(move || {
-            let deadline = std::time::Instant::now() + Duration::from_secs(3);
-            loop {
-                if let Some(hwnd) = find_bubble_hwnd() {
-                    let (x, y) = corner_position(corner, hwnd, size);
-                    unsafe {
-                        SetWindowPos(
-                            hwnd,
-                            std::ptr::null_mut(),
-                            x,
-                            y,
-                            0,
-                            0,
-                            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
-                        );
-                    }
-                    crate::log!("bubble", "burbuja movida a {} en ({x},{y})", corner.label());
-                    return;
-                }
-                if std::time::Instant::now() >= deadline {
-                    crate::log!(
-                        "bubble",
-                        "no se encontró la ventana para mover a la esquina"
+    std::thread::spawn(move || {
+        let deadline = std::time::Instant::now() + Duration::from_secs(3);
+        loop {
+            if let Some(hwnd) = find_bubble_hwnd() {
+                let (x, y) = corner_position(corner, hwnd, size);
+                unsafe {
+                    SetWindowPos(
+                        hwnd,
+                        std::ptr::null_mut(),
+                        x,
+                        y,
+                        0,
+                        0,
+                        SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE,
                     );
-                    return;
                 }
-                std::thread::sleep(Duration::from_millis(100));
+                crate::log!("bubble", "burbuja movida a {} en ({x},{y})", corner.label());
+                return;
             }
-        });
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = (corner, size);
-    }
+            if std::time::Instant::now() >= deadline {
+                crate::log!(
+                    "bubble",
+                    "no se encontró la ventana para mover a la esquina"
+                );
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+    });
+}
+
+/// Linux: mover la burbuja a esquina via iced::window::move_to (cambios de
+/// esquina desde Ajustes), dependiente de la sincronización con los
+/// mensajes de UI. A validar: winit moved-to en Hyprland puede ignorar el
+/// destino (su política de posicionamiento); si el turno del usuario lo
+/// exige, dejar backoff hasta que Hyprland agregue opciones por IPC.
+#[cfg(not(target_os = "windows"))]
+pub fn move_to_corner(corner: BubbleCorner, size: f32) {
+    let _ = (corner, size);
+    // Sin una Task de iced aquí (la firma es sync y sin Message), lo que
+    // move_to_corner puede hacer es registrar la intención en el log: la
+    // esquina se re-aplica en el próximo BubbleOpened.
+    crate::log!(
+        "bubble",
+        "move_to_corner Linux: no-op (la esquina manda en el próximo BubbleOpened)"
+    );
 }
 
 /// Posición FÍSICA actual de la ventana de la burbuja (px de pantalla, la
@@ -585,8 +620,11 @@ pub fn bubble_window_position() -> Option<(i32, i32)> {
     }
 }
 
-/// Stub fuera de Windows: sin ventana nativa no hay rectángulo que leer. Se
-/// mantiene la misma firma para que `app.rs` compile en cualquier target.
+/// Linux: sin handle nativo que interrogar, iced/winit no expone la
+/// posición sincrónica (GetPosition es una Task asíncrona). Devuelve `None`
+/// y el efecto esperado es que NO se persista posición — el arrastre Linux
+/// no mueve la ventana nativa (ver `BubbleDrag`), así que no hay posición
+/// nueva que guardar.
 #[cfg(not(target_os = "windows"))]
 pub fn bubble_window_position() -> Option<(i32, i32)> {
     None
@@ -639,6 +677,8 @@ fn find_bubble_hwnd() -> Option<BubbleHwnd> {
 
 #[cfg(not(target_os = "windows"))]
 fn find_bubble_hwnd() -> Option<BubbleHwnd> {
+    // En Wayland no hay handle global buscable por título (FindWindowW es
+    // winapi); la burbuja se gestiona por `window::Id` de iced en la app.
     None
 }
 
@@ -704,8 +744,10 @@ pub struct BubbleDrag {
     last: (i32, i32),
 }
 
-/// Stub fuera de Windows: el arrastre es winapi puro (`SetCapture` +
-/// `SetWindowPos`), así que aquí no hay nada que sostener.
+/// Stub fuera de Windows: el arrastre manual (winapi puro) no existe; en
+/// Linux los stubs de abajo (start/follow/is_captured/end) devuelven
+/// valores neutros para no disparar el watchdog de robo de captura del Poll
+/// (100 ms) y el movimiento de la ventana queda a cargo del compositor.
 #[cfg(not(target_os = "windows"))]
 pub struct BubbleDrag {
     _private: (),
@@ -893,8 +935,11 @@ pub fn right_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_RBUTTON) as u16) & 0x8000 != 0 }
 }
 
-/// Stub fuera de Windows: `true` («botón derecho pulsado») para que la red de
-/// seguridad del arrastre no cancele por un soltado que aquí no existe.
+/// Linux: sin poll del estado físico del ratón fuera de la ventana (Wayland
+/// no lo expone a apps normales), la red de seguridad afirma «botón
+/// pulsado» para no cancelar un arrastre por evento perdido. Concreto: el
+/// arrastre Linux queda corto (se puede soltar fuera de la burbuja sin
+/// cerrarlo hasta el siguiente BubbleRightRelease); limitación documentada.
 #[cfg(not(target_os = "windows"))]
 pub fn right_button_down() -> bool {
     true
@@ -911,7 +956,12 @@ pub fn capture_left_mouse() {
     }
 }
 
-/// Stub fuera de Windows (la captura del ratón es winapi puro).
+/// Linux: la captura global de entrada no existe (Wayland). La consecuencia
+/// práctica es pequeña: si el cursor sale de los 56 px de la burbuja
+/// mientras se dicta desde ella, el CursorLeft suelta el turno ANTES (sin
+/// esperar a que físicamente se libere el botón). El flujo normal (abrir →
+/// grabar → soltar dentro de la burbuja) queda igual; limitación en
+/// CODIGO-CORE.md.
 #[cfg(not(target_os = "windows"))]
 pub fn capture_left_mouse() {}
 
@@ -933,7 +983,11 @@ pub fn left_button_down() -> bool {
     unsafe { (GetAsyncKeyState(VK_LBUTTON) as u16) & 0x8000 != 0 }
 }
 
-/// Stub fuera de Windows: `false` = ningún botón izquierdo pulsado.
+/// Linux: `false` («ya no pulsado») hace que el Poll cierre el turno
+/// colgado al detectar el soltado real (BubbleRelease ya llegó o llegará
+/// por el canal normal de eventos). Concreto: si el CursorLeft dejó a la
+/// burbuja sin ver el soltado, el turno de dictado se cierra limpio en el
+/// próximo Poll (100 ms) con lo ya grabado; limitación en CODIGO-CORE.md.
 #[cfg(not(target_os = "windows"))]
 pub fn left_button_down() -> bool {
     false
