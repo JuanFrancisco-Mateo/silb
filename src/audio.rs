@@ -158,6 +158,18 @@ impl AudioCapture {
             .default_input_config()
             .map_err(|error| format!("no se pudo abrir la config de entrada: {error}"))?;
         let rate = config.sample_rate().0;
+        crate::log!(
+            "audio",
+            "config de entrada nativa: {rate} Hz, {} canales, {:?} ({}); \
+             buffer cpal = Default (el driver/elige)",
+            config.channels(),
+            config.sample_format(),
+            if cfg!(target_os = "linux") {
+                "host cpal ALSA→PipeWire/ALSA"
+            } else {
+                "host cpal nativo del SO"
+            },
+        );
         let samples = Arc::new(Mutex::new(Vec::new()));
         let level = Arc::new(AtomicU32::new(0));
         // Canal de errores: el callback de cpal corre en su propio hilo y no
@@ -263,6 +275,44 @@ pub(crate) fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
 pub fn friendly_stream_error(_raw: &str) -> String {
     "el micrófono se desconectó o dejó de responder a mitad de la grabación".to_string()
 }
+
+/// Notas del port Linux (t_7ac526a3) — cpal 0.15 en este entorno:
+///
+/// 1. HOST: cpal 0.15 en Linux habla ALSA por defecto (crates.io cpal
+///    0.15.3: hosts Linux = ALSA/JACK; PipeWire se consume vía su plugin
+///    `pipewire-alsa`, no por un host dedicado — el feature `pipewire` es
+///    opcional y NO se activa en el port para no añadir libpipewire-dev
+///    como requisito de build). En Omarchy (PipeWire) el flujo real es
+///    app → cpal/ALSA → plugin pipewire-alsa → PipeWire. Es el mismo
+///    camino que usan la mayoría de apps GUI y soporta el micrófono
+///    normal y la elección de dispositivo (los nombres llegan como ids
+///    ALSA tipo «hw:0,0» o nombres de perfil de pipewire-alsa).
+/// 2. BUFFER: cpal usa `BufferSize::Default` al pedir el config default.
+///    Para CAPTURA (input) el buffer de entrada NO introduce retardo
+///    audible en dictado (consumimos lo que el driver acumula); no aplica
+///    el bug de alta latencia de salida reportado en cpal issue #1029
+///    (playback pipewire-alsa con BufferSize::Default → buffers de
+///    ~21 s). Si el usuario reporta captura entrecortada con buffer
+///    gigante (misma familia de bug en capture), el fix sería pedir
+///    `SupportedStreamConfig` con `BufferSize::Fixed(1024)`; se deja
+///    documentado, NO se hace (no medido, y toca el camino común Win/Linux
+///    sin necesidad).
+/// 3. SAMPLE RATE ALTO: el claimed «bug conocido de cpal 0.15 en Wayland
+///    con sample rates altos» NO existe como bug de cpal en Wayland:
+///    Wayland no participa en el audio (los hosts son ALSA/PipeWire, no
+///    Wayland). Lo que sí existe: (a) issue #1029 (buffer gigante con
+///    pipewire-alsa y BufferSize::Default, ver nota 2 — playback) y
+///    (b) enumeración de dispositivos que devuelve ids ALSA no legibles
+///    para la UI. Ninguno bloquea: para captura a 44.1/48 kHz con
+///    default config el camino funciona, y el bug de síntomas de alta
+///    latencia no aplica a la ruta de dictado (buffer por turnos, no
+///    streaming). SE QUEDA documentado, sin parche especulativo.
+/// 4. Micro no conectado / sin devices: `default_input_device()` da None
+///    → ya hay mensaje español en `AudioCapture::start()` («no hay
+///    dispositivo de entrada»).
+/// 5. TODO lo anterior es A VALIDAR con el build real por el usuario
+///    (regla de la task: sin cargo build; la doc honesta va en
+///    docs/PORT-LINUX/AUDIO-RUNTIME.md).
 
 fn build_stream(
     device: &cpal::Device,
