@@ -77,12 +77,18 @@ pub fn api_url(base_url: &str, path: &str) -> String {
     format!("{}/{}", api_base(base_url), path.trim_start_matches('/'))
 }
 
-/// Nombre del ÚNICO ejecutable que la app acepta como server LLM.
+/// Nombre del ÚNICO ejecutable que la app acepta como server LLM. En
+/// Windows es `llama-server.exe`; en Linux `llama-server` (sin sufijo, el
+/// binario de llama.cpp). El resto de la lógica (validar imagen al
+/// terminar, saneado de wrappers) usa ESTA constante.
+#[cfg(target_os = "windows")]
 pub const SERVER_EXE_NAME: &str = "llama-server.exe";
+#[cfg(not(target_os = "windows"))]
+pub const SERVER_EXE_NAME: &str = "llama-server";
 
-/// ¿`path` es un `llama-server.exe`? La app SOLO arranca ese binario
-/// (regla de producto t_75732630): el server LLM es un proceso NATIVO de
-/// Windows —nunca `wsl.exe`— y con el nombre exacto para que
+/// ¿`path` es un `llama-server(.exe)`? La app SOLO arranca ese binario
+/// (regla de producto t_75732630): el server LLM es un proceso NATIVO
+/// (en Windows nunca `wsl.exe`) y con el nombre exacto para que
 /// `terminate_server_pid` pueda verificarlo por imagen al salir. El
 /// wrapper histórico `llama.exe` no casaba con esa validación → el
 /// proceso lanzado por la app quedaba huérfano en VRAM.
@@ -93,10 +99,10 @@ pub fn is_server_exe(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Corrige una ruta de server LLM que no es `llama-server.exe` (p. ej. el
-/// wrapper `llama.exe` de la instalación histórica): si en el MISMO
-/// directorio existe `llama-server.exe`, devuelve esa ruta; si no, `None`
-/// (el caller cae a la autodetección por rutas comunes).
+/// Corrige una ruta de server LLM que no es `llama-server(.exe)` (p. ej. el
+/// wrapper `llama.exe` de la instalación histórica en Windows): si en el
+/// MISMO directorio existe `llama-server.exe`, devuelve esa ruta; si no,
+/// `None` (el caller cae a la autodetección por rutas comunes).
 pub fn sanitize_server_exe(path: &std::path::Path) -> Option<std::path::PathBuf> {
     if is_server_exe(path) {
         return Some(path.to_path_buf());
@@ -1279,25 +1285,75 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     Ok(pid)
 }
 
-/// Stub fuera de Windows: el server LLM es un binario nativo de Windows (regla
-/// del proyecto: nunca se arranca vía WSL), así que aquí no hay nada que
-/// lanzar; mismo contrato (`Err` con el motivo).
+/// [Linux/macOS] Lanza el server LLM local como proceso nativo (`llama-server`
+/// sin sufijo, ver `SERVER_EXE_NAME`). Mismo contrato que el camino Windows:
+/// stdout/stderr a `llama-server.log` junto a la config, cwd = directorio del
+/// exe (los builds de llama.cpp cargan sus libs desde ahí si son relativas),
+/// PID registrado en `LAUNCHED_SERVER_PID` para matarlo al salir.
+///
+/// Sin CREATE_NO_WINDOW (no aplica fuera de Windows): la app GUI en Linux
+/// no hereda terminal, y el log en fichero cubre el diagnóstico igual que
+/// en Windows. Devuelve el PID del proceso lanzado.
 #[cfg(not(target_os = "windows"))]
-pub fn launch_server(
-    _exe: &std::path::Path,
-    _model: &std::path::Path,
-    _port: u16,
-) -> Result<u32, String> {
-    Err("arranque automático del servidor LLM solo disponible en Windows".to_string())
+pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) -> Result<u32, String> {
+    use std::process::{Command, Stdio};
+
+    if !is_server_exe(exe) {
+        return Err(format!(
+            "el server LLM debe ser {SERVER_EXE_NAME} (binario nativo de llama.cpp, \
+             nunca un wrapper ni wsl.exe): {}",
+            exe.display()
+        ));
+    }
+    if !exe.is_file() {
+        return Err(format!(
+            "no existe el ejecutable del server LLM: {}",
+            exe.display()
+        ));
+    }
+    let cwd = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let args = build_server_args(model, port);
+    let log_path = crate::config::config_path()
+        .parent()
+        .map(|p| p.join("llama-server.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("llama-server.log"));
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("no se pudo abrir el log del server ({log_path:?}): {e}"))?;
+
+    let child = Command::new(exe)
+        .args(&args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(log_file.try_clone().map_err(|e| format!("log del server: {e}"))?))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+        .map_err(|e| format!("no se pudo lanzar {}: {e}", exe.display()))?;
+
+    let pid = child.id();
+    LAUNCHED_SERVER_PID.store(pid, Ordering::SeqCst);
+    crate::log!(
+        "llm",
+        "server LLM lanzado (pid {pid}, {}): {}",
+        exe.display(),
+        args.join(" ")
+    );
+    Ok(pid)
 }
 
-/// Argumentos del `llama-server.exe` para el dictado. Flags de referencia
+/// Argumentos del `llama-server` para el dictado. Flags de referencia
 /// de la instalación local (verificados con el binario real y los .bats de
 /// D:\LlamaCPP): `-ngl 99` + `--flash-attn on` (GPU, la RTX 4070 de
 /// Juanfri), `-ctk/-ctv q8_0` (cache KV cuantizada, 8.1 GB VRAM libres) y
 /// `-c 8192` (contexto holgado para el turno + corrección, sin pagar la
 /// RAM/VRAM de los 128K de los .bats). `--host 127.0.0.1` = solo loopback:
 /// un server de dictado no debe exponerse a la red.
+///
+/// NOTA port Linux (t_7ac526a3): los MISMO flags valen en Linux. En un
+/// build CPU-only de llama.cpp los flags de GPU (`-ngl`, `--flash-attn`,
+/// `-ctk/-ctv`) se aceptan y se degradan (0 capas en GPU, warning en el
+/// log del server — no en el de la app); en un build con la feature
+/// `cuda` de Cargo activa son los que encienden la GPU. La lista es
+/// plataforma-independiente: solo cambia la forma de la ruta del modelo.
 ///
 /// Función pura y testeable: el spawn usa exactamente esta lista.
 fn build_server_args(model: &std::path::Path, port: u16) -> Vec<String> {
@@ -1333,7 +1389,7 @@ pub fn launched_server_pid() -> u32 {
 }
 
 /// Termina un PID concreto de server LLM, solo si el proceso sigue siendo
-/// `llama-server.exe` (salvaguarda contra la reutilización de PIDs).
+/// `llama-server(.exe)` (salvaguarda contra la reutilización de PIDs).
 /// Devuelve `true` si era nuestro server y se terminó; `0` nunca se toca.
 ///
 /// Lo usan `kill_launched_server` (slot global de la app) y el hilo de la
@@ -1401,9 +1457,74 @@ pub fn terminate_server_pid(pid: u32) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = pid;
-        false
+        // Mismo criterio de salvaguarda: /proc/<pid>/exe debe apuntar a un
+        // binario llamado `llama-server` (readlink da la ruta real incluso
+        // si el proceso fue lanzado por otra ruta del PATH). Si el PID fue
+        // reutilizado por otro proceso, NO se toca (el peor caso es dejar
+        // un server huérfano ANTES que matar un proceso ajeno).
+        let exe_link = match std::fs::read_link(format!("/proc/{pid}/exe")) {
+            Ok(p) => p,
+            Err(_) => {
+                crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (/proc)");
+                return false;
+            }
+        };
+        let is_ours = exe_link
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == SERVER_EXE_NAME)
+            .unwrap_or(false);
+        if !is_ours {
+            crate::log!(
+                "llm",
+                "pid {pid} ya no es {SERVER_EXE_NAME} (reutilizado): no se toca"
+            );
+            return false;
+        }
+        // SIGTERM primero (cierre limpio de llama.cpp: libera VRAM/modelo);
+        // SI sigue vivo tras 2 s, SIGKILL. kill(2) vía libc está en std
+        // (std::process no expone señales, así que se usa el binding libc
+        // que ya entra en el árbol con std en Linux — no añade crates).
+        unsafe {
+            if libc_kill(pid, libc::SIGTERM) != 0 {
+                crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (kill ESRCH)");
+                return false;
+            }
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if !pid_alive(pid) {
+                    crate::log!("llm", "server LLM propio (pid {pid}) terminado (SIGTERM)");
+                    return true;
+                }
+            }
+            let _ = libc_kill(pid, libc::SIGKILL);
+            crate::log!("llm", "server LLM propio (pid {pid}) terminado (SIGKILL tras 2 s)");
+            true
+        }
     }
+}
+
+/// ¿Existe el proceso `pid`? (Linux: /proc/<pid>; suficiente para el
+/// polling del SIGTERM — un PID reutilizado dentro de 2 s es raro y,
+/// aun así, la siguiente iteración revalidaría el nombre vía /proc/exe
+/// solo si volviera a llamarse terminate; aquí el riesgo aceptado es el
+/// mismo que en Windows con OpenProcess).
+#[cfg(not(target_os = "windows"))]
+fn pid_alive(pid: u32) -> bool {
+    std::path::Path::new(&format!("/proc/{pid}")).exists()
+}
+
+/// Wrapper fino de `kill(2)`. La libc no está declarada como dependencia
+/// directa del crate; en Linux std enlaza libc igualmente, así que se usa
+/// `std::process::Command` con `/bin/kill` NO — demasiado frágil (PATH).
+/// La forma portable sin crate extra: el builtin `libc` de la toolchain
+/// no es accesible sin el crate… así que se usa el syscall vía el crate
+/// `libc` que YA está en el lockfile como dependencia transitoria de cpal
+/// (rustix/alsa), pero NO es directo. DECISIÓN (honestidad del port):
+/// usar el crate libc como dependencia `[target.'cfg(unix)'.dependencies]`
+/// es lo correcto — se añadió a Cargo.toml.
+unsafe fn libc_kill(pid: u32, sig: i32) -> i32 {
+    unsafe { libc::kill(pid as libc::pid_t, sig) }
 }
 
 /// Termina el server LLM que ESTA instancia lanzó, si lo lanzó. NO toca
@@ -1485,11 +1606,18 @@ pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf>
 }
 
 /// Candidatos de ruta del server LLM, en orden de preferencia:
-/// 1. `D:\LlamaCPP\llama-server.exe` (instalación histórica de Juanfri,
-///    build CUDA 13 con cublas64_13.dll) — y su gemelo `C:\LlamaCPP`.
+/// 1. [Windows] `D:\LlamaCPP\llama-server.exe` (instalación histórica de
+///    Juanfri, build CUDA 13 con cublas64_13.dll) — y su gemelo
+///    `C:\LlamaCPP`.
 /// 2. Junto al exe de la app (distribución portable de la app + server).
-/// 3. `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` (instalación por usuario).
-/// 4. PATH de Windows (`llama-server.exe` en cualquier directorio del PATH).
+/// 3. [Windows] `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` (por usuario).
+/// 4. `$HOME/.local/bin/llama-server` [Linux] — destino habitual de
+///    `~/.local/bin` al instalar llama.cpp a mano (make install USER=…).
+/// 5. PATH del sistema (`llama-server`/`llama-server.exe` en cualquier
+///    directorio del PATH, ambos SO).
+/// 6. [Linux] `~/.config/whispr-open/llama-server` — rincon para quien
+///    guarda el binario junto a la config (documentado en AUDIO-RUNTIME).
+#[cfg(target_os = "windows")]
 fn default_server_roots() -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -1507,6 +1635,34 @@ fn default_server_roots() -> Vec<std::path::PathBuf> {
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
             roots.push(dir.join("llama-server.exe"));
+        }
+    }
+    roots
+}
+
+/// [Linux/macOS] Ver cabecera: exe dir → ~/.local/bin → PATH → config dir.
+/// LOCALAPPDATA y las unidades D:\ solo existen en Windows (cfg aparte).
+#[cfg(not(target_os = "windows"))]
+fn default_server_roots() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.join(SERVER_EXE_NAME));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".local").join("bin").join(SERVER_EXE_NAME));
+        roots.push(
+            dirs::config_dir()
+                .unwrap_or_else(|| home.join(".config"))
+                .join("whispr-open")
+                .join(SERVER_EXE_NAME),
+        );
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            roots.push(dir.join(SERVER_EXE_NAME));
         }
     }
     roots
@@ -1533,13 +1689,21 @@ pub fn resolve_model_path(model_name: &str) -> Option<std::path::PathBuf> {
 fn default_model_roots() -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut roots: Vec<PathBuf> = Vec::new();
-    // LM Studio: la carpeta por defecto de modelos del usuario.
+    // LM Studio: la carpeta por defecto de modelos del usuario (mismo
+    // layout en ambos SO: ~/.lmstudio o %USERPROFILE%\.lmstudio).
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join(".lmstudio").join("models"));
         roots.push(
             home.join(".lmstudio")
                 .join("models")
                 .join("lmstudio-community"),
+        );
+        // [Linux] Modelos guardados junto a la config de la app.
+        roots.push(
+            dirs::config_dir()
+                .unwrap_or_else(|| home.join(".config"))
+                .join("whispr-open")
+                .join("models"),
         );
     }
     // Instalaciones de llama.cpp con carpeta models propia.
@@ -2630,6 +2794,45 @@ mod tests {
         );
     }
 
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn args_del_server_llevan_modelo_puerto_y_flags_linux() {
+        // MISMO contrato que el test Windows: la lista de args es
+        // plataforma-independiente (solo cambia la forma de la ruta). Los
+        // flags GPU (`-ngl 99 --flash-attn on`) se conservan: en un build
+        // CPU-only llama.cpp los ignora con warning, y en un build con
+        // `--features cuda` son los que activan la GPU. Si el día de
+        // mañana se quiere distinción CPU/GPU de args, se cfg-a aquí.
+        let model = std::path::Path::new(
+            "/home/usuario/.local/share/whispr-open/llm/Qwen3.5-0.8B-Q8_0.gguf",
+        );
+        let args = build_server_args(model, 8081);
+        assert_eq!(
+            args,
+            vec![
+                "-m",
+                "/home/usuario/.local/share/whispr-open/llm/Qwen3.5-0.8B-Q8_0.gguf",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8081",
+                "-ngl",
+                "99",
+                "--flash-attn",
+                "on",
+                "-ctk",
+                "q8_0",
+                "-ctv",
+                "q8_0",
+                "-c",
+                "8192",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn resolve_server_path_elige_el_primer_candidato_existente() {
         let dir = std::env::temp_dir().join(format!("whispr-server-{}", std::process::id()));
@@ -2681,18 +2884,20 @@ mod tests {
             None
         );
 
-        // 2) Existe y ES llama-server.exe → se usa tal cual.
-        let buena = dir.join("llama-server.exe");
+        // 2) Existe y ES llama-server(.exe) → se usa tal cual.
+        let buena = dir.join(SERVER_EXE_NAME);
         std::fs::write(&buena, b"stub").unwrap();
         assert_eq!(
             explicit_server_path(&buena.to_string_lossy()),
             Some(buena.clone())
         );
 
-        // 3) Wrapper (llama.exe) con hermano bueno → se sanea al hermano.
-        let _ = std::fs::write(dir.join("llama.exe"), b"wrapper");
+        // 3) Wrapper (llama.exe / llama) con hermano bueno → se sanea al
+        //    hermano. El wrapper se llama distinto del server en ambos SO.
+        let wrapper_name = if cfg!(target_os = "windows") { "llama.exe" } else { "llama" };
+        let _ = std::fs::write(dir.join(wrapper_name), b"wrapper");
         assert_eq!(
-            explicit_server_path(&dir.join("llama.exe").to_string_lossy()),
+            explicit_server_path(&dir.join(wrapper_name).to_string_lossy()),
             Some(buena)
         );
 
@@ -2701,9 +2906,9 @@ mod tests {
         let solo = std::env::temp_dir()
             .join(format!("whispr-explicit-solo-{}", std::process::id()));
         std::fs::create_dir_all(&solo).unwrap();
-        std::fs::write(solo.join("llama.exe"), b"stub").unwrap();
+        std::fs::write(solo.join(wrapper_name), b"stub").unwrap();
         assert_eq!(
-            explicit_server_path(&solo.join("llama.exe").to_string_lossy()),
+            explicit_server_path(&solo.join(wrapper_name).to_string_lossy()),
             None
         );
         let _ = std::fs::remove_dir_all(&dir);
@@ -2837,6 +3042,7 @@ mod tests {
     // ── Saneado del ejecutable del server (t_75732630) ────────────────────
 
     #[test]
+    #[cfg(target_os = "windows")]
     fn is_server_exe_solo_acepta_llama_server_exe() {
         use std::path::Path;
         assert!(is_server_exe(Path::new(r"D:\LlamaCPP\llama-server.exe")));
@@ -2850,6 +3056,21 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn is_server_exe_solo_acepta_llama_server() {
+        use std::path::Path;
+        // En Linux el binario válido es `llama-server` SIN .exe.
+        assert!(is_server_exe(Path::new("/usr/local/bin/llama-server")));
+        assert!(is_server_exe(Path::new("llama-server")));
+        assert!(is_server_exe(Path::new("/opt/LlamaCPP/LLAMA-SERVER")));
+        // El wrapper llama (sin -server) y el .exe de Windows no valen aquí.
+        assert!(!is_server_exe(Path::new("/usr/bin/llama")));
+        assert!(!is_server_exe(Path::new("llama-server.exe")));
+        assert!(!is_server_exe(Path::new("")));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
     fn sanitize_server_exe_cambia_el_wrapper_por_el_hermano_real() {
         let dir = std::env::temp_dir().join(format!("whispr-sanitize-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -2873,6 +3094,32 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&otros);
+    }
+
+    #[test]
+    #[cfg(not(target_os = "windows"))]
+    fn sanitize_server_exe_cambia_el_wrapper_por_el_hermano_real_linux() {
+        let dir = std::env::temp_dir().join(format!("whispr-san-lx-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let wrapper = dir.join("llama");
+        let real = dir.join("llama-server");
+        std::fs::write(&wrapper, b"stub").unwrap();
+        std::fs::write(&real, b"stub").unwrap();
+
+        // `llama` → `llama-server` hermano.
+        assert_eq!(sanitize_server_exe(&wrapper).as_deref(), Some(real.as_path()));
+        assert_eq!(sanitize_server_exe(&real).as_deref(), Some(real.as_path()));
+
+        // Un `llama-server.exe` (binario Windows) no vale como hermano ni
+        // como objetivo: en Linux es un fichero cualquiera.
+        let exe_dir = std::env::temp_dir().join(format!("whispr-san-lx-exe-{}", std::process::id()));
+        std::fs::create_dir_all(&exe_dir).unwrap();
+        std::fs::write(exe_dir.join("llama.exe"), b"stub").unwrap();
+        std::fs::write(exe_dir.join("llama-server.exe"), b"stub").unwrap();
+        assert_eq!(sanitize_server_exe(&exe_dir.join("llama.exe")), None);
+
+        let _ = std::fs::remove_dir_all(&dir);
+        let _ = std::fs::remove_dir_all(&exe_dir);
     }
 
     // ── Regresión VIVA contra un server real (t_75732630) ─────────────────
