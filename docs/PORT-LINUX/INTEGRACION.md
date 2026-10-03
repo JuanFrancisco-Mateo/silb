@@ -152,8 +152,8 @@ Validación ESTRICTAMENTE ESTATICA (mi task no tiene toolchain Rust):
 - TOML parseado con tomllib (Python): válido, secciones no duplicadas,
   estructura correcta (ver §2).
 - Usos de cada crate verificados por grep en src/ (ver §4).
-- Marcadores de conflicto `<<<<<<<` / `>>>>>>>` : 0 en los 3 ficheros
-  conflictivos tras la resolución.
+- Marcadores de conflicto de git en los 3 ficheros conflictivos: 0 tras
+  la resolución (verificado por grep con patrón de conflict-marker).
 - DELIBERADAMENTE NO: `cargo check` / `cargo build` (sin toolchain en
   esta máquina, prohibido por la task). El primer `cargo check` en
   Linux lo corre el usuario tras instalar rustup+cmake
