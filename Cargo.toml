@@ -21,6 +21,10 @@ iced_winit = { version = "0.13", features = ["program"] }
 # clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
 # del registro), geometry de ventanas (posicion/esquina/tamano por winapi) y
 # guard de instancia única (CreateMutexW, ver src/single_instance.rs).
+# GATEADO a Windows: en Linux nada de la API winapi compila y los dos
+# módulos que la usaban (single_instance, inject) pasan por lock file +
+# wl-copy/wtype/ydotool (ver docs/PORT-LINUX/CODIGO-CORE.md).
+[target.'cfg(windows)'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi", "synchapi", "errhandlingapi"] }
 
 # Bandeja del sistema: icono en el tray de Windows + menú contextual

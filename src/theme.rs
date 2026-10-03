@@ -740,12 +740,44 @@ pub fn system_dark_mode() -> bool {
     }
 }
 
-/// Stub fuera de Windows: no hay registro del sistema que consultar; se asume
-/// oscuro, que es el tema por defecto de la app.
+/// Linux/UNIX: lectura de la preferencia de tema vía `gsettings get
+/// org.gnome.desktop.interface color-scheme` (el settings daemon GTK que
+/// Hyprland/Omarchy usan de facto). La variante `prefer-dark` = tema oscuro.
+///
+/// Por qué y no el portal D-Bus directamente: `gsettings` es el mismo dato
+/// (`color-scheme` es la clave gsettings que el portal `org.freedesktop.
+/// appearance` expone), sin duplicar el protocolo de cable de D-Bus a mano.
+/// Sin `gsettings` en PATH (dotfiles raros, servidor sin GNOME deps) o si la
+/// clave no existe → `true` (oscuro, el default de la app), fail-soft como
+/// el resto de la config. "A validar" en el binario: comportamiento en
+/// sistemas sin settings-gtk corriendo.
 #[cfg(not(target_os = "windows"))]
 pub fn system_dark_mode() -> bool {
-    true
+    use std::process::Command;
+
+    let output = Command::new("gsettings")
+        .args(["get", "org.gnome.desktop.interface", "color-scheme"])
+        .output();
+    match output {
+        Ok(out) if out.status.success() => {
+            // Respuesta con apóstrofes: `'prefer-dark'`, `'default'`, `'prefer-light'`.
+            let raw = String::from_utf8_lossy(&out.stdout);
+            raw.contains("prefer-dark")
+        }
+        Ok(_) => {
+            // La clave existe pero gsettings salió con error: sesión sin
+            // settings-gtk (Hyprland pelado sin el portal) o schema viejo.
+            crate::log_debug!("theme", "gsettings sin respuesta válida; asumo oscuro");
+            true
+        }
+        Err(err) => {
+            // Sin binario gsettings: entorno mínimo, cabeza al default.
+            crate::log_debug!("theme", "gsettings no disponible ({err}); asumo oscuro");
+            true
+        }
+    }
 }
+
 
 // ─────────────────────────────── Temas iced ───────────────────────────────
 
