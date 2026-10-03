@@ -209,7 +209,13 @@ pub fn json_string_field(raw: &str, field: &str) -> Option<String> {
 /// Copia `text` al portapapeles (best-effort, para cuando la inyección no
 /// puede hacerse: sin ventana activa, app destino que no acepta pegado…).
 /// El texto nunca se pierde si el usuario puede pegarlo a mano donde quiera.
-#[cfg(target_os = "windows")]
+///
+/// Windows y macOS: backend arboard (integrado en el flujo Windows: enigo
+/// pega o teclea tras la copia; en macOS es el único backend). Linux:
+/// `wl-copy` (wl-clipboard) — el backend arboard de Linux (smithay) no
+/// fija el foco de la venta del portapapeles Wayland y puede desincronizarse
+/// con wtype/ydotool (en macOS no hay wl-copy: ahí queda arboard).
+#[cfg(any(target_os = "windows", target_os = "macos"))]
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use arboard::Clipboard;
     let mut clipboard =
@@ -223,7 +229,7 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
 /// por stdin (no CLI args: sin límite ni fuga de datos por `ps`). wl-copy
 /// se bifurca para servir el portapapeles y el padre sale → `output()`
 /// vuelve rápido.
-#[cfg(unix)]
+#[cfg(target_os = "linux")]
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     use std::process::{Command, Stdio};

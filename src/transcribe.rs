@@ -89,15 +89,21 @@ impl std::fmt::Display for Model {
     }
 }
 
-/// Carpeta de modelos bajo el directorio de datos XDG del usuario
-/// (`~/.local/share/whispr-open/models` en Linux; en Windows
-/// `%APPDATA%/whispr-open/models` — `dirs::data_dir()` hace el mapping en
-/// ambos SO, sin cfg). Los GGML descargados viven ahí.
+/// Carpeta de modelos bajo `%APPDATA%\whispr-open\models` (Windows) o
+/// `~/.local/share/whispr-open/models` (Linux, respeta `$XDG_DATA_HOME`);
+/// allí instalan los GGML descargados.
+#[cfg(target_os = "windows")]
 pub fn models_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("whispr-open")
         .join("models")
+}
+
+/// Linux: modelos en XDG data (ficheros grandes, no editables a mano).
+#[cfg(not(target_os = "windows"))]
+pub fn models_dir() -> PathBuf {
+    crate::paths::app_data_dir().join("models")
 }
 /// Ruta completa del GGML del modelo indicado.
 pub fn model_path(model: Model) -> PathBuf {

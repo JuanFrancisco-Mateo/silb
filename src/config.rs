@@ -465,19 +465,37 @@ pub struct Config {
 
 /// Ruta del `config.json` del usuario (junto a `dictionary.json`).
 ///
+/// Windows: `%APPDATA%\whispr-open\config.json` (vía `dirs::data_dir`).
+/// Linux: `~/.config/whispr-open/config.json` (respeta `$XDG_CONFIG_HOME`).
+///
 /// Si el sistema no expone carpeta de datos se cae al directorio actual: la
 /// app sigue funcionando, solo guarda la config al lado del ejecutable.
+#[cfg(target_os = "windows")]
 pub fn config_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("config.json")
 }
 
+/// Linux: config en XDG (no en data); doc-comments/docsUPDATED-2026-10-03.
+#[cfg(not(target_os = "windows"))]
+pub fn config_path() -> PathBuf {
+    crate::paths::app_config_dir().join("config.json")
+}
+
 /// Ruta del diccionario personal exportable/importable (JSON).
 /// Mismo directorio base que `config_path`; el fichero vive junto a la
-/// config para que un backup de `%APPDATA%/whispr-open/` lo incluya todo.
+/// config para que un backup de la carpeta base lo incluya todo.
+#[cfg(target_os = "windows")]
 pub fn dictionary_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("dictionary.json")
+}
+
+/// Linux: junto a config (XDG_CONFIG_HOME), coincide con Windows en la
+/// disposición relativa (junto a config.json).
+#[cfg(not(target_os = "windows"))]
+pub fn dictionary_path() -> PathBuf {
+    crate::paths::app_config_dir().join("dictionary.json")
 }
 
 #[cfg(target_os = "windows")]
