@@ -1,9 +1,12 @@
 //! Whispr Open — dictado local de escritorio nativo.
+//!
+//! App de ventana pura. En Windows es GUI sin consola (los logs van a
+//! archivo vía `log`); en Linux sí se ejecuta desde terminal y los logs de
+//! arranque se ven en stderr (en debug; en release van al fichero).
 
-//! App de ventana pura: sin consola de Windows (la app es GUI; los logs van
-//! a archivo vía `log`, no a una terminal). En debug (cargo run) los logs
-//! también se ven en stderr.
-#![windows_subsystem = "windows"]
+// Atributo solo Windows: en Linux marcaría el binario como no útil desde
+// terminal (el subsistema "windows" es una cosa de PE/COFF).
+#![cfg_attr(windows, windows_subsystem = "windows")]
 
 use whispr_open::app::WhisprApp;
 

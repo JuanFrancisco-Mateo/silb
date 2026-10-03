@@ -6,22 +6,25 @@ authors = ["Whispr Open contributors"]
 edition = "2021"
 license = "MIT"
 
-# NOTA DEL PORT A LINUX (rama feature/port-linux-inventario):
-# En este commit SOLO se toca Cargo.toml:
-#   - `winapi`, `tray-icon`, `enigo`, `global-hotkey`, `crossbeam-channel`
-#     y `rfd` pasan a [target.'cfg(windows)'.dependencies] (el encargo lo
-#     exige). CONSECUENCIA documentada: un cargo check en Linux fallará
-#     mientras tray.rs/inject.rs/hotkey.rs sigan importándolos sin cfg —
-#     es el trabajo de las fases 1-4 del plan (docs/PORT-LINUX/PLAN.md).
-#     En Windows NADA cambia.
-#   - `cuda` de whisper-rs pasa a FEATURE OPCIONAL default OFF (esta
-#     máquina del port no lleva GPU nvidia; la build Windows con RTX 4070
-#     se compila con `--features cuda`).
-# NO se ha tocado NINGÚN fichero de src/: nada cambia en la build de
-# Windows salvo que cuda requiere --features cuda. El Cargo.lock NO se
-# regenera aquí (no hay toolchain Rust en la máquina del port); el primer
-# cargo check/build en cualquier target lo actualiza.
-# Inventario y plan: docs/PORT-LINUX/INVENTARIO.md y PLAN.md.
+# NOTA DE INTEGRACION (rama feature/port-linux, integrador dev-02):
+# Cargo.toml unificado desde las 4 ramas del port (P1 inventario, P2
+# codigo-core, P3 audio-runtime, P4 dominio-ui). Decisions de adjudicacion:
+#   - [features]: SOLO `cuda = ["whisper-rs/cuda"]`, `default = []`. CUDA off
+#     por defecto en todos los SO; el build de Windows con RTX 4070 se
+#     compila con `--features cuda`.
+#   - [dependencies]: deps multiplataforma o compilables en Linux (incluye
+#     arboard, global-hotkey y crossbeam-channel, que compilan en Linux).
+#   - [target.'cfg(windows)'.dependencies]: winapi, enigo, rfd.
+#   - [target.'cfg(not(target_os = "linux"))'.dependencies]: tray-icon
+#     (src/tray.rs degrada a stub en Linux: falta backend AppIndicator +
+#     host de StatusNotifier en Hyprland; ver docs/PORT-LINUX/AUDIO-RUNTIME.md).
+#   - [target.'cfg(unix)'.dependencies]: libc (senales SIGTERM/SIGKILL para
+#     el server LLM; llm::terminate_server_pid (ver AUDIO-RUNTIME.md)).
+#   - [target.'cfg(windows)'.build-dependencies]: winresource (build.rs).
+# Las ramas intermedias P2/P3/P4 dejaron secciones desplazadas (deps dentro
+# de la seccion TOML equivocada): aqui queda el layout normalizado, ordense
+# con seccion [dependencies] universal, [features] solo cuda, y el detalle
+# de adjudicacion en docs/PORT-LINUX/INTEGRACION.md.
 
 [features]
 default = []
@@ -41,15 +44,31 @@ iced = { version = "0.13", features = ["tokio", "image"] }
 # proceso, con vista y tema propios por window::Id)
 iced_winit = { version = "0.13", features = ["program"] }
 
-# Audio + transcripción. SIN feature cuda por defecto (ver [features]);
-# en Linux el build no lleva CUDA (no hay GPU nvidia en el portátil).
+# Audio + transcripción. `cuda` OFF en Linux por defecto (CPU-only; ver
+# docs/PORT-LINUX/AUDIO-RUNTIME.md). Los builds que la necesiten la activan
+# con `--features cuda` (Windows incluía cuda por defecto hasta v0.3.0;
+# ahora se activa igual en ambos SO con el mismo flag).
 cpal = "0.15"
-whisper-rs = { version = "0.16" }
+whisper-rs = { version = "0.16", default-features = false }
 
 # Portapapeles multiplataforma: funciona en Windows, macOS y Linux tanto
 # X11 como Wayland (backend clipboard_wayland/smithay-clipboard, ya en el
-# Cargo.lock). Se usa desde src/inject.rs.
+# Cargo.lock). Se usa desde src/inject.rs (los usos de arboard en Linux van
+# tras cfg(unix) o derivan del take del portapapeles; la ESCRITURA en Linux
+# es wl-copy).
 arboard = "3.6.1"
+
+# Atajo global. Registro nativo del sistema en Windows (X11 en Linux, con
+# backend por dlopen en Linux: no necesita libX11 en build). En Wayland no
+# existe el grab global de X11; hotkey.rs usa ahí el backend «hyprland»
+# (UNIX socket + bind de hyprland.conf, docs/PORT-LINUX/HOTKEY-HYPR.md), que
+# fabrica `GlobalHotKeyEvent` por el mismo canal crossbeam.
+# La dependencia NO se cfg-justa a Windows porque `app.rs`/`ui/poll.rs`
+# usan `GlobalHotKeyEvent` sin cfg.
+global-hotkey = "0.6"
+
+# Canal hotkey/tray (src/hotkey.rs, src/tray.rs, src/app.rs)
+crossbeam-channel = "0.5"
 
 # Descarga de modelos + config
 ureq = { version = "2.12", features = ["tls"] }
@@ -64,16 +83,7 @@ fancy-regex = "0.14"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
-# DEPENDENCIA SOLO WINDOWS (ya movida): winapi. Todos los usos de winapi
-# en src/ están dentro de bloques #[cfg(target_os = "windows")] (verificado
-# en docs/PORT-LINUX/INVENTARIO.md), así que moverla aquí no rompe el
-# target Linux ni el Windows.
-# Las demás windows-first (tray-icon, enigo, global-hotkey, rfd) se quedan
-# universales AÚN (ver NOTA arriba): sus módulos los importan sin cfg y
-# moverlas ya rompería `cargo check` en ambos targets sin tocar src/; se
-# mueven en la fase del port de cada módulo (docs/PORT-LINUX/PLAN.md).
-
-# ── Windows-only ──
+# ── Dependencias Windows-only (no compilan en Linux) ──
 [target.'cfg(windows)'.dependencies]
 # Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
 # clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
@@ -84,55 +94,42 @@ chrono = "0.4"
 # wl-copy/wtype/ydotool (ver docs/PORT-LINUX/CODIGO-CORE.md).
 winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi", "synchapi", "errhandlingapi"] }
 
+# Inyección de texto (src/inject.rs): enigo. En Wayland no tiene backend
+# nativo (x11rb); el plan en Linux es wtype (ya instalado) / ydotool, y
+# send_text por wl-copy + pegado en app activa (ver CODIGO-CORE.md).
+enigo = "0.6.1"
+
+# Selector de archivos nativo (ui/settings_handlers.rs «Examinar…»):
+# rfd 0.15 soporta Linux vía GTK/ashpd(portal), pero el flujo nativo de
+# tiempo de ejecución está verificado SOLO en Windows; queda gateada a
+# Windows hasta revisar el runtime GTK (pendiente, ver INTEGRACION.md).
+rfd = "0.15"
+
 # Bandeja del sistema: icono en el tray de Windows + menú contextual
 # (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el
 # hilo llamante (el del bucle de winit) y entrega los eventos por canal global
-# (misma mecánica que global-hotkey); ver src/tray.rs. En Linux el plan es
-# libappindicator (vía el mismo crate, ya lo soporta) pero requiere
-# libayatana-appindicator-gtk3 del sistema; se reevalúa en la fase de tray.
-
-# Inyección de texto en app activa (teclado virtual). En Wayland no tiene
-# backend nativo (x11rb). El plan de src/inject.rs en Linux es `wtype` (ya
-# instalado en la máquina) / ydotool, tras cfg (PLAN.md, FASE 2).
+# (misma mecánica que global-hotkey); ver src/tray.rs
 #
-# OJO (ver NOTA DEL PORT): tray-icon, enigo, global-hotkey, crossbeam y
-# rfd necesitan seguirse resolviendo como deps UNIVERSALES mientras sus
-# módulos sigan importándolos sin cfg; por eso en este commit NO se
-# declaran aquí. Abajo (en [dependencies]) están declarados universalmente,
-# con comentarios que los marcan como el target windows-first para el
-# trabajo de port (fases PLAN.md FASE 2/4). Si te preguntas por qué siguen
-# ahí arriba: esta sección windows-only queda preparada para recibir los
-# `move` en los commits de cada módulo.
-
-# global-hotkey = "0.6"    # de momento UNIVERSAL (ver NOTA)
-# rfd = "0.15"             # de momento UNIVERSAL (ver NOTA)
-# crossbeam-channel = "0.5" # de momento UNIVERSAL (ver NOTA)
-
-# ── Windows-first: TAMBIÉN solo windows en este commit ──
-# (el encargo pide "winapi y demás solo cfg windows"). Consecuencia
-# documentada: un cargo check en Linux fallará en estos 5 crates
-# (los módulos tray.rs/inject.rs/hotkey.rs los importan sin cfg) hasta
-# que cada módulo reciba su rama #[cfg(target_os = "linux")] — es el
-# trabajo de las fases PLAN.md FASE 1-4. En Windows todo sigue igual.
-# Bandeja del sistema (src/tray.rs): icono + menú Mostrar/Ocultar/Salir.
-# En Linux el plan es libappindicator (el crate ya lo soporta) pero
-# requiere libayatana-appindicator-gtk3 del sistema.
+# Linux: tray-icon 0.24 soporta Linux SOLO vía backend AppIndicator
+# (docs.rs/tray-icon 0.24.2: plataforma «Linux (gtk Only)»,dependencias
+# gtk3 + libappindicator/libayatana + libxdo en el sistema) y encima exige
+# que el shell provea el Protocolo StatusNotifier. Hyprland no incluye un
+# tray host por defecto, así que el backend real queda PENDIENTE (regla de
+# honestidad de la task): en Linux no se compila la dependencia — evita
+# requerir gtk3 en build time — y `src/tray.rs` degrada a stub; la app
+# funciona sin bandeja (ventana + atajo + Salir en UI). Si en el futuro se
+# decide ejecutar con un tray host (waybar con appindicator, etc.) se
+# movería esta entrada DESPUÉS de instalar `gtk3 libappindicator-gtk3
+# libxdo` por pacman y se reutilizaría la lógica de menú sin cambiar la
+# API de src/tray.rs.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = "0.24"
 
-# Inyección de texto (src/inject.rs): enigo. En Wayland no tiene backend
-# nativo (x11rb); el plan en Linux es wtype (ya instalado) / ydotool.
-enigo = "0.6.1"
-
-# Atajo global (src/hotkey.rs): global-hotkey, sin backend Wayland (X11).
-# El plan en Linux es bind de Hyprland + flag --toggle.
-global-hotkey = "0.6"
-
-# Canal hotkey/tray (src/hotkey.rs, src/tray.rs, src/app.rs)
-crossbeam-channel = "0.5"
-
-# Selector de archivos nativo (ui/settings_handlers.rs «Examinar…»).
-# rfd 0.15 soporta Linux vía GTK/ashpd(portal); se reevalúa en FASE 2/4.
-rfd = "0.15"
+# [Linux/macOS] Señales POSIX para terminar el server LLM lanzado por la app
+# (SIGTERM limpio + SIGKILL de rescate; ver llm::terminate_server_pid).
+# No compila en Windows (allí va winapi TerminateProcess).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [target.'cfg(windows)'.build-dependencies]
 # Incrusta el icono .ico y el manifest en el .exe de Windows (solo se usa
