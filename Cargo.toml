@@ -18,31 +18,69 @@ iced = { version = "0.13", features = ["tokio", "image"] }
 iced_winit = { version = "0.13", features = ["program"] }
 
 # Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
-# clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
-# del registro), geometry de ventanas (posicion/esquina/tamano por winapi) y
-# guard de instancia única (CreateMutexW, ver src/single_instance.rs).
+# clics no roben el foco de la app donde se dicta + tema auto
+# (AppsUseLightTheme del registro), geometry de ventanas
+# (posicion/esquina/tamano por winapi) y guard de instancia única
+# (CreateMutexW, ver src/single_instance.rs). Solo Windows: los otros
+# agentes llevan single_instance.rs/inject.rs con cfg; la dependencia no
+# compila fuera de Windows en absoluto.
+[target.'cfg(target_os = "windows")'.dependencies]
 winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi", "synchapi", "errhandlingapi"] }
 
 # Bandeja del sistema: icono en el tray de Windows + menú contextual
 # (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el
 # hilo llamante (el del bucle de winit) y entrega los eventos por canal global
 # (misma mecánica que global-hotkey); ver src/tray.rs
+#
+# Linux: tray-icon 0.24 soporta Linux SOLO vía backend AppIndicator
+# (docs.rs/tray-icon 0.24.2: plataforma «Linux (gtk Only)»,dependencias
+# gtk3 + libappindicator/libayatana + libxdo en el sistema) y encima exige
+# que el shell provea el Protocolo StatusNotifier. Hyprland no incluye un
+# tray host por defecto, así que el backend real queda PENDIENTE (regla de
+# honestidad de la task): en Linux no se compila la dependencia — evita
+# requerir gtk3 en build time — y `src/tray.rs` degrada a stub; la app
+# funciona sin bandeja (ventana + atajo + Salir en UI). Si en el futuro se
+# decide ejecutar con un tray host (waybar con appindicator, etc.) se
+# movería esta entrada DESPUÉS de instalar `gtk3 libappindicator-gtk3
+# libxdo` por pacman y se reutilizaría la lógica de menú sin cambiar la
+# API de src/tray.rs.
+[target.'cfg(not(target_os = "linux"))'.dependencies]
 tray-icon = "0.24"
 
-# Audio + transcripción
+# Audio + transcripción. `cuda` OFF en Linux por defecto (CPU-only, small
+# viable en 12 hilos; estimación honesta y referencias en
+# docs/PORT-LINUX/AUDIO-RUNTIME.md). Los builds que la necesiten la activan
+# con `--features cuda` (Windows incluía cuda por defecto hasta v0.3.0;
+# ahora se activa igual en ambos SO con el mismo flag).
 cpal = "0.15"
-whisper-rs = { version = "0.16", features = ["cuda"] }
+whisper-rs = { version = "0.16", default-features = false }
+
+[features]
+# CUDA del backend de whisper.cpp (requiere toolkit/nvcc y GPU NV).
+cuda = ["whisper-rs/cuda"]
 
 # Inyección de texto en app activa
 arboard = "3.6.1"
 enigo = "0.6.1"
 
-# Atajo global
+# Atajo global. Registro nativo del sistema en Windows (X11 en Linux, sin
+# efecto en Wayland). NOTA del port Linux (t_7ac526a3): en Wayland no
+# existe el grab global de X11; hotkey.rs usa ahí el backend «hyprland»
+# (UNIX socket + bind de hyprland.conf, docs/PORT-LINUX/HOTKEY-HYPR.md).
+# La dependencia NO se cfg-queda a Windows porque `app.rs`/`ui/poll.rs`
+# (fuera del reparto de este port) usan `GlobalHotKeyEvent` sin cfg; su
+# backend Linux (x11-dl) es dlopen en runtime, así que compila sin libX11.
 global-hotkey = "0.6"
 crossbeam-channel = "0.5"
 
 # Descarga de modelos + config
 ureq = { version = "2.12", features = ["tls"] }
+
+# [Linux/macOS] Señales POSIX para terminar el server LLM lanzado por la app
+# (SIGTERM limpio + SIGKILL de rescate; ver llm::terminate_server_pid).
+# No compila en Windows (allí va winapi TerminateProcess).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 # Selector de archivos nativo (Ajustes → ruta del server LLM «Examinar…»):
 # diálogo de Windows sin webview. Solo se toca desde el UI thread.
