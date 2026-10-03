@@ -1543,9 +1543,23 @@ fn default_model_roots() -> Vec<std::path::PathBuf> {
         );
     }
     // Instalaciones de llama.cpp con carpeta models propia.
+    // Windows: discos C:/D: instalación del lserver en D:\LlamaCPP (ver
+    // Entorno en AGENTS.md).
+    #[cfg(target_os = "windows")]
     for drive in ['C', 'D'] {
         roots.push(PathBuf::from(format!("{drive}:/LlamaCPP/models")));
         roots.push(PathBuf::from(format!("{drive}:/models")));
+    }
+    // Linux: XDG data (~/.local/share/llama.cpp/models) y /opt/llama.cpp
+    // como raíces típicas de una instalación manual de llama.cpp (binario
+    // propio, sin paquete distro). XDG data primero, /opt como segundo
+    // intento.
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(home) = dirs::home_dir() {
+            roots.push(home.join(".local/share/llama.cpp/models"));
+        }
+        roots.push(PathBuf::from("/opt/llama.cpp/models"));
     }
     roots
 }

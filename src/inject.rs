@@ -100,7 +100,7 @@ pub fn window_matches_filter(title: &str, filter: Option<&str>) -> bool {
 /// Copia `text` al portapapeles (best-effort, para cuando la inyección no
 /// puede hacerse: sin ventana activa, app destino que no acepta pegado…).
 /// El texto nunca se pierde si el usuario puede pegarlo a mano donde quiera.
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     use arboard::Clipboard;
     let mut clipboard =
@@ -110,9 +110,8 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
         .map_err(|err| format!("no se pudo copiar el texto al portapapeles: {err}"))
 }
 
-/// Stub fuera de Windows: mismo contrato que la versión Windows, pero aquí
-/// siempre `Err` (arboard contra el portapapeles del sistema es de Windows).
-#[cfg(not(target_os = "windows"))]
+/// Stub en otros SO (contrato idéntico).
+#[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
 pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
     Err("el portapapeles solo está disponible en Windows".to_string())
 }
