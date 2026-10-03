@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
+#[cfg(unix)]
+use crate::inject::LinuxInjectBackend;
 use crate::theme::PaletteConfig;
 use crate::transcribe::Model;
 
@@ -361,6 +363,17 @@ pub struct Config {
     /// mayúsculas): si el título no lo contiene, el turno NO se inyecta.
     /// Vacío/ausente = inyectar en cualquier app.
     pub inject_window_filter: Option<String>,
+    /// Solo Linux: backend de inyección del turno. Valores válidos
+    /// (`inject_backend` en config.json):
+    /// - `"wl-clipboard"` (default): wl-copy al portapapeles + wtype para
+    ///   la pulsación del pegado. Sin daemons ni permisos extra.
+    /// - `"ydotool"`: tecleo por uinput (universal, Xwayland incluido);
+    ///   exige `ydotoold` corriendo — sin él se copia al portapapeles y se
+    ///   avisa (la app no teclea a ciegas).
+    /// - `"wtype"`: tecleo directo por teclado virtual Wayland; algunas
+    ///   apps lo bloquean (zwp_virtual_keyboard_v1) → portapapeles.
+    /// Cualquier otro valor cae al default (la config nunca rompe).
+    pub inject_backend: Option<String>,
     /// Idioma de la transcripción. Vacío o "auto" (sin distinguir
     /// mayúsculas) = autodetección de whisper (se pasa `None` al motor);
     /// cualquier otro valor se trimea y se trata como BCP-47 (`"es"`,
@@ -619,8 +632,9 @@ impl Config {
     }
 
     /// Comportamiento de inyección desde config.json: formato (paste/type),
-    /// retardo en ms (default 40, 0 = sin retardo) y filtro por título de la
-    /// ventana activa. Valores inválidos/ausentes → defaults seguros.
+    /// retardo en ms (default 40, 0 = sin retardo), filtro por título de la
+    /// ventana activa y —solo Linux— backend (wl-clipboard/ydotool/wtype).
+    /// Valores inválidos/ausentes → defaults seguros.
     pub fn inject_settings(&self) -> crate::inject::InjectSettings {
         crate::inject::InjectSettings {
             format: match self.inject_format.as_deref() {
@@ -634,6 +648,15 @@ impl Config {
                 .map(str::trim)
                 .filter(|f| !f.is_empty())
                 .map(str::to_string),
+            // Solo Linux: deserializar el backend pidiendo perdón si el
+            // valor no es reconocible (consulte el doc-comment del enum
+            // para las reglas). En Windows no existe el campo.
+            #[cfg(unix)]
+            backend: match self.inject_backend.as_deref() {
+                Some("ydotool") => LinuxInjectBackend::Ydotool,
+                Some("wtype") => LinuxInjectBackend::Wtype,
+                _ => LinuxInjectBackend::WlClipboard,
+            },
         }
     }
 
@@ -990,6 +1013,37 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(c.inject_settings().window_filter, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inject_backend_linux_defaults_y_overrides() {
+        // Default: wl-clipboard (sin daemons ni permisos extra).
+        assert_eq!(
+            Config::default().inject_settings().backend,
+            crate::inject::LinuxInjectBackend::WlClipboard
+        );
+        // Overrides legítimos.
+        for (raw, esperado) in [
+            ("ydotool", crate::inject::LinuxInjectBackend::Ydotool),
+            ("wtype", crate::inject::LinuxInjectBackend::Wtype),
+            ("wl-clipboard", crate::inject::LinuxInjectBackend::WlClipboard),
+        ] {
+            let c = Config {
+                inject_backend: Some(raw.into()),
+                ..Default::default()
+            };
+            assert_eq!(c.inject_settings().backend, esperado, "backend {raw}");
+        }
+        // Valor desconocido → default (la config nunca rompe el arranque).
+        let raro = Config {
+            inject_backend: Some("xdotool-mola".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            raro.inject_settings().backend,
+            crate::inject::LinuxInjectBackend::WlClipboard
+        );
     }
 
     #[test]
