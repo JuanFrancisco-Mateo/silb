@@ -44,13 +44,13 @@ iced = { version = "0.13", features = ["tokio", "image"] }
 # proceso, con vista y tema propios por window::Id)
 iced_winit = { version = "0.13", features = ["program"] }
 
-# Audio + transcripción. `cuda` OFF en Linux por defecto (CPU-only; ver
-# docs/PORT-LINUX/AUDIO-RUNTIME.md). Los builds que la necesiten la activan
-# con `--features cuda` (Windows incluía cuda por defecto hasta v0.3.0;
-# ahora se activa igual en ambos SO con el mismo flag).
+# Audio + transcripción. `cuda` OFF POR DEFECTO en ambos SO (adjudicado
+# entre P3 y P4; ver NOTA DE INTEGRACION arriba): whisper-rs sin default
+# features -> build CPU whisper.cpp, sin cublas. La GPU NV del build de
+# Windows con RTX 4070 se recupera con `--features cuda` ([features]).
+# Estimación honesta CPU-only: docs/PORT-LINUX/AUDIO-RUNTIME.md.
 cpal = "0.15"
 whisper-rs = { version = "0.16", default-features = false }
-
 # Portapapeles multiplataforma: funciona en Windows, macOS y Linux tanto
 # X11 como Wayland (backend clipboard_wayland/smithay-clipboard, ya en el
 # Cargo.lock). Se usa desde src/inject.rs (los usos de arboard en Linux van
