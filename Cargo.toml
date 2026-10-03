@@ -6,6 +6,30 @@ authors = ["Whispr Open contributors"]
 edition = "2021"
 license = "MIT"
 
+# NOTA DEL PORT A LINUX (rama feature/port-linux-inventario):
+# En este commit SOLO se toca Cargo.toml:
+#   - `winapi`, `tray-icon`, `enigo`, `global-hotkey`, `crossbeam-channel`
+#     y `rfd` pasan a [target.'cfg(windows)'.dependencies] (el encargo lo
+#     exige). CONSECUENCIA documentada: un cargo check en Linux fallará
+#     mientras tray.rs/inject.rs/hotkey.rs sigan importándolos sin cfg —
+#     es el trabajo de las fases 1-4 del plan (docs/PORT-LINUX/PLAN.md).
+#     En Windows NADA cambia.
+#   - `cuda` de whisper-rs pasa a FEATURE OPCIONAL default OFF (esta
+#     máquina del port no lleva GPU nvidia; la build Windows con RTX 4070
+#     se compila con `--features cuda`).
+# NO se ha tocado NINGÚN fichero de src/: nada cambia en la build de
+# Windows salvo que cuda requiere --features cuda. El Cargo.lock NO se
+# regenera aquí (no hay toolchain Rust en la máquina del port); el primer
+# cargo check/build en cualquier target lo actualiza.
+# Inventario y plan: docs/PORT-LINUX/INVENTARIO.md y PLAN.md.
+
+[features]
+default = []
+# Aceleración GPU nvidia de whisper.cpp (CUDA). OFF por defecto: el port a
+# Linux corre en una máquina sin GPU nvidia. Actívalo con `--features cuda`
+# en la build de Windows con RTX 4070 (build histórica en E:\AI\FREEBUFF).
+cuda = ["whisper-rs/cuda"]
+
 [dependencies]
 # UI nativa (sin webview). `image` activa el widget `image` de iced y el
 # crate `image` 0.25 (que ya está en Cargo.lock) para que el usuario pueda
@@ -17,36 +41,20 @@ iced = { version = "0.13", features = ["tokio", "image"] }
 # proceso, con vista y tema propios por window::Id)
 iced_winit = { version = "0.13", features = ["program"] }
 
-# Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
-# clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
-# del registro), geometry de ventanas (posicion/esquina/tamano por winapi) y
-# guard de instancia única (CreateMutexW, ver src/single_instance.rs).
-winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi", "synchapi", "errhandlingapi"] }
-
-# Bandeja del sistema: icono en el tray de Windows + menú contextual
-# (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el
-# hilo llamante (el del bucle de winit) y entrega los eventos por canal global
-# (misma mecánica que global-hotkey); ver src/tray.rs
-tray-icon = "0.24"
-
-# Audio + transcripción
+# Audio + transcripción. SIN feature cuda por defecto (ver [features]);
+# en Linux el build no lleva CUDA (no hay GPU nvidia en el portátil).
 cpal = "0.15"
-whisper-rs = { version = "0.16", features = ["cuda"] }
+whisper-rs = { version = "0.16" }
 
-# Inyección de texto en app activa
+# Portapapeles multiplataforma: funciona en Windows, macOS y Linux tanto
+# X11 como Wayland (backend clipboard_wayland/smithay-clipboard, ya en el
+# Cargo.lock). Se usa desde src/inject.rs.
 arboard = "3.6.1"
-enigo = "0.6.1"
-
-# Atajo global
-global-hotkey = "0.6"
-crossbeam-channel = "0.5"
 
 # Descarga de modelos + config
 ureq = { version = "2.12", features = ["tls"] }
 
-# Selector de archivos nativo (Ajustes → ruta del server LLM «Examinar…»):
-# diálogo de Windows sin webview. Solo se toca desde el UI thread.
-rfd = "0.15"
+# Config / serialización / dominio (multiplataforma, ya estaba)
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
@@ -56,17 +64,84 @@ fancy-regex = "0.14"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
+# DEPENDENCIA SOLO WINDOWS (ya movida): winapi. Todos los usos de winapi
+# en src/ están dentro de bloques #[cfg(target_os = "windows")] (verificado
+# en docs/PORT-LINUX/INVENTARIO.md), así que moverla aquí no rompe el
+# target Linux ni el Windows.
+# Las demás windows-first (tray-icon, enigo, global-hotkey, rfd) se quedan
+# universales AÚN (ver NOTA arriba): sus módulos los importan sin cfg y
+# moverlas ya rompería `cargo check` en ambos targets sin tocar src/; se
+# mueven en la fase del port de cada módulo (docs/PORT-LINUX/PLAN.md).
+
+# ── Windows-only ──
+[target.'cfg(windows)'.dependencies]
+# Estilos de ventana Windows: WS_EX_NOACTIVATE en la burbuja para que los
+# clics no roben el foco de la app donde se dicta + tema auto (AppsUseLightTheme
+# del registro), geometry de ventanas (posicion/esquina/tamano por winapi) y
+# guard de instancia única (CreateMutexW, ver src/single_instance.rs).
+winapi = { version = "0.3", features = ["winuser", "windef", "winreg", "winnt", "minwindef", "wincred", "processthreadsapi", "handleapi", "synchapi", "errhandlingapi"] }
+
+# Bandeja del sistema: icono en el tray de Windows + menú contextual
+# (Mostrar/Ocultar ventana, Salir). En Windows crea una ventana oculta en el
+# hilo llamante (el del bucle de winit) y entrega los eventos por canal global
+# (misma mecánica que global-hotkey); ver src/tray.rs. En Linux el plan es
+# libappindicator (vía el mismo crate, ya lo soporta) pero requiere
+# libayatana-appindicator-gtk3 del sistema; se reevalúa en la fase de tray.
+
+# Inyección de texto en app activa (teclado virtual). En Wayland no tiene
+# backend nativo (x11rb). El plan de src/inject.rs en Linux es `wtype` (ya
+# instalado en la máquina) / ydotool, tras cfg (PLAN.md, FASE 2).
+#
+# OJO (ver NOTA DEL PORT): tray-icon, enigo, global-hotkey, crossbeam y
+# rfd necesitan seguirse resolviendo como deps UNIVERSALES mientras sus
+# módulos sigan importándolos sin cfg; por eso en este commit NO se
+# declaran aquí. Abajo (en [dependencies]) están declarados universalmente,
+# con comentarios que los marcan como el target windows-first para el
+# trabajo de port (fases PLAN.md FASE 2/4). Si te preguntas por qué siguen
+# ahí arriba: esta sección windows-only queda preparada para recibir los
+# `move` en los commits de cada módulo.
+
+# global-hotkey = "0.6"    # de momento UNIVERSAL (ver NOTA)
+# rfd = "0.15"             # de momento UNIVERSAL (ver NOTA)
+# crossbeam-channel = "0.5" # de momento UNIVERSAL (ver NOTA)
+
+# ── Windows-first: TAMBIÉN solo windows en este commit ──
+# (el encargo pide "winapi y demás solo cfg windows"). Consecuencia
+# documentada: un cargo check en Linux fallará en estos 5 crates
+# (los módulos tray.rs/inject.rs/hotkey.rs los importan sin cfg) hasta
+# que cada módulo reciba su rama #[cfg(target_os = "linux")] — es el
+# trabajo de las fases PLAN.md FASE 1-4. En Windows todo sigue igual.
+# Bandeja del sistema (src/tray.rs): icono + menú Mostrar/Ocultar/Salir.
+# En Linux el plan es libappindicator (el crate ya lo soporta) pero
+# requiere libayatana-appindicator-gtk3 del sistema.
+tray-icon = "0.24"
+
+# Inyección de texto (src/inject.rs): enigo. En Wayland no tiene backend
+# nativo (x11rb); el plan en Linux es wtype (ya instalado) / ydotool.
+enigo = "0.6.1"
+
+# Atajo global (src/hotkey.rs): global-hotkey, sin backend Wayland (X11).
+# El plan en Linux es bind de Hyprland + flag --toggle.
+global-hotkey = "0.6"
+
+# Canal hotkey/tray (src/hotkey.rs, src/tray.rs, src/app.rs)
+crossbeam-channel = "0.5"
+
+# Selector de archivos nativo (ui/settings_handlers.rs «Examinar…»).
+# rfd 0.15 soporta Linux vía GTK/ashpd(portal); se reevalúa en FASE 2/4.
+rfd = "0.15"
+
+[target.'cfg(windows)'.build-dependencies]
+# Incrusta el icono .ico y el manifest en el .exe de Windows (solo se usa
+# en Windows: ver build.rs, que ya está cfg-ed not(windows) no-op).
+winresource = "0.1"
+
 [dev-dependencies]
 # Tests de glifos emoji: replica el FontSystem de Iced (cosmic-text) para
 # verificar que los símbolos de la UI (✓ ☀ ☾ ▾ ▸ ● → ✕) no quedan en
 # .notdef ("caja vacía") tras cargar la fuente emoji. Misma versión 0.12.1
 # que ya está en el lockfile vía iced_graphics (sin compilación extra).
 cosmic-text = "0.12"
-
-[build-dependencies]
-# Incrusta el icono .ico y el manifest en el .exe de Windows (solo se usa
-# en Windows: ver build.rs).
-winresource = "0.1"
 
 [profile.release]
 lto = true
