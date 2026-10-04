@@ -58,6 +58,12 @@ pub const BUBBLE_TOP_OFFSET: f32 = 48.0;
 /// (FindWindowW) y aplicarle WS_EX_NOACTIVATE tras crearse.
 pub const BUBBLE_TITLE: &str = "WhisprOpen-Bubble";
 
+/// `application_id` de la ventana de la burbuja en Linux (iced 0.13 lo expone
+/// en la rama wayland de `PlatformSpecific`; no hay `skip_taskbar`, así que el
+/// compositor identifica la ventana por este id). Ver CHECK-1.md L224-226.
+#[cfg(target_os = "linux")]
+pub const BUBBLE_APP_ID: &str = "whispr-open-bubble";
+
 /// `window::Id` de la burbuja en formato numérico (`Id` es Display). Se guarda
 /// aquí porque `iced::event::listen_with` exige una `fn` estática sin
 /// capturas; el filtro del subscriptor compara contra este valor.
@@ -221,9 +227,27 @@ pub fn bubble_settings(cfg: &Config) -> window::Settings {
     s.transparent = true;
     s.level = window::Level::AlwaysOnTop;
     s.visible = true;
-    s.platform_specific.skip_taskbar = true;
-    s.platform_specific.undecorated_shadow = false;
-    s.platform_specific.drag_and_drop = false;
+    // Windows: `PlatformSpecific` de iced 0.13 expone aquí skip_taskbar,
+    // undecorated_shadow y drag_and_drop. En la rama wayland/linux de iced
+    // 0.13 esos campos NO existen (solo `application_id` y
+    // `override_redirect`) → E0609 en CHECK-1.md L224-226. Se gatean a
+    // Windows para no romper la compilación en Linux.
+    #[cfg(target_os = "windows")]
+    {
+        s.platform_specific.skip_taskbar = true;
+        s.platform_specific.undecorated_shadow = false;
+        s.platform_specific.drag_and_drop = false;
+    }
+    // Linux/Wayland (equivalente no-op): el «no aparecer en la barra de
+    // tareas / quedar por encima» lo decide el compositor. El único asidero
+    // que da iced 0.13 en Linux es `application_id`, que Hyprland usa para
+    // las windowrule; `override_redirect` se deja en su default (false).
+    // Ver CHECK-1.md L224-226. Nada de esto rompe: hoy no hay regla
+    // asociada y el fallback es el comportamiento natural de Hyprland.
+    #[cfg(target_os = "linux")]
+    {
+        s.platform_specific.application_id = BUBBLE_APP_ID.to_string();
+    }
     // El cierre lo decide la app (Message::WindowCloseRequested → iced::exit);
     // con `true` iced cerraría la ventana sin emitir el evento y el proceso
     // seguiría vivo con la ventana principal.
@@ -1019,7 +1043,13 @@ mod tests {
         let s = bubble_settings(&Config::default());
         assert!(s.transparent);
         assert_eq!(s.level, window::Level::AlwaysOnTop);
+        // `skip_taskbar` solo existe en el PlatformSpecific de Windows; en
+        // Linux el equivalente se resuelve con `application_id` (CHECK-1.md
+        // L224-226 → E0609).
+        #[cfg(target_os = "windows")]
         assert_eq!(s.platform_specific.skip_taskbar, true);
+        #[cfg(target_os = "linux")]
+        assert_eq!(s.platform_specific.application_id, BUBBLE_APP_ID);
     }
 
     #[test]
