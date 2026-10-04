@@ -63,10 +63,11 @@ impl InjectFormat {
 /// A validar en binario: el pegado via wtype en apps Electron/Qt concretas
 /// (algunas expresan su propio atajo de pegado) y el path del socket de
 /// ydotoold en Arch.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum LinuxInjectBackend {
     /// wl-copy (portapapeles) + wtype para la pulsación del pegado,
     /// sin daemons. Default.
+    #[default]
     WlClipboard,
     /// ydotool (uinput vía `ydotoold`): tecleo directo, universal
     /// (Xwayland incluido). Requiere daemon + permiso de /dev/uinput.
@@ -119,6 +120,10 @@ impl Default for InjectSettings {
             format: InjectFormat::Paste,
             delay: Duration::from_millis(40),
             window_filter: None,
+            // Solo Linux: backend por defecto (wl-clipboard). Faltaba en el
+            // inicializador tras el port — E0063 (CHECK-1.md L118).
+            #[cfg(unix)]
+            backend: LinuxInjectBackend::default(),
         }
     }
 }
@@ -265,7 +270,9 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
 }
 
 /// Stub en targets que no sean Windows ni UNIX: sin portapapeles del sistema.
-#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+/// (El gate usa `target_family = "unix"`: `target_os = "unix"` no es un valor
+/// válido y hacía que el stub compilara también en Linux — CHECK-1.md L269.)
+#[cfg(not(any(target_os = "windows", target_family = "unix")))]
 pub fn copy_to_clipboard(_text: &str) -> Result<(), String> {
     Err("el portapapeles solo está disponible en Windows/Linux".to_string())
 }
@@ -381,7 +388,8 @@ fn foreground_window_title() -> Option<String> {
 }
 
 /// En targets que no son Windows ni UNIX no hay interrogado que hacer.
-#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+/// (`target_family = "unix"`, no `target_os`: CHECK-1.md L385.)
+#[cfg(not(any(target_os = "windows", target_family = "unix")))]
 fn foreground_window_title() -> Option<String> {
     None
 }
@@ -544,8 +552,9 @@ pub fn inject_text_into_active_app(
 }
 
 /// Stub en targets que no son Windows ni UNIX: mismo contrato que en el
-/// resto de plataformas, siempre `Err`.
-#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+/// resto de plataformas, siempre `Err`. (`target_family = "unix"`, no
+/// `target_os`: CHECK-1.md L549.)
+#[cfg(not(any(target_os = "windows", target_family = "unix")))]
 pub fn inject_text_into_active_app(
     _text: &str,
     _opts: &InjectSettings,

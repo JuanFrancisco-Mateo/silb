@@ -177,7 +177,7 @@ pub fn acquire() -> bool {
 /// Stub fuera de Windows/UNIX: sin mutex con nombre ni lock file no hay guard
 /// de instancia única; `true` (esta instancia es la dueña) para no bloquear
 /// el arranque.
-#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+#[cfg(not(any(target_os = "windows", target_family = "unix")))]
 pub fn acquire() -> bool {
     true
 }
@@ -231,7 +231,7 @@ pub fn notify_second_instance() {
 }
 
 /// Stub fuera de Windows/UNIX (el aviso real es un `MessageBoxW`).
-#[cfg(not(any(target_os = "windows", target_os = "unix")))]
+#[cfg(not(any(target_os = "windows", target_family = "unix")))]
 pub fn notify_second_instance() {}
 
 #[cfg(test)]
