@@ -5520,6 +5520,7 @@ dependencies = [
  "global-hotkey",
  "iced",
  "iced_winit",
+ "libc",
  "rfd",
  "serde",
  "serde_json",

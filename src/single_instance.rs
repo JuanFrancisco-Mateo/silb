@@ -130,20 +130,28 @@ pub fn acquire() -> bool {
         .open(&path)
     {
         Ok(mut file) => match file.try_lock() {
+            // std 1.99: el contrato de `File::try_lock` cambió de
+            // `Result<bool>` a `Result<(), TryLockError>`: `Ok(())` = lock
+            // conseguido, `Err(TryLockError::WouldBlock)` = ocupado,
+            // `Err(TryLockError::Error(_))` = fallo real del flock. La fuente
+            // de verdad sigue siendo el flock del kernel; el fichero de pid
+            // queda solo como pista de diagnóstico.
             // Lock nuestro: escribir el pid para diagnóstico (no es la fuente
             // de verdad —el flock del kernel lo es—, solo una pista para
             // `kill` o QA). El descriptor se guarda vivo: cerrarlo liberaría
             // el lock.
-            Ok(true) => {
+            Ok(()) => {
                 let _ = file.set_len(0);
                 let _ = write!(file, "{}\n", std::process::id());
                 let _ = file.flush();
                 let _ = LOCK_FILE.set(Some(file));
                 true
             }
-            // flock ocupado: otra instancia viva lo tiene. Leemos su pid solo
-            // para avisar; NO se recupera aquí (el owner es el dueño legítimo).
-            Ok(false) => {
+            // flock ocupado: otra instancia viva lo tiene (desde std 1.99
+            // llega como `WouldBlock`; antes era el `Ok(false)` de bool).
+            // Leemos su pid solo para avisar; NO se recupera aquí (el owner
+            // es el dueño legítimo).
+            Err(std::fs::TryLockError::WouldBlock) => {
                 let pid_hint = std::fs::read_to_string(&path).ok().and_then(|s| {
                     read_pid(&s).filter(|pid| pid_alive(*pid))
                 });
