@@ -399,7 +399,7 @@ fn ydotoold_reachable() -> bool {
     [
         Path::new("/run/ydotoold/.socket"),
         Path::new("/run/user/1000/.ydotool_socket"),
-        xdg.join(".ydotool_socket"),
+        &xdg.join(".ydotool_socket"),
     ]
     .iter()
     .any(|path| path.exists())
@@ -467,7 +467,9 @@ fn inject_with_wtype(text: &str) -> Result<InjectOutcome, String> {
         .wait_with_output()
         .map_err(|err| format!("wtype terminó mal: {err}"))?;
     if salida.status.success() {
-        Ok(())
+        // Éxito de wtype = texto tecleado: misma variante que el backend
+        // ydotool (el caller espera un InjectOutcome, no `()`).
+        Ok(InjectOutcome::Injected)
     } else {
         Err("wtype terminó con error: la app destino puede estar bloqueando el teclado virtual \
              (zwp_virtual_keyboard_v1); prueba con el portapapeles o el backend ydotool"
