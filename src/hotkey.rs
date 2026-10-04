@@ -138,9 +138,13 @@ impl HotkeyManager {
             hotkey_socket_path().display(),
             parsed
         );
+        // E0382: clonar el canal ANTES de mover `listener` al initializer
+        // (este se evalúa en orden de fuente y `listener: Some(listener)`
+        // consume el valor antes de que `rx:` pueda pedirlo prestado).
+        let rx = listener.rx.clone();
         Ok(Self {
             listener: Some(listener),
-            rx: listener.rx.clone(),
+            rx,
             label: parsed,
             id,
         })
@@ -158,7 +162,10 @@ impl HotkeyManager {
             Self {
                 listener: None,
                 rx: crossbeam_channel::unbounded().1,
-                label: parsed,
+                // E0382: clonado por orden de evaluación del initializer —
+                // `label` consume `parsed` antes de que `id` lo pida prestado
+                // (sugerencia del compilador: `parsed.clone()`).
+                label: parsed.clone(),
                 id: hotkey_id_from_label(&parsed),
             }
         }
