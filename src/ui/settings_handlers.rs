@@ -17,6 +17,23 @@ use crate::app::{
 use crate::config::dictionary_path;
 use crate::domain::dictionary::{DictionaryEntry, export_dictionary_to, import_dictionary_from};
 
+// ── Port Linux: selector de ficheros nativo (rfd) ────────────────────────
+//
+// `rfd` vive en `[target.'cfg(windows)'.dependencies]` de Cargo.toml porque
+// su runtime de Linux (GTK/ashpd portal) no está verificado, así que en
+// Linux el crate no está en el grafo. Los arm «Examinar…»/browse de este
+// módulo usan el diálogo nativo y por eso van gateados con `cfg`: en Windows
+// siguen igual y en Linux degradan a no-op de UI (`Task::none()` + aviso por
+// log), NUNCA a `Err`. Así el port compila sin activar el runtime GTK.
+#[cfg(not(target_os = "windows"))]
+fn dialogo_nativo_no_disponible(accion: &str) {
+    crate::log!(
+        "ui",
+        "selector de ficheros nativo no disponible en esta plataforma \
+         (rfd gateada a Windows): {accion}"
+    );
+}
+
 impl WhisprApp {
     /// Ajustes de la corrección IA: proveedor, endpoint, modelo, clave,
     /// timeout, server local, umbral del clasificador, confirmación y el
@@ -137,6 +154,7 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            #[cfg(target_os = "windows")]
             Message::LlmServerPathBrowse => {
                 // Diálogo nativo de Windows (rfd) desde el hilo de UI. Se
                 // filtra por llama-server.exe; el resultado (ruta o None
@@ -151,6 +169,15 @@ impl WhisprApp {
                     },
                     Message::LlmServerPathPicked,
                 )
+            }
+            #[cfg(not(target_os = "windows"))]
+            Message::LlmServerPathBrowse => {
+                // Linux: no hay selector nativo. No-op de UI (nunca Err):
+                // la ruta se escribe a mano en el campo de texto del panel.
+                dialogo_nativo_no_disponible(
+                    "usa el campo de texto «Ruta del server LLM» para escribirla a mano",
+                );
+                Task::none()
             }
             Message::LlmServerPathPicked(path) => {
                 if let Some(p) = path {
@@ -554,6 +581,7 @@ impl WhisprApp {
                 Task::none()
             }
             // ── Personalización III: imágenes del usuario ──────────────────
+            #[cfg(target_os = "windows")]
             Message::BgImageBrowse => Task::perform(
                 async {
                     rfd::FileDialog::new()
@@ -564,6 +592,14 @@ impl WhisprApp {
                 },
                 Message::BgImagePicked,
             ),
+            #[cfg(not(target_os = "windows"))]
+            Message::BgImageBrowse => {
+                // Linux: no-op de UI; se conserva el fondo ya configurado.
+                dialogo_nativo_no_disponible(
+                    "no se puede elegir la imagen de fondo desde el diálogo",
+                );
+                Task::none()
+            }
             Message::BgImagePicked(path) => {
                 if let Some(p) = path {
                     // Validación mínima al elegir: la ruta existe y la
@@ -613,6 +649,7 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            #[cfg(target_os = "windows")]
             Message::BubbleImageBrowse => Task::perform(
                 async {
                     rfd::FileDialog::new()
@@ -623,6 +660,14 @@ impl WhisprApp {
                 },
                 Message::BubbleImagePicked,
             ),
+            #[cfg(not(target_os = "windows"))]
+            Message::BubbleImageBrowse => {
+                // Linux: no-op de UI; se conserva el sprite ya configurado.
+                dialogo_nativo_no_disponible(
+                    "no se puede elegir el sprite de la burbuja desde el diálogo",
+                );
+                Task::none()
+            }
             Message::BubbleImagePicked(path) => {
                 if let Some(p) = path {
                     let pb = std::path::PathBuf::from(&p);
@@ -667,6 +712,7 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            #[cfg(target_os = "windows")]
             Message::BubbleFramesBrowse => Task::perform(
                 async {
                     rfd::FileDialog::new()
@@ -676,6 +722,14 @@ impl WhisprApp {
                 },
                 Message::BubbleFramesPicked,
             ),
+            #[cfg(not(target_os = "windows"))]
+            Message::BubbleFramesBrowse => {
+                // Linux: no-op de UI; se conserva la animación ya configurada.
+                dialogo_nativo_no_disponible(
+                    "no se puede elegir la carpeta de frames desde el diálogo",
+                );
+                Task::none()
+            }
             Message::BubbleFramesPicked(path) => {
                 if let Some(p) = path {
                     // Validación temprana: si la carpeta está vacía o no
@@ -796,6 +850,7 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            #[cfg(target_os = "windows")]
             Message::PaletteExport => Task::perform(
                 async {
                     rfd::FileDialog::new()
@@ -807,6 +862,14 @@ impl WhisprApp {
                 },
                 Message::PaletteExportPicked,
             ),
+            #[cfg(not(target_os = "windows"))]
+            Message::PaletteExport => {
+                // Linux: no-op de UI; no se escribe ningún JSON.
+                dialogo_nativo_no_disponible(
+                    "no se puede elegir el destino de la exportación de paleta",
+                );
+                Task::none()
+            }
             Message::PaletteExportPicked(path) => {
                 if let Some(p) = path {
                     // La paleta que exportamos es la RESUELTA (no la
@@ -836,6 +899,7 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            #[cfg(target_os = "windows")]
             Message::PaletteImport => Task::perform(
                 async {
                     rfd::FileDialog::new()
@@ -846,6 +910,14 @@ impl WhisprApp {
                 },
                 Message::PaletteImportPicked,
             ),
+            #[cfg(not(target_os = "windows"))]
+            Message::PaletteImport => {
+                // Linux: no-op de UI; no se lee ningún JSON.
+                dialogo_nativo_no_disponible(
+                    "no se puede elegir el fichero de importación de paleta",
+                );
+                Task::none()
+            }
             Message::PaletteImportPicked(path) => {
                 if let Some(p) = path {
                     match std::fs::read_to_string(&p) {
