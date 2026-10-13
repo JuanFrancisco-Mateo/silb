@@ -24,7 +24,7 @@
 #define MyReleaseDir GetEnv("WHISPR_RELEASE_DIR") ? GetEnv("WHISPR_RELEASE_DIR") : "..\target\release"
 #define MyAppName "Whispr Open"
 #define MyAppPublisher "Whispr Open contributors"
-#define MyAppURL "https://github.com/whispr-open/whispr-open"
+#define MyAppURL "https://github.com/JuanFrancisco-Mateo/whispr-open"
 #define MyAppExeName "whispr-open.exe"
 #ifndef MyAppVersion
   #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.3.0"
