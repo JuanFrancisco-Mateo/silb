@@ -1,10 +1,27 @@
-# Whispr Open
+<div align="center">
 
-Dictado por voz **local** y de escritorio nativo (Windows). Alternativa
-open-source al flujo de Wispr Flow (wisprflow.ai): hablas, sueltas el atajo y
-el texto se escribe donde esté tu cursor.
+![Whispr Open — dictado por voz local para Windows](docs/img/banner.png)
 
-> Licencia: [MIT](LICENSE) — uso, modificación y redistribución libres.
+**Dictado por voz local y de escritorio nativo. Alternativa open-source al flujo de Wispr Flow.**
+
+[![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-7C6CFF?style=flat-square)](LICENSE)
+[![Rust](https://img.shields.io/badge/Rust-2021-7C6CFF?style=flat-square)](https://www.rust-lang.org/)
+[![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11-7C6CFF?style=flat-square)](#compilar-desde-el-código)
+[![whisper.cpp](https://img.shields.io/badge/whisper.cpp-local-7C6CFF?style=flat-square)](https://github.com/ggerganov/whisper.cpp)
+[![Tests](https://img.shields.io/badge/tests-320%20passed-3fb950?style=flat-square)](#tests)
+
+[Instalar](#instalar) · [Compilar](#compilar-desde-el-código) · [Uso](#uso) · [Configuración](#configuración-avanzada-configjson) · [Contribuir](#contribuir)
+
+</div>
+
+---
+
+Hablas, sueltas el atajo y el texto se escribe donde esté tu cursor. **Todo el
+procesamiento es local**: la transcripción corre en tu máquina con whisper.cpp
+y nada sale de ella. La única parte opcional que usa red es la corrección IA
+si eliges un proveedor Cloud.
+
+## Características
 
 - **UI nativa**: Iced (renderizado directo, sin webview, sin HTML/CSS/JS).
 - **Transcripción local**: whisper.cpp vía `whisper-rs` (modelos GGML,
@@ -14,12 +31,11 @@ el texto se escribe donde esté tu cursor.
 - **Inyección en la app activa**: al terminar, el texto se escribe en la
   ventana con foco (Slack, Notion, editor…) vía portapapeles + Ctrl+V.
   Formato (pegar/teclear), retardo y filtro por título de ventana
-  configurables en `config.json`. Si no hay ninguna ventana con foco, el
-  texto queda copiado en el portapapeles con aviso (nunca se pierde).
-- **Nota editable**: el transcript se puede corregir a mano (editor
-  multilínea en la ventana principal) antes de mandarla — un error de
-  Whisper ya no obliga a re-dictar. Editar y seguir dictando no se pisan;
-  «Copiar» se confirma con un «✓ Copiado» breve y borrar la nota pide
+  configurables. Si no hay ninguna ventana con foco, el texto queda copiado
+  en el portapapeles con aviso (nunca se pierde).
+- **Nota editable**: el transcript se puede corregir a mano antes de mandarla —
+  un error de Whisper ya no obliga a re-dictar. Editar y seguir dictando no se
+  pisan; «Copiar» se confirma con un «✓ Copiado» breve y borrar la nota pide
   confirmación y se puede deshacer.
 - **Post-procesado local**: normalización de repeticiones y expresiones de
   relleno antes de la inyección; las muletillas (inequívocas, solo antes de
@@ -31,51 +47,67 @@ el texto se escribe donde esté tu cursor.
   cross-turn («no no lo último está mal, es 2 en vez de 4»). Local por
   defecto (llama.cpp, sin internet), con proveedores alternativos Custom
   (cualquier endpoint OpenAI-compatible) y Cloud (OpenAI). Documentado en
-  `docs/CORRECCION-VOZ.md` (diseño) y `docs/SETUP.md` (configuración).
+  [`docs/CORRECCION-VOZ.md`](docs/CORRECCION-VOZ.md) (diseño) y
+  [`docs/SETUP.md`](docs/SETUP.md) (configuración).
 - **Diccionario personal** (jerga, siglas, nombres propios) persistente.
 - **Rectificaciones habladas**: «no, quería decir X» corrige el último turno.
 - **Robustez de escritorio**: una segunda instancia no roba el atajo (guard
   de instancia única con aviso), un micrófono que muere a mitad de grabación
   corta el turno y transcribe lo oído, y un modelo de voz truncado se
   re-descarga solo.
+- **Bandeja del sistema y burbuja flotante**: minimiza a la bandeja, burbuja
+  arrastrable con animación por frames, tema claro/oscuro automático.
 
-## Requisitos
+## Cómo funciona
 
-**Para compilar** (solo eso):
+```mermaid
+flowchart LR
+    MIC["Micrófono<br/>cpal · 16 kHz"] --> W["Whisper<br/>whisper.cpp (local)"]
+    W --> CLEAN["Limpieza<br/>muletillas · repeticiones"]
+    CLEAN --> LLM{"Corrección IA<br/>(opcional)"}
+    LLM -->|"corrige «digo X», «no, era Y»"| FIX["Texto corregido"]
+    LLM -->|"sin server disponible"| RAW["Texto tal cual"]
+    FIX --> INJ["Inyección<br/>portapapeles + Ctrl+V"]
+    RAW --> INJ
+    INJ --> APP["App con foco"]
+```
 
-- Rust MSVC toolchain (Windows) + Visual Studio Build Tools (MSVC, cmake) —
-  whisper-rs compila whisper.cpp en C desde el primer build.
-- Windows 10/11. El binario no necesita nada instalado para ejecutarse.
+El recorrido completo de una frase, fichero por fichero, está en
+[`docs/ARQUITECTURA.md`](docs/ARQUITECTURA.md).
 
-**Para ejecutar**:
+## Instalar
 
-- Nada obligatorio. En el primer arranque la app descarga el modelo de voz de
-  Whisper que elijas a `%APPDATA%\whispr-open\models`.
-- La **corrección IA local es opcional**: solo si quieres el corrector «de fábrica»
-  necesitas tener `llama-server.exe` y un modelo GGUF (ver `docs/SETUP.md`).
-  La app **autodetecta** el server (`D:\LlamaCPP`, junto al exe de la app,
-  `%LOCALAPPDATA%\LlamaCPP`, PATH) y el modelo (LM Studio, `D:\LlamaCPP\models`,
-  `D:\models`) — y si no los encuentra, la corrección se desactiva con un aviso
-  y el dictado sigue funcionando. La ruta del server es **configurable** en
-  Ajustes → Corrección IA → Server LLM (botón «Examinar…»).
+- **Instalador** (recomendado): `whispr-open-X.Y.Z-setup.exe` desde la página
+  de [Releases](https://github.com/JuanFrancisco-Mateo/whispr-open/releases).
+  Instala en `%LOCALAPPDATA%\Programs\WhisprOpen` **sin permisos de
+  administrador**, con acceso directo, entrada en «Agregar o quitar programas»
+  y desinstalador.
+- **Portable**: el propio `whispr-open.exe` autocontenido, sin instalación.
+- **¿Aún no hay releases publicadas?** Compílalo en unos minutos (ver abajo).
 
-## Compilar y ejecutar
+Detalles de empaquetado, tamaños medidos y firma en
+[`docs/EMPAQUETADO.md`](docs/EMPAQUETADO.md).
 
-Desde Windows (PowerShell/cmd):
+## Compilar desde el código
+
+**Requisitos** (solo para compilar):
+
+- Rust con toolchain MSVC (`rustup default stable-msvc`) en Windows 10/11.
+- Visual Studio Build Tools con **MSVC** y **CMake** — whisper-rs compila
+  whisper.cpp en C desde el primer build.
 
 ```powershell
-cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe run --release
+git clone https://github.com/JuanFrancisco-Mateo/whispr-open.git
+cd whispr-open
+git checkout native-iced        # rama activa (main es el legado web)
+cargo run --release
 ```
 
-Desde WSL (la ruta del cargo de Windows es obligatoria):
+La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda
+en `target\release\whispr-open.exe` y **no necesita nada instalado para
+ejecutarse**.
 
-```bash
-cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe run --release"
-```
-
-La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda en
-`target\release\whispr-open.exe`.
+> **Nota para WSL**: usa el cargo de Windows (`cmd.exe /c "cd /d <ruta> && <ruta>\cargo.exe run --release"`); apuntar al cargo de WSL genera un binario Linux que no enlaza.
 
 ### Primer arranque
 
@@ -89,17 +121,29 @@ La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda 
 3. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar) y habla. Al soltar, el texto
    se transcribe y se escribe en la app con foco.
 
+La **corrección IA local es opcional**: solo si quieres el corrector «de
+fábrica» necesitas `llama-server.exe` y un modelo GGUF (ver
+[`docs/SETUP.md`](docs/SETUP.md)). La app **autodetecta** el server y el
+modelo; si no los encuentra, la corrección se desactiva con un aviso y el
+dictado sigue funcionando.
+
 ## Uso
 
 ### Guía rápida
 
 1. Arranca la app. La primera vez que dictes con un modelo, se descarga solo
-   (~75 MB tiny / ~142 MB base / ~466 MB small) a `%APPDATA%\whispr-open\models`.
+   (~75 MB tiny / ~142 MB base / ~466 MB small) a
+   `%APPDATA%\whispr-open\models`.
 2. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar), habla, y vuelve a pulsar para
    transcribir.
-3. Si «Autoinyectar» está activo, el texto se escribe en la app que tenga el foco.
-   Si no, lo verás en la ventana y puedes usar «Escribir en app» / «Copiar».
-4. En Configuración: modelo de Whisper, apariencia, corrección IA y diccionario.
+3. Si «Autoinyectar» está activo, el texto se escribe en la app que tenga el
+   foco. Si no, lo verás en la ventana y puedes usar «Escribir en app» /
+   «Copiar».
+4. En Configuración: modelo de Whisper, apariencia, corrección IA y
+   diccionario.
+
+La guía sin jerga técnica está en
+[`docs/GUIA-USUARIO.md`](docs/GUIA-USUARIO.md).
 
 ### Opciones explicadas (mismo texto que la UI)
 
@@ -119,8 +163,7 @@ La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda 
   opcional · Cloud: obligatoria). Se guarda en el Administrador de credenciales
   de Windows, nunca en la config.»
 - *Server LLM*: «Ejecutable llama-server.exe que la app lanza al arrancar.
-  Vacío = autodetección (D:\LlamaCPP, junto a la app…). Solo indícalo aquí si
-  la app no lo encuentra sola.»
+  Vacío = autodetección. Solo indícalo aquí si la app no lo encuentra sola.»
 
 **Ajustes avanzados** (técnico, colapsado por defecto):
 
@@ -167,19 +210,13 @@ reutilizan las configuraciones antiguas durante la migración.
 Los valores inválidos o ausentes se ignoran con el default: la config nunca
 rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 
-## Tests
-
-```powershell
-cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test   # 295 passed + 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
-```
-
 ## Estructura
 
 | Fichero | Contenido |
 |---|---|
 | `src/main.rs` | entrada Iced + guard de instancia única |
 | `src/app.rs` | UI + flujo de dictado + nota editable + routing del corrector IA + ciclo de vida del server |
+| `src/ui/*.rs` | secciones de la ventana: ajustes, pestañas, grabación, eventos de burbuja y bandeja |
 | `src/domain/*.rs` | lógica pura (limpieza fija, corrección, diccionario) |
 | `src/domain/corrective.rs` | clasificadores (cross-turn e in-turn) + diff — sin I/O |
 | `src/llm.rs` | cliente LLM OpenAI-compatible (ureq), prompts, guard anti-truncación, server nativo |
@@ -191,13 +228,52 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 295 passed + 1 ignored (dominio, 
 | `src/config.rs` | configuración persistente + Credential Manager |
 | `src/theme.rs` | tokens de diseño + contraste WCAG medido |
 | `src/bubble.rs` · `src/tray.rs` · `src/fonts.rs` · `src/log.rs` | burbuja flotante, bandeja, fuente emoji, log a archivo |
+| `src/custom_image.rs` | imagen de fondo propia y sprite/animación por frames en la burbuja |
 | `docs/CORRECCION-VOZ.md` | especificación y diseño final del corrector IA |
 | `docs/GUIA-USUARIO.md` | guía de usuario: dictar y corregir hablando |
 | `docs/ARQUITECTURA.md` | recorrido del código para alguien que nunca ha tocado Rust |
 | `docs/SETUP.md` | cómo configurar Local / Custom / Cloud |
-| `ROADMAP.md` (raíz) | punto de entrada: apunta a `docs/ROADMAP.md` |
-| `docs/EMPAQUETADO.md` · `docs/ROADMAP.md` · `docs/UI-FUTURA.md` | empaquetado y hoja de ruta |
+| `docs/EMPAQUETADO.md` · [`docs/ROADMAP.md`](docs/ROADMAP.md) · `docs/UI-FUTURA.md` | empaquetado, hoja de ruta y mejoras de UI |
 | `docs/ROADMAP-LEGADO-WEB.md` | hoja de ruta de la versión web (histórico, rama `main`) |
+
+## Tests
+
+```powershell
+cargo test   # 320 passed, 0 failed, 3 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo check  # sin errores
+```
+
+## Contribuir
+
+Las contribuciones son bienvenidas. Antes de empezar, lee
+[`CONTRIBUTING.md`](CONTRIBUTING.md): cómo reportar bugs, pedir funciones y
+enviar pull requests, el estilo del proyecto (commits en español, tests
+verdes) y qué rama tocar.
+
+- 🐛 [Reportar un bug](https://github.com/JuanFrancisco-Mateo/whispr-open/issues/new?template=bug.yml)
+- 💡 [Pedir una función](https://github.com/JuanFrancisco-Mateo/whispr-open/issues/new?template=feature.yml)
+- 🗺️ Qué queda por hacer: [`docs/ROADMAP.md`](docs/ROADMAP.md) y
+  [`docs/UI-FUTURA.md`](docs/UI-FUTURA.md)
+
+Hay un **port experimental a Linux** en las ramas `feature/port-linux-*`
+(colaboradores bienvenidos).
+
+## Roadmap
+
+La hoja de ruta viva es [`docs/ROADMAP.md`](docs/ROADMAP.md). Resumen: la
+versión 0.3.0 cierra el producto para Windows (instalador, icono,
+personalización completa); lo pendiente se agrupa en
+[`docs/UI-FUTURA.md`](docs/UI-FUTURA.md) y en el port a Linux.
+
+## Otros proyectos
+
+Más cosas mías en [github.com/JuanFrancisco-Mateo](https://github.com/JuanFrancisco-Mateo):
+
+- [**timer-app**](https://github.com/JuanFrancisco-Mateo/timer-app) — cronómetro web en HTML, CSS y JavaScript.
+- [**TicTacToeTresEnRaya**](https://github.com/JuanFrancisco-Mateo/TicTacToeTresEnRaya) — interfaz de tres en raya con JavaFX.
+- [**proyecto_TFG**](https://github.com/JuanFrancisco-Mateo/proyecto_TFG) — Trabajo de Fin de Grado (Java).
+- [**TareaRA01_AccesoDatos**](https://github.com/JuanFrancisco-Mateo/TareaRA01_AccesoDatos) · [**TareaRA02_AccesoDatos**](https://github.com/JuanFrancisco-Mateo/TareaRA02_AccesoDatos) — ejercicios de Acceso a Datos (Java).
+- 🌐 [Portfolio interactivo](https://juanfrancisco-porfolio-interactivo.vercel.app/) · [El baúl del gato](https://el-baul-del-gato.vercel.app/)
 
 ## Historial de versiones
 
@@ -208,16 +284,16 @@ C:\Users\usuario\.cargo\bin\cargo.exe test   # 295 passed + 1 ignored (dominio, 
   paleta editable con presets y por campo, imágenes y animación por frames en la
   burbuja). Añade la documentación de cierre (`INFORME-CIERRE.md`).
 - **0.2.0** (rama `native-iced`): reescritura a escritorio nativo. Adiós web.
-- 0.2.0 → 11/09/2026: cierre de la documentación (fase R5) — licencia MIT,
+  Cierre de la documentación (fase R5) — licencia MIT,
   `docs/ARQUITECTURA.md` para quien llega nuevo, guía de usuario ampliada,
-  doc-comments en español en todas las funciones y tipos públicos, y roadmap
-  de la raíz apuntando al de la rama nativa (el web quedó archivado).
-- 0.2.0 → 10/09/2026: cierre del producto — robustez a prueba de fallos
-  (descarga, audio, inyección, instancia única), nota editable, contraste
-  AA medido, pie de confianza, descarga con MB y tiempo restante,
-  licencia MIT explícita y documentación de arquitectura.
-- 0.2.0 → 10/09/2026: corrección IA completa — server LLM nativo
-  autogestionado (la app lo lanza y lo cierra), ciclo de vida de memoria con el
-  toggle, guard anti-truncación, proveedores Local/Custom/Cloud con API key en
-  Credential Manager, y UX transparente (chip de estado y opciones explicadas).
-- 0.1.0 (rama `main`): prototipo web (React + Tauri v2 + Whisper WASM), 40 tests.
+  doc-comments en español en todas las funciones y tipos públicos. Robustez a
+  prueba de fallos (descarga, audio, inyección, instancia única), nota editable,
+  contraste AA medido, y corrección IA completa — server LLM nativo
+  autogestionado, guard anti-truncación, proveedores Local/Custom/Cloud con API
+  key en Credential Manager.
+- **0.1.0** (rama `main`): prototipo web (React + Tauri v2 + Whisper WASM), 40 tests.
+
+## Licencia
+
+[MIT](LICENSE) — uso, modificación y redistribución libres. Copyright (c) 2026
+Whispr Open contributors.
