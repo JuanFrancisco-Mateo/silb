@@ -1,0 +1,38 @@
+name: "💡 Pedir una función"
+description: "Una idea para mejorar Whispr Open"
+title: "[feat] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Cuéntanos primero **el problema** que quieres resolver; la solución la
+        discutimos después. Whispr Open es 100% local y sin webview: tenlo en
+        cuenta al proponer.
+  - type: textarea
+    id: problema
+    attributes:
+      label: ¿Qué problema resuelve?
+      description: Describe la situación actual y qué te falta.
+      placeholder: Cuando dicto nombres propios poco frecuentes, Whisper los escribe mal y tengo que corregirlos a mano…
+    validations:
+      required: true
+  - type: textarea
+    id: propuesta
+    attributes:
+      label: ¿Qué propones?
+      description: Tu idea de solución o cómo te imaginas que funcionaría.
+    validations:
+      required: true
+  - type: textarea
+    id: alternativas
+    attributes:
+      label: ¿Has considerado alternativas?
+      description: Otras soluciones que hayas probado o pensado.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Comprobaciones
+      options:
+        - label: He buscado issues/roadmap y no he encontrado esta propuesta
+          required: true

@@ -3,3 +3,11 @@
 
 # Empaquetado
 /packaging/Output/
+
+# Metadatos del entorno de agentes (Freebuff)
+/.freebuff/
+
+# Temporales de sistema
+Thumbs.db
+.DS_Store
+__pycache__/
