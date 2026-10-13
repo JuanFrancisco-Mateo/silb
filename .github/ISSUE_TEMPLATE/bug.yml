@@ -1,0 +1,62 @@
+name: "🐛 Reportar un bug"
+description: "Algo no funciona como debería"
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Gracias por reportar. Cuanta más información, más rápido lo arreglamos.
+        **No pegues API keys ni datos personales** en el issue.
+  - type: textarea
+    id: que-pasa
+    attributes:
+      label: ¿Qué ocurre?
+      description: Descripción clara del problema.
+      placeholder: Al soltar el atajo, el texto no se inyecta en la ventana con foco…
+    validations:
+      required: true
+  - type: textarea
+    id: pasos
+    attributes:
+      label: Pasos para reproducirlo
+      placeholder: |
+        1. Arrancar la app
+        2. Abrir el Bloc de notas
+        3. Pulsar Ctrl+Shift+D y dictar
+        4. ...
+    validations:
+      required: true
+  - type: textarea
+    id: esperado
+    attributes:
+      label: ¿Qué esperabas que ocurriera?
+    validations:
+      required: true
+  - type: textarea
+    id: entorno
+    attributes:
+      label: Entorno
+      description: Versión de Whispr Open, versión de Windows, modelo de Whisper y proveedor de corrección IA (Local/Custom/Cloud/Ninguno).
+      placeholder: |
+        - Whispr Open: 0.3.0
+        - Windows: 11 23H2
+        - Modelo Whisper: base
+        - Corrección IA: Local (llama.cpp)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs relevantes
+      description: Fragmento de `%APPDATA%\whispr-open\whispr-open.log` o de la consola. Revisa que no contenga datos personales.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Comprobaciones
+      options:
+        - label: He buscado issues duplicados y no he encontrado ninguno
+          required: true
+        - label: No incluyo API keys, datos personales ni información sensible
+          required: true
