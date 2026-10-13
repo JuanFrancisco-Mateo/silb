@@ -58,6 +58,18 @@ si eliges un proveedor Cloud.
 - **Bandeja del sistema y burbuja flotante**: minimiza a la bandeja, burbuja
   arrastrable con animación por frames, tema claro/oscuro automático.
 
+## Capturas
+
+<p align="center">
+  <img src="docs/img/ventana-principal.png" alt="Ventana principal de Whispr Open con el tema por defecto" width="260">
+  &nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="docs/img/burbuja.png" alt="Burbuja flotante de Whispr Open" width="88">
+</p>
+
+Ventana principal y burbuja flotante con el **tema por defecto** (claro/oscuro
+automático). Desde Ajustes puedes cambiar la paleta, poner tu propia imagen de
+fondo y animar la burbuja por frames.
+
 ## Cómo funciona
 
 ```mermaid
