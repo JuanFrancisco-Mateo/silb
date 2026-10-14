@@ -9,8 +9,9 @@
 //! manejador por familia de mensajes), `subscription`, `theme`, `view` y los
 //! helpers pequeños de estado. El resto de la UI vive en `src/ui/`:
 //!
-//! - `ui::settings`: las vistas del panel de Ajustes (`settings_view`,
-//!   `settings_tab_bar`, `settings_section_*`) y los helpers de paleta.
+//! - `ui::settings`: las vistas del espacio de trabajo de Ajustes
+//!   (`settings_view`, `settings_nav`, `settings_section_*`) y los helpers de
+//!   paleta.
 //! - `ui::settings_handlers`: manejadores de Ajustes (`handle_note`,
 //!   `handle_lists`, `handle_dictation_engine`, `handle_appearance_settings`,
 //!   `handle_palette_settings`, `handle_corrector_settings`).
