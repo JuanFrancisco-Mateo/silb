@@ -24,7 +24,7 @@ use iced::widget::{
     button, checkbox as check, container, pick_list as pick, progress_bar, rule,
     scrollable as scroll, text_editor as editor, text_input as input, toggler as toggle,
 };
-use iced::{Background, Border, Color, Shadow, Theme};
+use iced::{Background, Border, Color, Padding, Shadow, Theme};
 
 use crate::config::Config;
 
@@ -1209,6 +1209,23 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
 /// táctil (UI-FUTURA P1): el padding por defecto de iced deja botones bajos de
 /// más para un dedo o un toque rápido. 8 px verticales × 16 horizontales.
 pub const SECONDARY_BUTTON_PADDING: [f32; 2] = [SPACE_2 as f32, SPACE_3 as f32];
+
+/// Padding interior común de los campos de formulario (`text_input` y
+/// `pick_list`): los dos comparten inset para que el texto arranque en la
+/// misma x (iced trae 10 px a la izquierda en el `pick_list` y 5 en el
+/// `text_input`, y la diferencia se veía como desalineación).
+pub const FIELD_PADDING: Padding = Padding {
+    top: 5.0,
+    right: 10.0,
+    bottom: 5.0,
+    left: 5.0,
+};
+
+/// Ancho reservado a la derecha de cada fila de Ajustes para el texto auxiliar
+/// del campo (tamaño del modelo, ayuda del idioma) y para el botón de borrado
+/// de las listas. Con la MISMA reserva en todas las filas, campos, botones y
+/// «✕» acaban en la misma x (columna derecha unificada).
+pub const AUX_COL_WIDTH: f32 = 64.0;
 
 /// Botón secundario (acciones discretas): transparente, texto dim → texto al hover.
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {

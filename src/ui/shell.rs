@@ -32,6 +32,11 @@ use crate::app::{
 use crate::theme::{self, Chrome, DesignType};
 use crate::ui::icons;
 
+/// Margen izquierdo único de la barra lateral: marca, items de navegación y
+/// pie comparten la misma x para su contenido (el fondo del item activo sigue
+/// empezando en el borde del sidebar; el icono cae donde el logo).
+const SIDEBAR_CONTENT_PAD: f32 = 12.0;
+
 /// Nº de barras del medidor de nivel del micrófono (18 en el diseño, de 3 px
 /// de ancho y 3 px de separación: 18*3 + 17*3 = 105 px de ancho).
 const LEVEL_BARS: usize = 18;
@@ -107,9 +112,10 @@ impl WhisprApp {
         .into()
     }
 
-    /// `Sidebar` (204 px): marca, navegación, bloque de privacidad, separador
-    /// y versión + ayuda.
+    /// `Sidebar` (204 px): marca, navegación, hueco elástico y versión + ayuda.
     pub(crate) fn frame_sidebar(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
+        // Un único margen izquierdo para marca, nav y pie: el contenido arranca
+        // en la misma x que el icono de los items de navegación.
         let brand = row![
             icons::icon(icons::WHISPR_SYMBOL, 32.0),
             // Marca: solo el texto, el logo (el cuadrado con la onda) se queda.
@@ -121,7 +127,7 @@ impl WhisprApp {
             top: 0.0,
             right: 0.0,
             bottom: 0.0,
-            left: 8.0,
+            left: SIDEBAR_CONTENT_PAD,
         });
 
         // Los dos destinos de la navegación salen de `WindowSection::ALL` (el
@@ -141,21 +147,6 @@ impl WhisprApp {
             ));
         }
 
-        let privacy = column![
-            row![
-                icons::icon(icons::SHIELD_CHECK, 16.0),
-                text("Solo en tu equipo").size(ty.body).color(c.secondary),
-            ]
-            .spacing(8.0)
-            .align_y(Alignment::Center),
-            text("Sin nube. Sin cuentas.")
-                .size(ty.chrome)
-                .color(c.faint),
-        ]
-        .spacing(9.0)
-        .padding(12.0)
-        .width(Length::Fill);
-
         // Ayuda: abre Ajustes → Avanzado, que es donde vive lo técnico
         // (ruta del registro, carpeta de la app) que un usuario busca aquí.
         let version = row![
@@ -171,9 +162,9 @@ impl WhisprApp {
         .align_y(Alignment::Center)
         .padding(Padding {
             top: 0.0,
-            right: 12.0,
+            right: SIDEBAR_CONTENT_PAD,
             bottom: 0.0,
-            left: 12.0,
+            left: SIDEBAR_CONTENT_PAD,
         });
 
         container(
@@ -181,8 +172,6 @@ impl WhisprApp {
                 brand,
                 nav,
                 Space::with_height(Length::Fill),
-                privacy,
-                horizontal_rule(1).style(theme::divider_rule),
                 version,
             ]
             .spacing(32.0)
@@ -703,7 +692,15 @@ impl WhisprApp {
             }
         };
 
-        row![
+        // Aviso honesto SOLO cuando el corrector sale a la nube: con la
+        // corrección local (o apagada) el texto «nada sale de tu PC» era
+        // redundante con el README y se retira.
+        let cloud_correction = enabled
+            && matches!(
+                self.config.correction_provider(),
+                crate::config::CorrectionProvider::Cloud
+            );
+        let mut footer = row![
             row![
                 icons::icon(icons::SPARKLES, 15.0),
                 text("Corrección IA").size(ty.body).color(c.secondary),
@@ -716,20 +713,22 @@ impl WhisprApp {
             .spacing(10.0)
             .align_y(Alignment::Center),
             Space::with_width(Length::Fill),
-            row![
-                icons::icon(icons::HARD_DRIVE, 14.0),
-                text(crate::app::trust_footer_line(
-                    enabled && matches!(self.config.correction_provider(), crate::config::CorrectionProvider::Cloud)
-                ))
-                .size(ty.chrome)
-                .color(c.faint),
-            ]
-            .spacing(7.0)
-            .align_y(Alignment::Center),
         ]
         .width(Length::Fill)
-        .align_y(Alignment::Center)
-        .into()
+        .align_y(Alignment::Center);
+        if cloud_correction {
+            footer = footer.push(
+                row![
+                    icons::icon(icons::HARD_DRIVE, 14.0),
+                    text(crate::app::CLOUD_CORRECTION_NOTICE)
+                        .size(ty.chrome)
+                        .color(c.faint),
+                ]
+                .spacing(7.0)
+                .align_y(Alignment::Center),
+            );
+        }
+        footer.into()
     }
 }
 
@@ -758,7 +757,7 @@ fn nav_item<'a>(
         top: 0.0,
         right: 0.0,
         bottom: 0.0,
-        left: 12.0,
+        left: SIDEBAR_CONTENT_PAD,
     })
     .on_press(message)
     .style(move |th, status| theme::nav_item(th, status, active))

@@ -27,6 +27,21 @@ use crate::config::{
 use crate::theme::{self, UiPalette};
 use crate::transcribe::Model;
 
+/// Hueco de la columna auxiliar derecha: el MISMO ancho en todas las filas de
+/// Ajustes. Si la fila tiene texto auxiliar (tamaño del modelo, ayuda del
+/// idioma) va aquí; si no, se reserva el hueco vacío. Así campos y botones
+/// acaban todos en la misma x.
+fn aux_slot<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+    container(content)
+        .width(Length::Fixed(theme::AUX_COL_WIDTH))
+        .into()
+}
+
+/// Igual que [`aux_slot`] pero sin contenido (fila sin texto auxiliar).
+fn aux_slot_empty<'a>() -> Element<'a, Message> {
+    Space::new(Length::Fixed(theme::AUX_COL_WIDTH), 0).into()
+}
+
 impl WhisprApp {
     /// Panel de configuración (oculto tras el botón Ajustes).
 /// Panel de configuración reorganizado por pestañas (R7 — Personalización I).
@@ -82,6 +97,7 @@ impl WhisprApp {
         // En portrait el ancho es limitado: el selector absorbe el espacio
         // sobrante de la fila en vez de desbordar la ventana.
         .width(Length::Fill)
+        .padding(theme::FIELD_PADDING)
         .style(theme::pick_list);
         let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref(), fs);
 
@@ -103,6 +119,7 @@ impl WhisprApp {
         )
         .placeholder("Idioma")
         .width(Length::Fill)
+        .padding(theme::FIELD_PADDING)
         .style(theme::pick_list);
 
         // Toggle de limpieza de muletillas (separado del editor de
@@ -141,12 +158,12 @@ impl WhisprApp {
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 model_pick,
-                text(format!(
-                    "(~{} MB)",
-                    self.config.selected_model().approx_mb()
-                ))
-                .size(fs.sm)
-                .color(t.dim),
+                aux_slot(
+                    text(format!("(~{} MB)", self.config.selected_model().approx_mb()))
+                        .size(fs.sm)
+                        .color(t.dim)
+                        .into(),
+                ),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
@@ -159,6 +176,7 @@ impl WhisprApp {
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 mic_pick,
+                aux_slot_empty(),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
@@ -171,17 +189,25 @@ impl WhisprApp {
                     .color(t.dim)
                     .width(Length::Fixed(96.0)),
                 lang_pick,
-                text(language_hint(&self.config.language))
-                    .size(fs.xxs)
-                    .color(t.dim),
+                aux_slot(
+                    text(language_hint(&self.config.language))
+                        .size(fs.xxs)
+                        .color(t.dim)
+                        .into(),
+                ),
             ]
             .spacing(theme::SPACE_2)
             .align_y(iced::Alignment::Center),
         );
+        // La ayuda cuelga del CAMPO, no de la etiqueta: mismo x que los selects.
         col = col.push(
-            text("Audio: normalizado automáticamente a 16 kHz")
-                .size(fs.sm)
-                .color(t.dim),
+            row![
+                Space::with_width(96.0 + theme::SPACE_2 as f32),
+                text("Audio: normalizado automáticamente a 16 kHz")
+                    .size(fs.sm)
+                    .color(t.dim),
+            ]
+            .spacing(0.0),
         );
         // ── Diccionario personal ────────────────────────────────────────────
         col = col.push(
@@ -203,18 +229,22 @@ impl WhisprApp {
                 button("Añadir")
                     .on_press(Message::AddEntry)
                     .style(theme::primary),
+                aux_slot_empty(),
             ]
             .spacing(theme::SPACE_2),
         );
         col = col.push(dictionary_list(&self.config.dictionary, fs));
+        // Mismo tratamiento y misma columna derecha que el resto de botones.
         col = col.push(
             row![
+                Space::with_width(Length::Fill),
                 button("Importar")
                     .on_press(Message::ImportDictionary)
                     .style(theme::secondary),
                 button("Exportar")
                     .on_press(Message::ExportDictionary)
                     .style(theme::secondary),
+                aux_slot_empty(),
             ]
             .spacing(theme::SPACE_2),
         );
@@ -253,10 +283,12 @@ impl WhisprApp {
                 )
                 .placeholder("Categoría")
                 .width(Length::Fill)
+                .padding(theme::FIELD_PADDING)
                 .style(theme::pick_list),
                 button("Añadir")
                     .on_press(Message::AddFiller)
                     .style(theme::primary),
+                aux_slot_empty(),
             ]
             .spacing(theme::SPACE_2),
         );
