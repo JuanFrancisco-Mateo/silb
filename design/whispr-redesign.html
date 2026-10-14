@@ -1,0 +1,47 @@
+<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Whispr Open — Rediseño propuesto</title><style>
+:root{--bg:#17181C;--surface:#1F2026;--alt:#27282F;--text:#F7F6F3;--dim:#9A9AA3;--accent:#7C6CFF;--border:#2E3038;--ok:#3FB95F}
+*{box-sizing:border-box}body{margin:0;background:#101116;color:var(--text);font-family:Inter,Segoe UI,system-ui,sans-serif;display:flex;justify-content:center;padding:32px}
+.board{max-width:1080px;width:100%;display:grid;gap:20px}
+h1{font-size:22px;margin:0}h2{font-size:15px;margin:0 0 8px}.sub{color:var(--dim);font-size:13px}
+.window{background:var(--bg);border:1px solid var(--border);border-radius:14px;overflow:hidden;box-shadow:0 24px 80px rgba(0,0,0,.5)}
+.titlebar{display:flex;align-items:center;gap:10px;padding:10px 12px;background:#1B1C21;border-bottom:1px solid var(--border);-webkit-app-region:drag}
+.logo{width:22px;height:22px;border-radius:6px;background:var(--accent);display:grid;place-items:center;font-weight:800;color:#17181C}
+.traffic{margin-left:auto;display:flex;gap:8px;-webkit-app-region:no-drag}
+.dot{width:28px;height:22px;border-radius:6px;display:grid;place-items:center;font-size:12px;color:var(--dim);background:var(--surface);border:1px solid var(--border)}
+.dot.close:hover{background:#EB5757;color:#fff;border-color:#EB5757}
+.body{display:grid;grid-template-columns:210px 1fr;min-height:520px}
+.side{border-right:1px solid var(--border);padding:16px 12px;display:flex;flex-direction:column;gap:6px;background:#191A1F}
+.nav{padding:10px 12px;border-radius:10px;color:var(--dim);font-size:13px}.nav.on{background:var(--alt);color:var(--text);border:1px solid var(--accent)}
+.pill{margin-top:auto;font-size:11px;color:var(--ok);border:1px solid var(--border);border-radius:999px;padding:8px 10px;background:#17201A}
+.main{padding:20px;display:flex;flex-direction:column;gap:14px}
+.hero{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:20px;display:flex;gap:18px;align-items:center}
+.mic{width:72px;height:72px;border-radius:50%;background:var(--accent);display:grid;place-items:center;font-size:28px;color:#17181C;box-shadow:0 0 0 8px rgba(124,108,255,.18)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:14px}
+.row{display:flex;gap:10px}.btn{flex:1;padding:10px;border-radius:10px;border:1px solid var(--border);background:var(--alt);color:var(--text)}.btn.primary{background:var(--accent);color:#17181C;font-weight:700;border-color:transparent}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}.k{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+.logos{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.tile{background:var(--bg);border:1px solid var(--border);border-radius:12px;padding:14px;text-align:center}.tile img{width:96px;height:96px}
+ul{margin:6px 0 0 18px;color:#CFCFDA;font-size:13px}li{margin:4px 0}
+.badge{display:inline-block;font-size:11px;border:1px solid var(--accent);color:#BDB2FF;border-radius:999px;padding:2px 8px;margin-left:8px}
+</style></head><body><div class="board">
+<div><h1>Whispr Open — rediseño frameless + menús simples <span class="badge">listo para Figma</span></h1><div class="sub">Sin bordes del sistema · titlebar propia · 3 secciones en vez de 7 menús · LLM local opcional y apagado por defecto · 0 secretos en repo/config</div></div>
+<div class="window"><div class="titlebar"><div class="logo">W</div><div style="font-size:13px">Whispr Open <span style="color:var(--dim)">— dictado local</span></div><div class="traffic"><div class="dot">—</div><div class="dot">▢</div><div class="dot close">✕</div></div></div>
+<div class="body"><div class="side"><div class="nav on">● Dictar</div><div class="nav">Historial</div><div class="nav">Ajustes</div><div class="pill">● Local · nada sale de tu PC</div></div>
+<div class="main"><div class="hero"><div class="mic">🎙</div><div><div style="font-size:18px">Pulsa para dictar</div><div style="color:var(--dim);font-size:13px">Ctrl+Shift+D · tiny por defecto · pico 42% · sin saturación</div></div></div>
+<div class="card"><div class="k">Transcripción</div><div style="min-height:64px;color:#EDEDF2">Hola, esto es una prueba de dictado…</div><div class="row"><button class="btn primary">Inyectar (Ctrl+V)</button><button class="btn">Copiar</button><button class="btn">Limpiar</button><button class="btn">Deshacer</button></div></div>
+<div class="grid2"><div class="card"><div class="k">Modelo Whisper</div><div>tiny · español · GPU auto</div><div style="color:var(--dim);font-size:12px">Descarga una vez, luego offline</div></div>
+<div class="card"><div class="k">Corrección IA — opcional</div><div>Apagada por defecto</div><div style="color:var(--dim);font-size:12px">Si se enciende: llama-server local. Sin API keys.</div></div></div>
+</div></div></div>
+<div class="window" style="padding:18px"><h2>Logos propuestos (SVG en design/logos/)</h2><div class="logos">
+<div class="tile"><img src="logos/whispr-concept-a-wave.svg"><div><b>A · Onda-W</b></div><div class="sub">Recomendado. Una sola tinta + violeta.</div></div>
+<div class="tile"><img src="logos/whispr-concept-b-mic.svg"><div><b>B · Mic geométrico</b></div><div class="sub">Más literal, muy legible a 16px.</div></div>
+<div class="tile"><img src="logos/whispr-concept-c-bubble.svg"><div><b>C · Burbuja</b></div><div class="sub">Amable, para burbuja flotante.</div></div>
+</div><ul><li>Para importar a Figma: arrastra los 3 SVG a un frame “Logo / 128px”. Son vectores puros, sin bitmap.</li><li>ICO: el concepto elegido se regenera a 16/32/48/256 con <i>assets/build_icon.py</i> sin cambiar el instalador.</li></ul></div>
+<div class="window" style="padding:18px"><h2>Informe UI + calidad — qué cambiar</h2><ul>
+<li><b>Ventana sin bordes:</b> usar decorations(false) + titlebar propia con arrastre y doble-clic para maximizar. Botones 28x22 propios. Cerrar minimiza a bandeja, no mata el dictado.</li>
+<li><b>Menús toscos → 3 secciones:</b> Dictar / Historial / Ajustes. Ajustes con 4 grupos colapsables: Audio, Modelo, Corrección IA, Apariencia. Todo lo demás a Avanzado.</li>
+<li><b>Primer uso en 30s:</b> solo mic + modelo tiny + botón Dictar. La corrección IA se ofrece después, nunca bloquea.</li>
+<li><b>Seguridad demencial:</b> 0 API keys en código/config. Solo endpoint local http://127.0.0.1:8081, sin cloud por defecto, sin telemetría. Limpiar placeholders del historial antes del repo público.</li>
+<li><b>LLM opcional:</b> toggle apagado por defecto, perfil ligero small-Q4 por defecto para VRAM baja, aviso si no hay servidor y botón “instalar modelo local”.</li>
+<li><b>Accesibilidad:</b> mantener contraste AA ya medido en theme.rs, foco visible 1.5px, targets 44px, sin animaciones decorativas.</li>
+</ul></div>
+</div></body></html>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <rect width="128" height="128" rx="28" fill="#17181C"/>
+  <!-- W formada por onda -->
+  <path d="M24 58 L38 82 L52 50 L64 72 L76 50 L90 82 L104 58"
+        fill="none" stroke="#7C6CFF" stroke-width="8"
+        stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="34" r="6" fill="#F7F6F3"/>
+  <circle cx="64" cy="34" r="10" fill="none" stroke="#7C6CFF" stroke-width="2" opacity="0.5"/>
+</svg>
