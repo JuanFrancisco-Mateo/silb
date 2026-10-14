@@ -31,7 +31,7 @@ use std::time::Duration;
 use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
-    button, column, container, horizontal_rule, pick_list, row, text, text_editor, vertical_rule,
+    button, column, container, horizontal_rule, row, text, text_editor, vertical_rule,
     Button, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Length, Padding, Point, Subscription, Task, Theme};
@@ -2135,7 +2135,7 @@ impl WhisprApp {
         let c = theme::chrome(&self.theme());
         let ty = theme::design_type(self.config.font_size().factor());
         let workspace: Element<'_, Message> = if self.settings_open {
-            self.settings_workspace(&t)
+            self.settings_workspace(c, ty, &t)
         } else {
             self.dictado_workspace(c, ty, &t)
         };
@@ -2617,28 +2617,6 @@ pub(crate) fn language_hint(value: &Option<String>) -> String {
         None => "default: es".to_string(),
         Some(_) => "".to_string(),
     }
-}
-
-pub(crate) fn mic_pick_list(
-    devices: &[String],
-    selected: Option<&str>,
-    fs: theme::FontSizes,
-) -> Element<'static, Message> {
-    if devices.is_empty() {
-        return text("(sin micrófonos detectados)").size(fs.sm).into();
-    }
-    pick_list(
-        devices.to_vec(),
-        selected.map(|s| s.to_string()),
-        Message::InputDeviceSelected,
-    )
-    .placeholder("(por defecto)")
-    // Los nombres de dispositivos son largos: el selector se ajusta al
-    // ancho disponible (critical en portrait).
-    .width(Length::Fill)
-    .padding(theme::FIELD_PADDING)
-    .style(theme::pick_list)
-    .into()
 }
 
 /// Fila de una lista con acción de borrado: el contenido a la izquierda y el

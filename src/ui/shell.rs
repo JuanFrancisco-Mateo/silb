@@ -20,7 +20,7 @@
 
 use iced::widget::text::Shaping;
 use iced::widget::{
-    button, column, container, horizontal_rule, mouse_area, pick_list, row, scrollable, text,
+    button, column, container, horizontal_rule, mouse_area, pick_list, row, text,
     text_editor, toggler, Space,
 };
 use iced::{Alignment, Element, Length, Padding};
@@ -232,23 +232,25 @@ impl WhisprApp {
             .into()
     }
 
-    /// Panel de Ajustes dentro del espacio de trabajo (el frame de Ajustes es
-    /// otra tarjeta: aquí conserva el aspecto y las pestañas que ya tenía).
-    pub(crate) fn settings_workspace(&self, t: &theme::UiPalette) -> Element<'_, Message> {
-        container(
-            scrollable(self.settings_view(t))
-                .style(theme::scrollable)
-                .height(Length::Fill),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .padding(Padding {
-            top: 32.0,
-            right: 40.0,
-            bottom: 24.0,
-            left: 40.0,
-        })
-        .into()
+    /// Espacio de trabajo de Ajustes (frame `3:604`): cabecera de página,
+    /// navegación de pestañas, contenido con scroll y pie, con el mismo margen
+    /// (pt 32 · px 40 · pb 24) que el espacio de trabajo de Dictado.
+    pub(crate) fn settings_workspace(
+        &self,
+        c: Chrome,
+        ty: DesignType,
+        t: &theme::UiPalette,
+    ) -> Element<'_, Message> {
+        container(self.settings_view(c, ty, t))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .padding(Padding {
+                top: 32.0,
+                right: 40.0,
+                bottom: 24.0,
+                left: 40.0,
+            })
+            .into()
     }
 
     /// `Recording console` (190 px): botón circular de 80 px, estado, atajo en

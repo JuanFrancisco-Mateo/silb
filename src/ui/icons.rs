@@ -32,6 +32,10 @@ pub const STATUS_DOT: &[u8] = include_bytes!("../../assets/icons/statusindicator
 pub const CHEVRON_DOWN: &[u8] = include_bytes!("../../assets/icons/chevrondown-249a1.svg");
 pub const LANGUAGES: &[u8] = include_bytes!("../../assets/icons/languages-33cf3.svg");
 pub const CPU: &[u8] = include_bytes!("../../assets/icons/cpu-c7217.svg");
+/// Teclado del pie de Ajustes (`Atajo de dictado`, 15 px).
+pub const KEYBOARD: &[u8] = include_bytes!("../../assets/icons/keyboard-0ab31.svg");
+/// Check del pie de Ajustes (`Cambios guardados`, 13 px).
+pub const CHECK: &[u8] = include_bytes!("../../assets/icons/check1-0d81a.svg");
 pub const TRASH: &[u8] = include_bytes!("../../assets/icons/trash2-7f4ec.svg");
 pub const COPY: &[u8] = include_bytes!("../../assets/icons/copy-43812.svg");
 pub const PENCIL: &[u8] = include_bytes!("../../assets/icons/pencil-d24ce.svg");

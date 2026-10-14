@@ -19,12 +19,13 @@ use std::cell::RefCell;
 use std::sync::Arc;
 
 use iced::border::Radius;
+use iced::gradient::{Gradient, Linear};
 use iced::theme::Palette;
 use iced::widget::{
     button, checkbox as check, container, pick_list as pick, progress_bar, rule,
     scrollable as scroll, text_editor as editor, text_input as input, toggler as toggle,
 };
-use iced::{Background, Border, Color, Padding, Shadow, Theme};
+use iced::{Background, Border, Color, Padding, Radians, Shadow, Theme};
 
 use crate::config::Config;
 
@@ -1268,6 +1269,49 @@ pub fn tab(theme: &Theme, status: button::Status, active: bool) -> button::Style
     }
 }
 
+/// Pestaña de la navegación de Ajustes (`Settings navigation` del frame
+/// Ajustes): sin caja propia, texto primario la activa y secundario el resto;
+/// el subrayado de 2 px lo pinta la UI con [`tab_underline`] (el diseño lo
+/// cuelga del borde inferior de la pestaña, no de una caja).
+pub fn settings_tab(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    let c = chrome(theme);
+    let text_color = match (active, status) {
+        (true, _) => c.text,
+        (false, button::Status::Hovered | button::Status::Pressed) => c.text,
+        (false, _) => c.secondary,
+    };
+    button::Style {
+        background: None,
+        text_color,
+        border: border(Color::TRANSPARENT, 0.0, 0.0),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Fondo de la pestaña de la navegación de Ajustes: solo la franja de 2 px del
+/// borde INFERIOR, en el acento del diseño (nada, si la pestaña no es la
+/// activa). iced 0.13 no tiene borde por lado (`Border` es un ancho único), así
+/// que la franja la pinta el fondo con un gradiente vertical con dos paradas
+/// pegadas al extremo de abajo — a `Radians(0.0)` el gradiente va de abajo
+/// arriba, así que el offset 0 es el borde inferior. Al ser el fondo del propio
+/// contenedor, el trazo mide exactamente lo que mide la etiqueta.
+pub fn tab_underline(theme: &Theme, active: bool, height: f32) -> Background {
+    let accent = if active {
+        chrome(theme).accent_active
+    } else {
+        Color::TRANSPARENT
+    };
+    let clear = with_alpha(accent, 0.0);
+    let edge = (2.0 / height.max(1.0)).min(1.0);
+    Background::Gradient(Gradient::Linear(
+        Linear::new(Radians(0.0))
+            .add_stop(0.0, accent)
+            .add_stop(edge, accent)
+            .add_stop((edge + 0.001).min(1.0), clear)
+            .add_stop(1.0, clear),
+    ))
+}
+
 /// Botón del micrófono (hero): transparente; la tarjeta interna comunica el estado.
 /// El cursor pointer del botón es el micro-feedback de hover.
 pub fn mic(theme: &Theme, _status: button::Status) -> button::Style {
@@ -1407,6 +1451,39 @@ pub fn progress(theme: &Theme, color: Color) -> progress_bar::Style {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// El subrayado de la pestaña activa es la franja de 2 px del borde
+    /// INFERIOR: las dos primeras paradas del gradiente caen en el offset 0 y
+    /// en 2/alto, y a partir de ahí el color se apaga. Si alguien cambia el
+    /// reparto, el trazo deja de medir 2 px (o se pinta toda la caja).
+    #[test]
+    fn el_subrayado_de_pestana_es_la_franja_inferior_de_2_px() {
+        let th = custom(true);
+        let Background::Gradient(Gradient::Linear(linear)) = tab_underline(&th, true, 43.0) else {
+            panic!("el subrayado debe ser un gradiente");
+        };
+        let stops: Vec<_> = linear.stops.iter().flatten().collect();
+        assert_eq!(stops.len(), 4, "dos paradas para la franja y dos para el resto");
+        assert_eq!(stops[0].offset, 0.0);
+        assert_eq!(stops[0].color, DARK.accent_hover, "la franja va en el acento activo");
+        assert!((stops[1].offset - 2.0 / 43.0).abs() < 1e-6);
+        assert_eq!(stops[1].color, stops[0].color, "la franja es maciza");
+        assert!(stops[2].color.a < 0.01, "por encima de la franja, transparente");
+
+        // Sin ser la activa no se pinta nada.
+        let Background::Gradient(Gradient::Linear(inactive)) = tab_underline(&th, false, 43.0)
+        else {
+            panic!("el fondo del inactivo también es un gradiente");
+        };
+        assert!(
+            inactive
+                .stops
+                .iter()
+                .flatten()
+                .all(|stop| stop.color.a < 0.01),
+            "la pestaña inactiva no lleva trazo"
+        );
+    }
 
     #[test]
     fn spacing_sigue_la_grid_de_8px() {
