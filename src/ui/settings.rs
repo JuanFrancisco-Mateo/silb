@@ -1,115 +1,278 @@
-//! Vistas del panel de Ajustes y sus widgets (R7 — Personalización I).
+//! Espacio de trabajo de Ajustes: el frame `3:604` de Figma.
 //!
-//! Movido tal cual desde `src/app.rs` en el refactor de organización (cero
-//! cambio de conducta): `settings_view`, las secciones
-//! (`General | Apariencia | Imágenes | Paleta | Dictado | Corrección IA |
-//! Avanzado`) y los controles de la paleta editable. La fila de pestañas
-//! (`settings_tab_bar`) vive aquí abajo, fuera del `impl`.
+//! Fuente de verdad de medidas y colores: `design/openwhispr-figma/raw/
+//! ajustes-design-context.txt` (capa a capa), `metadata-arbol-capas.txt`
+//! (coordenadas) y `raw/ajustes.png` (render). Todo el tono sale de
+//! [`crate::theme`]: aquí no hay literales de color.
+//!
+//! Composición (1200×820): cabecera de página, navegación de pestañas (43 px,
+//! subrayado de 2 px en la activa), contenido de la pestaña activa con scroll y
+//! el pie con el atajo en keycaps. Las tarjetas de sección y sus filas de
+//! preferencia son los primitivos del diseño ([`section_block`],
+//! [`design_card`], [`preference_row`], [`wide_row`]).
 //!
 //! El estado sigue en [`WhisprApp`] (`settings_open`, `settings_section`,
-//! `palette_inputs`, …); este módulo solo dibuja.
+//! `palette_inputs`, …); este módulo solo dibuja. Las claves y los valores de
+//! `config` no cambian respecto a la UI anterior: es capa visual y orden.
+//!
+//! Nota sobre las pestañas: el frame trae `Transcripción · Diccionario
+//! personal · Muletillas · General`; la app conserva sus cinco secciones
+//! (`General · Apariencia · Dictado · Corrección IA · Avanzado`) porque el
+//! reparto de contenido es el de siempre — el diseño aporta la forma, la altura
+//! y los estados (ver el cierre de la tarjeta).
 
 use iced::border::Radius;
+use iced::font::Weight;
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, pick_list, row, slider, text, text_input,
-    Column, Row, Space,
+    button, checkbox, column, container, horizontal_rule, pick_list, row, scrollable, slider, text,
+    text_input, toggler, Column, Row, Space,
 };
-use iced::{Background, Border, Color, Element, Font, Length};
+use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding};
 
 use crate::app::{
     auto_server_placeholder, dictionary_list, filler_lists, language_hint, language_label,
-    llm_status_ui, mic_pick_list, ui_text, FillerCategory, Message, SettingsSection, WhisprApp,
+    llm_status_ui, ui_text, FillerCategory, Message, SettingsSection, WhisprApp,
 };
 use crate::config::{
     BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, CorrectionProvider, FontSize,
     ThemeMode,
 };
-use crate::theme::{self, UiPalette};
+use crate::theme::{self, Chrome, DesignType, UiPalette};
 use crate::transcribe::Model;
+use crate::ui::icons;
 
-/// Hueco de la columna auxiliar derecha: el MISMO ancho en todas las filas de
-/// Ajustes. Si la fila tiene texto auxiliar (tamaño del modelo, ayuda del
-/// idioma) va aquí; si no, se reserva el hueco vacío. Así campos y botones
-/// acaban todos en la misma x.
-fn aux_slot<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
+/// Ancho de los controles de una fila de preferencia (el `Selection` de 250 px
+/// del frame Ajustes).
+const CONTROL_WIDTH: f32 = 250.0;
+
+/// Alto de la caja de una pestaña de Ajustes (el `Settings navigation` del
+/// frame mide 43 px).
+const TAB_BOX_HEIGHT: f32 = 43.0;
+
+/// Peso `Medium` para los rótulos del diseño (la app no bundlea Inter: se le
+/// pide el peso al family por defecto del sistema, ver `fonts.rs`).
+fn medium() -> Font {
+    Font {
+        weight: Weight::Medium,
+        ..Font::DEFAULT
+    }
+}
+
+/// Rótulo de sección del diseño (12 px, secundario) + su tarjeta, separados
+/// por los 10 px que mide el frame.
+fn section_block<'a>(
+    label: &str,
+    card: Element<'a, Message>,
+    c: Chrome,
+    ty: DesignType,
+) -> Element<'a, Message> {
+    column![
+        text(label.to_string())
+            .size(ty.body)
+            .font(medium())
+            .color(c.secondary),
+        card,
+    ]
+    .spacing(10.0)
+    .width(Length::Fill)
+    .into()
+}
+
+/// Tarjeta del diseño (`#1d1e24` + borde `#303139` + radio 12 = [`theme::card`])
+/// con sus filas separadas por el hairline interno del frame (entre filas, ni
+/// antes de la primera ni tras la última).
+fn design_card<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
+    let mut card = Column::new().width(Length::Fill);
+    for (i, row) in rows.into_iter().enumerate() {
+        if i > 0 {
+            card = card.push(horizontal_rule(1).style(theme::divider_rule));
+        }
+        card = card.push(row);
+    }
+    container(card).width(Length::Fill).style(theme::card).into()
+}
+
+/// Fila de preferencia del diseño (68 px, px 20 / py 15): rótulo 14 px medium
+/// con su ayuda 12 px tenue a la izquierda y el control a la derecha.
+fn preference_row<'a>(
+    label: &str,
+    help: Option<&str>,
+    control: Element<'a, Message>,
+    c: Chrome,
+    ty: DesignType,
+) -> Element<'a, Message> {
+    let mut left = column![text(label.to_string())
+        .size(ty.nav)
+        .font(medium())
+        .color(c.text)]
+    .spacing(4.0)
+    .width(Length::Fill);
+    if let Some(help) = help {
+        left = left.push(text(help.to_string()).size(ty.body).color(c.faint));
+    }
+    container(
+        row![left, control]
+            .spacing(20.0)
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+    )
+    .width(Length::Fill)
+    .height(Length::Fixed(68.0))
+    .padding(Padding {
+        top: 15.0,
+        right: 20.0,
+        bottom: 15.0,
+        left: 20.0,
+    })
+    .into()
+}
+
+/// Fila de tarjeta sin control a la derecha: el contenido ocupa todo el ancho
+/// (listas, formularios y textos largos) con el mismo inset que las filas de
+/// preferencia.
+fn wide_row<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     container(content)
-        .width(Length::Fixed(theme::AUX_COL_WIDTH))
+        .width(Length::Fill)
+        .padding(Padding {
+            top: 15.0,
+            right: 20.0,
+            bottom: 15.0,
+            left: 20.0,
+        })
         .into()
 }
 
-/// Igual que [`aux_slot`] pero sin contenido (fila sin texto auxiliar).
-fn aux_slot_empty<'a>() -> Element<'a, Message> {
-    Space::new(Length::Fixed(theme::AUX_COL_WIDTH), 0).into()
-}
-
 impl WhisprApp {
-    /// Panel de configuración (oculto tras el botón Ajustes).
-/// Panel de configuración reorganizado por pestañas (R7 — Personalización I).
-    /// Antes era un único `settings_view()` monolítico con scroll infinito y un
-    /// bloque «Ajustes avanzados» colapsable al final. Ahora son cinco pestañas
-    /// (`General | Apariencia | Dictado | Corrección IA | Avanzado`) y solo se
-    /// renderiza el contenido de la pestaña activa. La fila de pestañas va
-    /// ARRIBA del contenido; los botones globales (tema, ajustes) se quedan
-    /// en la cabecera de la app, fuera de aquí.
-    pub(crate) fn settings_view(&self, t: &UiPalette) -> Element<'_, Message> {
-        let fs = theme::font_sizes(self.config.font_size().factor());
+    /// Espacio de trabajo de Ajustes (frame `3:604` de Figma): cabecera de
+    /// página, navegación de pestañas, contenido de la pestaña activa (con
+    /// scroll) y pie con el atajo y el estado de guardado.
+    pub(crate) fn settings_view(
+        &self,
+        c: Chrome,
+        ty: DesignType,
+        t: &UiPalette,
+    ) -> Element<'_, Message> {
+        let heading = column![
+            text("Ajustes").size(ty.title).color(c.text),
+            text("Tu forma de dictar, a tu medida.")
+                .size(ty.control)
+                .color(c.secondary),
+        ]
+        .spacing(6.0)
+        .width(Length::Fill);
 
-        // Fila de pestañas: cada una es un botón independiente con su
-        // etiqueta legible. La activa lleva un prefijo `●` y un fondo más
-        // marcado (requisito 4 de R7: «sección activa marcada por algo más
-        // que color»). Las inactivas usan el estilo `secondary` ya existente.
-        let tab_bar = settings_tab_bar(self.settings_section, t, fs);
+        // Solo el contenido de la pestaña activa hace scroll: la cabecera, la
+        // navegación y el pie del diseño quedan siempre a la vista.
+        let body = container(
+            scrollable(self.settings_body(c, ty, t))
+                .style(theme::scrollable)
+                .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .height(Length::Fill);
 
-        // Contenido de la pestaña activa. Cada sección es una función
-        // privada: si en el futuro se mueve un control, se mueve a la
-        // sección correcta sin tocar las demás.
-        let body: Element<'_, Message> = match self.settings_section {
-            SettingsSection::General => self.settings_section_general(t, fs),
-            SettingsSection::Apariencia => self.settings_section_appearance(t, fs),
-            SettingsSection::Dictado => self.settings_section_dictation(t, fs),
-            SettingsSection::CorreccionIA => self.settings_section_correction(t, fs),
-            SettingsSection::Avanzado => self.settings_section_advanced(t, fs),
-        };
+        column![
+            heading,
+            settings_nav(self.settings_section, c, ty),
+            body,
+            self.settings_footer(c, ty),
+        ]
+        .spacing(22.0)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+    }
 
-        let panel = column![tab_bar, body]
-            .spacing(theme::SPACE_3)
-            .width(Length::Fill);
+    /// Contenido de la pestaña activa. Cada sección es una función privada: si
+    /// en el futuro se mueve un control, se mueve a la sección correcta sin
+    /// tocar las demás.
+    fn settings_body(&self, c: Chrome, ty: DesignType, t: &UiPalette) -> Element<'_, Message> {
+        match self.settings_section {
+            SettingsSection::General => self.settings_section_general(c, ty, t),
+            SettingsSection::Apariencia => self.settings_section_appearance(c, ty, t),
+            SettingsSection::Dictado => self.settings_section_dictation(c, ty, t),
+            SettingsSection::CorreccionIA => self.settings_section_correction(c, ty, t),
+            SettingsSection::Avanzado => self.settings_section_advanced(c, ty, t),
+        }
+    }
 
-        container(panel)
-            .width(Length::Fill)
-            .padding(theme::SPACE_3)
-            .style(|th| theme::card(th))
-            .into()
+    /// `Settings footer` del diseño: atajo de dictado en keycaps a la izquierda
+    /// y el estado de guardado a la derecha.
+    fn settings_footer(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
+        let mut keys = row![].spacing(4.0).align_y(Alignment::Center);
+        for key in self.hotkey_label.split('+').map(str::trim) {
+            keys = keys.push(
+                container(ui_text(key).size(ty.chrome).color(c.secondary))
+                    .padding(Padding {
+                        top: theme::KEYCAP_PADDING[0],
+                        right: theme::KEYCAP_PADDING[1],
+                        bottom: theme::KEYCAP_PADDING[0],
+                        left: theme::KEYCAP_PADDING[1],
+                    })
+                    .style(theme::keycap),
+            );
+        }
+        row![
+            icons::icon(icons::KEYBOARD, 15.0),
+            text("Atajo de dictado").size(ty.chrome).color(c.secondary),
+            keys,
+            Space::with_width(Length::Fill),
+            icons::icon(icons::CHECK, 13.0),
+            text("Cambios guardados").size(ty.chrome).color(c.faint),
+        ]
+        .spacing(10.0)
+        .align_y(Alignment::Center)
+        .width(Length::Fill)
+        .into()
     }
 
     /// ── Sección «General» ────────────────────────────────────────────────
-    /// Lo más usado en una sesión normal: modelo de voz, micrófono, idioma,
-    /// limpieza de muletillas, autoinyección, diccionario y las muletillas
-    /// personalizadas. Es la pestaña que se abre por defecto al entrar en
-    /// Ajustes (requisito 5 de R7: aterrizar en lo común).
-    pub(crate) fn settings_section_general(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
-        let model_pick = pick_list(
-            Model::all().to_vec(),
-            Some(self.config.selected_model()),
-            Message::ModelSelected,
-        )
-        .placeholder("Modelo")
-        // En portrait el ancho es limitado: el selector absorbe el espacio
-        // sobrante de la fila en vez de desbordar la ventana.
-        .width(Length::Fill)
-        .padding(theme::FIELD_PADDING)
-        .style(theme::pick_list);
-        let mic_pick = mic_pick_list(&self.input_devices, self.config.input_device.as_deref(), fs);
+    /// Contenido del frame Ajustes de Figma (la pestaña de transcripción):
+    /// «Audio e idioma», «Modelo de voz» y «Al terminar el dictado», más los
+    /// bloques que la app tiene aquí desde siempre (diccionario y muletillas).
+    /// Solo capa visual: mismas claves y valores de config, mismos mensajes.
+    pub(crate) fn settings_section_general(
+        &self,
+        c: Chrome,
+        ty: DesignType,
+        t: &UiPalette,
+    ) -> Element<'_, Message> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
+        let mut col = Column::new().spacing(20.0).width(Length::Fill);
 
-        // Subtítulo de la sub-sección «Transcripción».
-        let transcription_title = text("Transcripción")
-            .size(fs.lg)
-            .font(Font::MONOSPACE)
-            .color(t.text);
-
+        // ── Audio e idioma ──────────────────────────────────────────────
+        // Sin micrófonos detectados no hay nada que elegir: se dice, en vez de
+        // pintar un selector vacío (mismo aviso que traía la ayuda de siempre).
+        let mic_control: Element<'_, Message> = if self.input_devices.is_empty() {
+            text("(sin micrófonos detectados)")
+                .size(ty.control)
+                .color(c.faint)
+                .into()
+        } else {
+            pick_list(
+                self.input_devices.clone(),
+                self.config.input_device.clone(),
+                Message::InputDeviceSelected,
+            )
+            .placeholder("(por defecto)")
+            .width(Length::Fixed(CONTROL_WIDTH))
+            .text_size(ty.control)
+            .padding(theme::FIELD_PADDING)
+            .style(theme::pick_list)
+            .into()
+        };
+        // El hint de idioma ("default: es", "whisper decide") cuelga del campo
+        // como ayuda de la fila: el frame de Ajustes no lo trae, pero es
+        // información que la app ya daba.
+        let lang_hint = language_hint(&self.config.language);
+        let lang_help = if lang_hint.is_empty() {
+            None
+        } else {
+            Some(lang_hint.as_str())
+        };
         // Idioma: el getter traduce "auto" a None y cualquier otro valor a
         // Some(BCP-47) que se pasa a whisper.
-        let lang_pick = pick_list(
+        let lang_control: Element<'_, Message> = pick_list(
             crate::app::LANGUAGE_OPTIONS
                 .iter()
                 .map(|s| s.to_string())
@@ -118,182 +281,220 @@ impl WhisprApp {
             Message::LanguageSelected,
         )
         .placeholder("Idioma")
-        .width(Length::Fill)
+        .width(Length::Fixed(CONTROL_WIDTH))
+        .text_size(ty.control)
         .padding(theme::FIELD_PADDING)
-        .style(theme::pick_list);
+        .style(theme::pick_list)
+        .into();
+        col = col.push(section_block(
+            "Audio e idioma",
+            design_card(vec![
+                preference_row(
+                    "Micrófono",
+                    Some("Audio normalizado a 16 kHz."),
+                    mic_control,
+                    c,
+                    ty,
+                ),
+                preference_row("Idioma de transcripción", lang_help, lang_control, c, ty),
+            ]),
+            c,
+            ty,
+        ));
 
-        // Toggle de limpieza de muletillas (separado del editor de
-        // muletillas que vive en esta misma sección).
-        let cleanup_checkbox = checkbox("Limpiar muletillas", self.config.cleanup_enabled())
-            .on_toggle(Message::ToggleCleanup)
-            .style(theme::checkbox);
-
-        // Autoinyección al terminar el turno.
-        let autoinject_checkbox = checkbox(
-            "Autoinyectar al terminar",
-            self.config.auto_inject.unwrap_or(true),
+        // ── Modelo de voz ───────────────────────────────────────────────
+        // Divergencia con el frame: el diseño muestra el modelo instalado y un
+        // botón «Cambiar modelo»; aquí el control sigue siendo el selector de
+        // modelos de siempre (no se inventa un flujo de instalación).
+        let model = self.config.selected_model();
+        let model_label = model.label().to_string();
+        let model_size = model.approx_mb();
+        let model_control: Element<'_, Message> = pick_list(
+            Model::all().to_vec(),
+            Some(model),
+            Message::ModelSelected,
         )
-        .on_toggle(Message::ToggleAutoInject)
-        .style(theme::checkbox);
+        .placeholder("Modelo")
+        .width(Length::Fixed(CONTROL_WIDTH))
+        .text_size(ty.control)
+        .padding(theme::FIELD_PADDING)
+        .style(theme::pick_list)
+        .into();
+        let model_tile = container(icons::icon(icons::CPU, 21.0))
+            .width(42.0)
+            .height(42.0)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center)
+            .style(move |_th| container::Style {
+                background: Some(Background::Color(c.keycap)),
+                border: Border {
+                    color: Color::TRANSPARENT,
+                    width: 0.0,
+                    radius: Radius::from(theme::RADIUS_MD),
+                },
+                ..container::Style::default()
+            });
+        let model_row = container(
+            row![
+                model_tile,
+                column![
+                    text(model_label).size(ty.nav).font(medium()).color(c.text),
+                    text(format!("{model_size} MB · Se ejecuta sin conexión"))
+                        .size(ty.body)
+                        .color(c.faint),
+                ]
+                .spacing(5.0)
+                .width(Length::Fill),
+                model_control,
+            ]
+            .spacing(16.0)
+            .align_y(Alignment::Center)
+            .width(Length::Fill),
+        )
+        .width(Length::Fill)
+        .padding(20.0);
+        col = col.push(section_block(
+            "Modelo de voz",
+            design_card(vec![model_row.into()]),
+            c,
+            ty,
+        ));
 
-        // Botón «Por defecto» para las muletillas: solo aparece si el
-        // usuario ha personalizado las listas (config.fillers = Some).
-        let reset_button: Element<'_, Message> = if self.config.fillers.is_some() {
-            button("Por defecto")
-                .on_press(Message::ResetFillers)
-                .style(theme::secondary)
-                .into()
-        } else {
-            Space::new(Length::Shrink, 0).into()
-        };
+        // ── Al terminar el dictado ──────────────────────────────────────
+        let ai_enabled = self.config.ai_correction_enabled();
+        let ai_control: Element<'_, Message> = row![
+            text(if ai_enabled { "Activada" } else { "Desactivada" })
+                .size(ty.chrome)
+                .color(c.faint),
+            toggler(ai_enabled)
+                .on_toggle(Message::ToggleAiCorrection)
+                .size(22.0)
+                .style(theme::toggler),
+        ]
+        .spacing(20.0)
+        .align_y(Alignment::Center)
+        .into();
+        let cleanup_control: Element<'_, Message> = toggler(self.config.cleanup_enabled())
+            .on_toggle(Message::ToggleCleanup)
+            .size(22.0)
+            .style(theme::toggler)
+            .into();
+        let inject_control: Element<'_, Message> = toggler(self.config.auto_inject.unwrap_or(true))
+            .on_toggle(Message::ToggleAutoInject)
+            .size(22.0)
+            .style(theme::toggler)
+            .into();
+        col = col.push(section_block(
+            "Al terminar el dictado",
+            design_card(vec![
+                preference_row(
+                    "Corrección IA",
+                    Some("Corrige el texto con un modelo local. Opcional."),
+                    ai_control,
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Limpiar muletillas",
+                    Some("Elimina «eh», «em» y las expresiones que elijas."),
+                    cleanup_control,
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Autoinyectar al terminar",
+                    Some("Escribe el texto en la app activa al terminar el turno."),
+                    inject_control,
+                    c,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
 
-        let mut col = Column::new()
-            .spacing(theme::SPACE_2)
-            .width(Length::Fill);
-        // Modelo
-        col = col.push(
-            row![
-                text("Modelo")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                model_pick,
-                aux_slot(
-                    text(format!("(~{} MB)", self.config.selected_model().approx_mb()))
-                        .size(fs.sm)
-                        .color(t.dim)
-                        .into(),
-                ),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        // Micrófono
-        col = col.push(
-            row![
-                text("Micrófono")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                mic_pick,
-                aux_slot_empty(),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(transcription_title);
-        col = col.push(
-            row![
-                text("Idioma")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                lang_pick,
-                aux_slot(
-                    text(language_hint(&self.config.language))
-                        .size(fs.xxs)
-                        .color(t.dim)
-                        .into(),
-                ),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        // La ayuda cuelga del CAMPO, no de la etiqueta: mismo x que los selects.
-        col = col.push(
-            row![
-                Space::with_width(96.0 + theme::SPACE_2 as f32),
-                text("Audio: normalizado automáticamente a 16 kHz")
-                    .size(fs.sm)
-                    .color(t.dim),
-            ]
-            .spacing(0.0),
-        );
-        // ── Diccionario personal ────────────────────────────────────────────
-        col = col.push(
-            text("Diccionario personal")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        col = col.push(
-            row![
-                text_input("término", &self.entry_from)
-                    .on_input(Message::EntryFromChanged)
-                    .on_submit(Message::AddEntry)
-                    .style(theme::text_input),
-                text_input("reemplazo", &self.entry_to)
-                    .on_input(Message::EntryToChanged)
-                    .on_submit(Message::AddEntry)
-                    .style(theme::text_input),
-                button("Añadir")
-                    .on_press(Message::AddEntry)
-                    .style(theme::primary),
-                aux_slot_empty(),
-            ]
-            .spacing(theme::SPACE_2),
-        );
-        col = col.push(dictionary_list(&self.config.dictionary, fs));
-        // Mismo tratamiento y misma columna derecha que el resto de botones.
-        col = col.push(
-            row![
-                Space::with_width(Length::Fill),
-                button("Importar")
-                    .on_press(Message::ImportDictionary)
-                    .style(theme::secondary),
-                button("Exportar")
-                    .on_press(Message::ExportDictionary)
-                    .style(theme::secondary),
-                aux_slot_empty(),
-            ]
-            .spacing(theme::SPACE_2),
-        );
+        // ── Diccionario personal ────────────────────────────────────────
+        let entry_row = row![
+            text_input("término", &self.entry_from)
+                .on_input(Message::EntryFromChanged)
+                .on_submit(Message::AddEntry)
+                .style(theme::text_input),
+            text_input("reemplazo", &self.entry_to)
+                .on_input(Message::EntryToChanged)
+                .on_submit(Message::AddEntry)
+                .style(theme::text_input),
+            button("Añadir")
+                .on_press(Message::AddEntry)
+                .style(theme::primary),
+        ]
+        .spacing(theme::SPACE_2);
+        let mut dict_rows = vec![
+            wide_row(entry_row.into()),
+            wide_row(dictionary_list(&self.config.dictionary, fs)),
+            wide_row(
+                row![
+                    Space::with_width(Length::Fill),
+                    button("Importar")
+                        .on_press(Message::ImportDictionary)
+                        .style(theme::secondary),
+                    button("Exportar")
+                        .on_press(Message::ExportDictionary)
+                        .style(theme::secondary),
+                ]
+                .spacing(theme::SPACE_2)
+                .into(),
+            ),
+        ];
         // Feedback de import/export: vive aquí para que sea visible
         // mientras la sección General esté abierta.
         if let Some(corr) = &self.last_correction {
             if corr.contains("Diccionario") {
-                col = col.push(text(corr).size(fs.sm).color(t.ok));
+                dict_rows.push(wide_row(text(corr).size(fs.sm).color(t.ok).into()));
             }
         }
-        col = col.push(horizontal_rule(1).style(theme::rule));
-        // ── Muletillas ──────────────────────────────────────────────────────
-        col = col.push(
-            text("Muletillas")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        col = col.push(cleanup_checkbox);
-        col = col.push(autoinject_checkbox);
-        col = col.push(
-            text(format!("Atajo global: {}", self.hotkey_label))
-                .size(fs.xxs)
-                .color(t.dim),
-        );
-        col = col.push(
-            row![
-                text_input("muletilla (ej. «vale»)", &self.filler_input)
-                    .on_input(Message::FillerInputChanged)
-                    .on_submit(Message::AddFiller)
-                    .style(theme::text_input),
-                pick_list(
-                    FillerCategory::ALL.to_vec(),
-                    Some(self.filler_category),
-                    Message::FillerCategorySelected,
-                )
-                .placeholder("Categoría")
-                .width(Length::Fill)
-                .padding(theme::FIELD_PADDING)
-                .style(theme::pick_list),
-                button("Añadir")
-                    .on_press(Message::AddFiller)
-                    .style(theme::primary),
-                aux_slot_empty(),
-            ]
-            .spacing(theme::SPACE_2),
-        );
-        col = col.push(filler_lists(&self.config.fillers(), fs));
-        col = col.push(reset_button);
+        col = col.push(section_block(
+            "Diccionario personal",
+            design_card(dict_rows),
+            c,
+            ty,
+        ));
+
+        // ── Muletillas ──────────────────────────────────────────────────
+        let filler_row = row![
+            text_input("muletilla (ej. «vale»)", &self.filler_input)
+                .on_input(Message::FillerInputChanged)
+                .on_submit(Message::AddFiller)
+                .style(theme::text_input),
+            pick_list(
+                FillerCategory::ALL.to_vec(),
+                Some(self.filler_category),
+                Message::FillerCategorySelected,
+            )
+            .placeholder("Categoría")
+            .width(Length::Fixed(140.0))
+            .text_size(ty.control)
+            .padding(theme::FIELD_PADDING)
+            .style(theme::pick_list),
+            button("Añadir")
+                .on_press(Message::AddFiller)
+                .style(theme::primary),
+        ]
+        .spacing(theme::SPACE_2);
+        let mut filler_rows = vec![
+            wide_row(filler_row.into()),
+            wide_row(filler_lists(&self.config.fillers(), fs)),
+        ];
+        // Botón «Por defecto»: solo aparece si el usuario ha personalizado las
+        // listas (config.fillers = Some).
+        if self.config.fillers.is_some() {
+            filler_rows.push(wide_row(
+                row![button("Por defecto")
+                    .on_press(Message::ResetFillers)
+                    .style(theme::secondary)]
+                .into(),
+            ));
+        }
+        col = col.push(section_block("Muletillas", design_card(filler_rows), c, ty));
         col.into()
     }
 
@@ -303,7 +504,13 @@ impl WhisprApp {
     /// es un ajuste visual y la regla de producto dice que cada opción
     /// técnica necesita label claro + ayuda corta, y la fuente es el
     /// ajuste visual más impactante de la app.
-    pub(crate) fn settings_section_appearance(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+    pub(crate) fn settings_section_appearance(
+        &self,
+        _c: Chrome,
+        _ty: DesignType,
+        t: &UiPalette,
+    ) -> Element<'_, Message> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
         let mut col = Column::new()
             .spacing(theme::SPACE_2)
             .width(Length::Fill);
@@ -474,7 +681,10 @@ impl WhisprApp {
         col = col.push(self.settings_section_images(t, fs));
         // ── Personalización II: paleta editable ─────────────────────────────
         col = col.push(self.settings_section_palette(t, fs));
-        col.into()
+        // El diseño del frame Ajustes no define esta pestaña: se le da la
+        // misma tarjeta que a las secciones del frame y su contenido se queda
+        // como estaba.
+        design_card(vec![wide_row(col.into())])
     }
 
     /// Bloque «Imágenes» dentro de Apariencia (Personalización III): el
@@ -950,7 +1160,13 @@ impl WhisprApp {
     /// inyección (formato, retardo y filtro de ventana). Lo técnico del
     /// motor de transcripción vive aquí: si el usuario nunca toca la IA,
     /// no lo verá al pasar por Corrección IA.
-    pub(crate) fn settings_section_dictation(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+    pub(crate) fn settings_section_dictation(
+        &self,
+        _c: Chrome,
+        _ty: DesignType,
+        t: &UiPalette,
+    ) -> Element<'_, Message> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
         let beam = self.config.beam_size();
         let threads = self.config.n_threads();
         let beam_row = row![
@@ -1032,7 +1248,7 @@ impl WhisprApp {
                 .color(t.text),
         );
         col = col.push(text(injection_label).size(fs.xxs).color(t.dim));
-        col.into()
+        design_card(vec![wide_row(col.into())])
     }
 
     /// ── Sección «Corrección IA» ─────────────────────────────────────────
@@ -1042,7 +1258,13 @@ impl WhisprApp {
     /// pestaña más densa porque el corrector tiene muchas opciones, pero
     /// ahora están agrupadas y no se mezclan con el motor de voz ni con
     /// la apariencia.
-    pub(crate) fn settings_section_correction(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
+    pub(crate) fn settings_section_correction(
+        &self,
+        _c: Chrome,
+        _ty: DesignType,
+        t: &UiPalette,
+    ) -> Element<'_, Message> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
         // Estado en vivo (misma lógica pura que el chip del header):
         // «Corrección IA: activa · <modelo>» o «inactiva — <motivo>».
         let status_label = {
@@ -1307,7 +1529,7 @@ impl WhisprApp {
             .size(fs.xxs)
             .color(t.dim),
         );
-        col.into()
+        design_card(vec![wide_row(col.into())])
     }
 
     /// ── Sección «Avanzado» ──────────────────────────────────────────────
@@ -1320,9 +1542,11 @@ impl WhisprApp {
     /// diagnóstico del server LLM). En fases siguientes puede poblarse.
     pub(crate) fn settings_section_advanced(
         &self,
+        _c: Chrome,
+        _ty: DesignType,
         t: &UiPalette,
-        fs: theme::FontSizes,
     ) -> Element<'_, Message> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
         // H2 (QA 24/09/2026): el usuario no encontraba el log. Su ruta se
         // muestra aquí y hay un botón que abre la carpeta en el Explorador
         // (también viven ahí config.json y assets/).
@@ -1369,35 +1593,51 @@ impl WhisprApp {
         ]
         .spacing(theme::SPACE_3);
 
-        container(registro)
-            .width(Length::Fill)
-            .into()
+        design_card(vec![wide_row(
+            container(registro).width(Length::Fill).into(),
+        )])
     }
 }
 
-/// Fila de pestañas del panel de Ajustes (R7 — Personalización I).
-///
-/// Los botones y su estilo viven ahora en [`crate::ui::tabs`], compartidos con
-/// las secciones de la ventana principal (mismo lenguaje en las dos
-/// superficies, un solo sitio que mantener). La activa lleva el prefijo `●`,
-/// fondo destacado y borde de acento: se identifica sin depender solo del
-/// color (requisito 4 de R7: accesibilidad).
-fn settings_tab_bar(
-    active: SettingsSection,
-    _t: &UiPalette,
-    fs: theme::FontSizes,
-) -> Element<'static, Message> {
-    crate::ui::tabs::tab_bar(
-        SettingsSection::ALL
-            .iter()
-            .map(|section| {
-                crate::ui::tabs::Tab::new(
-                    section.label(),
-                    Message::SettingsSectionSelected(*section),
-                    *section == active,
-                )
-            })
-            .collect(),
-        fs,
-    )
+/// Navegación de Ajustes del diseño (`Settings navigation`, 43 px): etiqueta de
+/// 13 px por pestaña (activa en texto primario, el resto en secundario) y el
+/// subrayado de 2 px del acento colgando del borde inferior de la activa.
+/// Debajo va el hairline que cierra la fila, como en el frame.
+fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'static, Message> {
+    let mut tabs = row![].spacing(28.0).align_y(Alignment::End).height(TAB_BOX_HEIGHT);
+    for section in SettingsSection::ALL {
+        let is_active = section == active;
+        // La caja de la pestaña ES la etiqueta (+ el subrayado de 2 px en su
+        // borde inferior, pintado por `theme::tab_underline`). Sin hijos Fill
+        // dentro: el ancho sale del texto y «Corrección IA» no parte en dos
+        // líneas (con un hijo Fill, iced re-mide el texto a su ancho exacto y
+        // el salto de línea es cuestión de redondeo).
+        let tab = container(
+            text(section.label())
+                .size(ty.control)
+                .font(if is_active { medium() } else { Font::DEFAULT })
+                .color(if is_active {
+                    c.text
+                } else {
+                    c.secondary
+                }),
+        )
+        .height(Length::Fixed(TAB_BOX_HEIGHT))
+        .align_y(Alignment::Center)
+        .style(move |th| container::Style {
+            background: Some(theme::tab_underline(th, is_active, TAB_BOX_HEIGHT)),
+            ..container::Style::default()
+        });
+        tabs = tabs.push(
+            button(tab)
+                .padding(0)
+                .on_press(Message::SettingsSectionSelected(section))
+                .style(move |th, status| theme::settings_tab(th, status, is_active)),
+        );
+    }
+    column![
+        row![tabs, Space::with_width(Length::Fill)].height(TAB_BOX_HEIGHT),
+        horizontal_rule(1).style(theme::rule),
+    ]
+    .into()
 }
