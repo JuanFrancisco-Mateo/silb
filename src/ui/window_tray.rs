@@ -5,6 +5,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 
 use iced::Task;
+use iced::window;
 
 use crate::app::{LlmStatus, Message, StartupPhase, WhisprApp, run_startup_thread};
 
@@ -33,6 +34,21 @@ impl WhisprApp {
                     self.show_main_window()
                 }
             }
+            // Controles propios de la barra de ventana (decoración nativa
+            // desactivada). Sin id conocido (aún no llegó `WindowOpened`) no
+            // hay nada que mover: la barra no es interactiva en ese hueco.
+            Message::DragMainWindow => match self.main_window_id {
+                Some(id) => window::drag(id),
+                None => Task::none(),
+            },
+            Message::MinimizeMainWindow => match self.main_window_id {
+                Some(id) => window::minimize(id, true),
+                None => Task::none(),
+            },
+            Message::MaximizeMainWindow => match self.main_window_id {
+                Some(id) => window::toggle_maximize(id),
+                None => Task::none(),
+            },
             Message::FontLoaded(result) => {
                 // `iced::font::Error` es ininhabitable en iced 0.13; el arm
                 // Err queda como red de seguridad si cambia en el futuro.

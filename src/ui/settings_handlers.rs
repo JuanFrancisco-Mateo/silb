@@ -922,6 +922,14 @@ impl WhisprApp {
                 }
                 Task::none()
             }
+            Message::OpenSettingsSection(section) => {
+                // Atajo del marco (ayuda → Avanzado, sliders → Dictado):
+                // abre Ajustes EN esa sección, con el mismo estado que la
+                // navegación de la barra lateral (`settings_open`).
+                self.settings_open = true;
+                self.settings_section = section;
+                Task::none()
+            }
             _ => Task::none(),
         }
     }

@@ -93,9 +93,8 @@ impl WhisprApp {
 
         // Idioma: el getter traduce "auto" a None y cualquier otro valor a
         // Some(BCP-47) que se pasa a whisper.
-        const LANGUAGE_OPTIONS: &[&str] = &["auto", "es", "en", "fr", "de", "it", "pt"];
         let lang_pick = pick_list(
-            LANGUAGE_OPTIONS
+            crate::app::LANGUAGE_OPTIONS
                 .iter()
                 .map(|s| s.to_string())
                 .collect::<Vec<_>>(),

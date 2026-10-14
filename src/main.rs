@@ -39,12 +39,16 @@ fn main() -> iced::Result {
     // y un tema por window::Id. La ventana principal es la app completa; la
     // burbuja flotante (whispr_open::bubble) se abre al iniciar.
     let mut main_window = iced::window::Settings::default();
-    // Diseño vertical (portrait, tipo chat): alto > ancho. La burbuja
-    // flotante tiene su propio tamaño configurable (Ajustes → Apariencia:
-    // 48/56/72 px; min/max de ventana = rango completo para el resize en
-    // caliente, ver bubble::bubble_settings).
-    main_window.size = iced::Size::new(480.0, 800.0);
-    main_window.min_size = Some(iced::Size::new(380.0, 600.0));
+    // Ventana del diseño (frame «Dictado» de Figma, 1200×820): barra lateral de
+    // 204 px + espacio de trabajo. El mínimo permite encogerla sin que la
+    // tarjeta de transcripción quede inservible.
+    main_window.size = iced::Size::new(1200.0, 820.0);
+    main_window.min_size = Some(iced::Size::new(940.0, 640.0));
+    // El marco lo dibuja la app (barra de ventana propia de 40 px con
+    // controles de minimizar/maximizar/cerrar): sin decoración nativa. El
+    // arrastre llega por `window::drag` desde `Message::DragMainWindow` y el
+    // cierre por la X propia pasa por `WindowCloseRequested` → bandeja.
+    main_window.decorations = false;
     // El cierre lo gestiona la app (WindowCloseRequested → iced::exit): ver
     // nota en `bubble::bubble_settings`.
     main_window.exit_on_close_request = false;
