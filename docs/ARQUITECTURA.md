@@ -1,6 +1,6 @@
 # ARQUITECTURA — recorrido del código para quien nunca ha tocado Rust
 
-Este documento explica **qué hace cada fichero** de Whispr Open y **cómo viaja
+Este documento explica **qué hace cada fichero** de Silb y **cómo viaja
 una frase** desde que hablas hasta que aparece escrita en Slack. No hace falta
 saber Rust para leerlo: solo entender qué es un «fichero de código» y qué es
 una «función» (una pieza con nombre que recibe datos y devuelve datos).
@@ -14,7 +14,7 @@ fichero tocar.
 
 ```
                          ┌────────────────────────────────────────────────┐
-                         │              whispr-open.exe (1 proceso)       │
+                         │              silb.exe (1 proceso)              │
                          │                                                │
   ┌──────────┐           │  ┌────────────┐    ┌──────────────────────┐    │
   │ TU VOZ   │  micrófono│  │  audio.rs  │──▶│  transcribe.rs       │    │

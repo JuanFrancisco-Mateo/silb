@@ -1,5 +1,5 @@
 //! Guard de instancia única (requisito de robustez): una segunda ejecución
-//! de `whispr-open.exe` NO debe robar ni duplicar el atajo global. Sin este
+//! de `silb.exe` NO debe robar ni duplicar el atajo global. Sin este
 //! guard, el `RegisterHotKey` de la segunda instancia fallaría a ciegas
 //! (Windows no permite dos registros del mismo atajo), la segunda bandeja
 //! se acumularía en el tray y el usuario vería dos burbujas.
@@ -79,11 +79,11 @@ pub fn acquire() -> bool {
 pub fn notify_second_instance() {
     // MessageBoxW espera cadenas UTF-16 (wide): se terminan en NUL.
     let mut texto: Vec<u16> =
-        "Ya hay otra instancia de Whispr Open abierta.\n\nMira la bandeja del sistema (junto al reloj) para usarla."
+        "Ya hay otra instancia de Silb abierta.\n\nMira la bandeja del sistema (junto al reloj) para usarla."
             .encode_utf16()
             .collect();
     texto.push(0);
-    let mut titulo: Vec<u16> = "Whispr Open".encode_utf16().collect();
+    let mut titulo: Vec<u16> = "Silb".encode_utf16().collect();
     titulo.push(0);
     unsafe {
         winapi::um::winuser::MessageBoxW(

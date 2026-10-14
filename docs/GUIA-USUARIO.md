@@ -1,11 +1,11 @@
-# Guía de usuario — Whispr Open
+# Guía de usuario — Silb
 
 Versión: 0.2.0 · Última revisión: 24/09/2026 (secciones de la ventana
 principal, imágenes propias que ya no se pierden al vaciar Descargas y dónde
 vive el registro; antes: 11/09/2026, paleta editable) y la especificación
 `docs/CORRECCION-VOZ.md`.
 
-Whispr Open es un dictado por voz local: hablas, la app transcribe y escribe
+Silb es un dictado por voz local: hablas, la app transcribe y escribe
 el texto donde tengas el cursor. Además, **corrige lo que dices mientras
 dictas**: si te equivocas, lo arreglas hablando. Y si prefieres tocar el
 texto con el teclado, **la nota se puede editar a mano** antes de mandarla.
@@ -14,7 +14,7 @@ texto con el teclado, **la nota se puede editar a mano** antes de mandarla.
 
 ## 1. Empezar
 
-1. Arranca `whispr-open.exe` (`target\release\whispr-open.exe`).
+1. Arranca `silb.exe` (`target\release\silb.exe`).
 2. Espera a la pantalla de carga: descarga el modelo de voz la primera vez
    (~75 MB tiny / ~142 MB base / ~466 MB small) y, si la corrección IA está
    activada, lanza el server LLM local (primera carga: unos segundos).
@@ -37,7 +37,7 @@ texto con el teclado, **la nota se puede editar a mano** antes de mandarla.
 3. Vuelve a pulsar **Ctrl+Shift+D** (o suelta). La app transcribe y escribe el
    texto en la app que tenga el foco (Slack, Notion, VS Code…).
 
-Si «Autoinyectar» está desactivado, el texto queda en la ventana de Whispr y
+Si «Autoinyectar» está desactivado, el texto queda en la ventana de Silb y
 puedes usar «Escribir en app» o «Copiar».
 
 ## 3. Corregir hablando (lo importante)
@@ -107,7 +107,7 @@ lo que quieras con el teclado, como en cualquier nota.
 - La corrección por voz («no, era X») sigue funcionando sobre lo último de
   la nota, incluido lo que hayas editado a mano.
 
-Si «Autoinyectar» está desactivado, el texto queda en la ventana de Whispr y
+Si «Autoinyectar» está desactivado, el texto queda en la ventana de Silb y
 puedes usar «Escribir en app» o «Copiar».
 
 ## 5. Diccionario personal
@@ -125,7 +125,7 @@ app. Cada campo es editable por separado o puedes usar un preset de un clic.
 
 Cinco combinaciones listas para los dos modos:
 
-- **Violeta (oscuro por defecto)**: el look de Whispr Open tal como se
+- **Violeta (oscuro por defecto)**: el look de Silb tal como se
   distribuye.
 - **Grafito (cian sobrio)**: tono grafito con acento cian; lectura larga,
   poco distractivo.

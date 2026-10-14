@@ -1,4 +1,4 @@
-//! Tokens de diseño 2026 para Whispr Open.
+//! Tokens de diseño 2026 para Silb.
 //!
 //! Única fuente de verdad de la capa visual: colores, espaciado, radios y
 //! tamaños de fuente. CERO literales mágicos en la UI (app.rs).
@@ -763,7 +763,7 @@ pub fn font_sizes(factor: f32) -> FontSizes {
 /// 12 px (estado, privacidad), `control` el de 13 px (selects, subtítulo)…
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DesignType {
-    /// 9 px — «OPEN» del wordmark.
+    /// 9 px — sub-etiqueta de marca (hoy no se usa: el wordmark es solo «Silb»).
     pub brand_sub: u16,
     /// 10 px — badges.
     pub badge: u16,
@@ -775,7 +775,7 @@ pub struct DesignType {
     pub control: u16,
     /// 14 px — navegación y títulos de tarjeta.
     pub nav: u16,
-    /// 18 px — «Whispr» del wordmark.
+    /// 18 px — «Silb» del wordmark.
     pub brand: u16,
     /// 19 px — texto transcrito (el cuerpo editable).
     pub transcript: u16,
@@ -863,7 +863,7 @@ pub fn custom(dark: bool) -> Theme {
 pub fn custom_with_palette(p: &UiPalette) -> Theme {
     Theme::custom(
         // El nombre no se usa para lógica; dejamos uno estable por modo.
-        format!("Whispr Open — {}", if is_palette_dark(p) { "oscuro" } else { "claro" }),
+        format!("Silb — {}", if is_palette_dark(p) { "oscuro" } else { "claro" }),
         Palette {
             background: p.bg,
             text: p.text,

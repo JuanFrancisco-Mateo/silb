@@ -1,6 +1,6 @@
 # Política de seguridad
 
-Whispr Open procesa tu voz **en tu máquina**: la transcripción es local
+Silb procesa tu voz **en tu máquina**: la transcripción es local
 (whisper.cpp) y la app no envía audio a ningún servidor. La única excepción es
 la corrección IA opcional, y solo si configuras un proveedor Cloud/Custom.
 

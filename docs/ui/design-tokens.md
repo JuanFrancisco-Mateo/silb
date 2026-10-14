@@ -1,4 +1,4 @@
-# Design tokens — Whispr Open (rediseño de UI)
+# Design tokens — Silb (rediseño de UI)
 
 Fuente de verdad para llevar el diseño de Penpot al código Rust/Iced.
 Estado: **Fase 0 completada** (medidas reales del código). Las tablas finales
@@ -80,7 +80,7 @@ Tinta fija sobre relleno de acento (botón primario): `#17181C`
 ## 3. Tokens por tema (creados en Penpot, proyecto *Open Whisper*)
 
 Sets del catálogo de tokens del archivo (junto al set previo
-`Whispr Open · Núcleo`) y themes `Theme/Dark`, `Theme/Light`, `Theme/Custom`
+`Silb · Núcleo`) y themes `Theme/Dark`, `Theme/Light`, `Theme/Custom`
 (cada theme activa Núcleo + su set). **Estrategia de nombres**: los tokens de
 color llevan prefijo `dark.` / `light.` porque Penpot resuelve los tokens por
 NOMBRE con precedencia del último set activo — sin prefijo, los tres temas no
@@ -158,7 +158,7 @@ pares texto/fondo ≥ 4.5:1 (mínimo: `light.text.muted` sobre `light.surface.ap
 | `bg-image-overlay` | opacity | `0.55` | Capa sobre la imagen de fondo |
 | `bubble-radius` | borderRadius | `18` px | Radio de burbuja del usuario |
 
-### Escalas estructurales (añadidas a `Whispr Open · Núcleo`)
+### Escalas estructurales (añadidas a `Silb · Núcleo`)
 
 | Token | Valor |
 | --- | --- |

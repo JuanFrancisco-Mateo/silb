@@ -1,6 +1,6 @@
-# Contribuir a Whispr Open
+# Contribuir a Silb
 
-¡Gracias por echar una mano! Whispr Open es dictado por voz **local** para
+¡Gracias por echar una mano! Silb es dictado por voz **local** para
 Windows (Rust + Iced + whisper.cpp), y toda contribución es bienvenida: código,
 traducciones, documentación, reportes de bugs o ideas.
 

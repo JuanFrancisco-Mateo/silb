@@ -1,6 +1,6 @@
 # Checklist para publicar la release v0.3.0
 
-Guía paso a paso para sacar la primera release pública de Whispr Open con su
+Guía paso a paso para sacar la primera release pública de Silb con su
 instalador. Cada casilla es una acción real; no marques nada que no se haya
 hecho.
 
@@ -21,7 +21,7 @@ hecho.
 
 - [ ] `cargo test` → todo verde (320 passed; los ignored son intencionales).
 - [ ] `cargo check` → sin errores.
-- [ ] `cargo build --release` → `target\release\whispr-open.exe` actualizado.
+- [ ] `cargo build --release` → `target\release\silb.exe` actualizado.
 
 ## 3. Construir el instalador (Windows)
 
@@ -34,7 +34,7 @@ hecho.
   (Versión con override: `ISCC.exe /DWHISPR_VERSION=0.3.0
   /DWHISPR_RELEASE_DIR=<dir> packaging\whispr-open.iss`.)
 
-- [ ] Comprobar que sale `packaging\Output\whispr-open-0.3.0-setup.exe`
+- [ ] Comprobar que sale `packaging\Output\silb-0.3.0-setup.exe`
   (objetivo ≤25 MiB; el histórico ronda 23 MiB).
 - [ ] Verificar el icono incrustado: `python scripts\verify-ico.py`.
 - [ ] (Opcional) Medir RAM en reposo: `scripts\measure-ram.bat` (referencia:
@@ -55,9 +55,9 @@ hecho.
 - [ ] Commit final del release + **tag anotada** `v0.3.0` (ya creada en local;
   `git push origin native-iced --follow-tags` cuando se autorice publicar).
 - [ ] Crear la Release en GitHub:
-  - Tag: `v0.3.0`, título: `Whispr Open 0.3.0`.
+  - Tag: `v0.3.0`, título: `Silb 0.3.0`.
   - Notas: copiar la sección `[0.3.0]` de [`CHANGELOG.md`](../CHANGELOG.md).
-  - Artefactos: `whispr-open-0.3.0-setup.exe` y `whispr-open.exe` (portable).
+  - Artefactos: `silb-0.3.0-setup.exe` y `silb.exe` (portable).
   - Marcar como **latest release**.
 - [ ] Descargar el instalador desde la Release recién publicada y repetir la
   prueba de humo §4 (lo que subes es lo que se instala).

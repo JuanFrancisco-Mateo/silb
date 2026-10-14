@@ -1,4 +1,4 @@
-//! Limpieza de muletillas — port directo de src/domain/cleanup.ts (Whispr Open web).
+//! Limpieza de muletillas — port directo de src/domain/cleanup.ts (Silb web).
 //!
 //! Detecta y elimina muletillas del habla transcrita ("eh", "um", "o sea", ...),
 //! colapsa repeticiones y normaliza puntuación, manteniendo el resto del texto.

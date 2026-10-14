@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Verificador del icono multirresolución de Whispr Open.
+"""Verificador del icono multirresolución de Silb.
 
 Comprueba que el ``.ico`` generado cumple el contrato:
 - ICONDIR: ``reserved=0``, ``type=1``, ``count>=7``.

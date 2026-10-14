@@ -1,4 +1,4 @@
-# ROADMAP — Whispr Open (rama `native-iced`)
+# ROADMAP — Silb (rama `native-iced`)
 
 Estado verificado a 11/09/2026 contra el código y el historial de git. Este
 archivo documenta **qué hay hecho** y **qué viene después**, priorizado por
@@ -25,7 +25,7 @@ etapa.
 | Post-procesado | `src/domain/{cleanup,dictionary,correction}.rs` | Limpieza de repeticiones/expresiones con muletillas configurables (Ajustes → Muletillas, toggle «Limpiar muletillas»), diccionario personal y rectificaciones habladas. |
 | Corrección IA configurable | `src/config.rs`, `src/llm.rs`, `src/app.rs` | Proveedor local/cloud/custom OpenAI-compatible, timeout, umbral, confirmación opcional y API key fuera de `config.json`. |
 | Audio robusto | `src/audio.rs` | El stream se crea y reproduce antes de entrar en `Recording`; todo audio no-16 kHz se remuestrea a 16 kHz. |
-| Build release | `target/release/whispr-open.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
+| Build release | `target/release/silb.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
 | Licencia y documentación | `LICENSE`, `README.md`, `docs/` | MIT (10/09/2026); `docs/ARQUITECTURA.md` (recorrido del código para quien no ha tocado Rust), `docs/GUIA-USUARIO.md` y doc-comments públicos en español (11/09/2026). |
 
 Versión actual del paquete: **0.2.0** (`Cargo.toml`). Rama activa: `native-iced`

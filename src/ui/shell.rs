@@ -54,7 +54,7 @@ impl WhisprApp {
             crate::config::ThemeMode::Oscuro => "☾ Oscuro",
         };
         let drag_zone = mouse_area(
-            container(text("Whispr Open").size(ty.chrome).color(c.faint))
+            container(text("Silb").size(ty.chrome).color(c.faint))
                 .width(Length::Fill)
                 .height(Length::Fill)
                 .align_y(Alignment::Center),
@@ -112,11 +112,8 @@ impl WhisprApp {
     pub(crate) fn frame_sidebar(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let brand = row![
             icons::icon(icons::WHISPR_SYMBOL, 32.0),
-            column![
-                text("Whispr").size(ty.brand).color(c.text),
-                text("OPEN").size(ty.brand_sub).color(c.faint),
-            ]
-            .spacing(1.0),
+            // Marca: solo el texto, el logo (el cuadrado con la onda) se queda.
+            text("Silb").size(ty.brand).color(c.text),
         ]
         .spacing(10.0)
         .align_y(Alignment::Center)

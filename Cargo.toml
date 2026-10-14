@@ -6,6 +6,15 @@ authors = ["Whispr Open contributors"]
 edition = "2021"
 license = "MIT"
 
+# Identidad del ejecutable: la app se llama Silb -> `silb.exe`.
+# ponytail: el PAQUETE sigue siendo `whispr-open` (y el crate `whispr_open`)
+# porque el directorio de datos del usuario (%APPDATA%\whispr-open) es literal
+# en config.rs/log.rs/transcribe.rs: renombrarlo dejaría sin ajustes a quien ya
+# tiene la app instalada. Solo cambia el nombre del binario.
+[[bin]]
+name = "silb"
+path = "src/main.rs"
+
 [dependencies]
 # UI nativa (sin webview). `image` activa el widget `image` de iced y el
 # crate `image` 0.25 (que ya está en Cargo.lock) para que el usuario pueda

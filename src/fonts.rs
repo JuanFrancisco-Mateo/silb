@@ -28,7 +28,7 @@ pub fn emoji_font() -> Font {
 fn emoji_font_candidates() -> Vec<&'static str> {
     vec![
         // Windows: Segoe UI Emoji (presente desde Windows 8; la interfaz de
-        // Whispr Open es Windows-first).
+        // Silb es Windows-first).
         r"C:\Windows\Fonts\seguiemj.ttf",
         r"C:\Windows\Fonts\Segoe UI Emoji.ttf",
         // Otras plataformas (desarrollo/CI): mejores aproximaciones.

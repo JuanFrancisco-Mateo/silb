@@ -1,4 +1,4 @@
-//! Diccionario personal — port directo de src/domain/dictionary.ts (Whispr Open web).
+//! Diccionario personal — port directo de src/domain/dictionary.ts (Silb web).
 //!
 //! Reemplazo de términos por palabra completa y case-insensitive,
 //! preservando la capitalización de `to`.

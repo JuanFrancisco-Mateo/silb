@@ -1192,7 +1192,7 @@ pub fn is_local_endpoint(base_url: &str) -> bool {
 }
 
 /// Puerto del server local extraído de la base_url. Sin puerto explícito
-/// (o URL remota) → 8081, el default histórico de Whispr Open.
+/// (o URL remota) → 8081, el default histórico de Silb.
 pub fn port_from_base_url(base_url: &str) -> u16 {
     let rest = base_url
         .trim_start_matches("http://")

@@ -77,7 +77,7 @@ impl SystemTray {
         let tray = TrayIconBuilder::new()
             .with_menu(Box::new(menu))
             .with_icon(icon)
-            .with_tooltip("Whispr Open — dictado local")
+            .with_tooltip("Silb — dictado local")
             // El clic izquierdo también abre el menú (además del derecho).
             .with_menu_on_left_click(true)
             .build()
