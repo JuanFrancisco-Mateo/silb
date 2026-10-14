@@ -131,8 +131,8 @@ y queda «asset desaparecido, cayendo al tema» en el log.
 «Ajustes ya tiene pestañas» pasó a ser «la app entera tiene pestañas». La
 ventana principal reorganiza lo que ya existía en dos secciones — **Dictado**
 (chip del corrector, hero del micro, nota, acciones del turno) y **Ajustes**
-(el panel completo) — con la MISMA barra de pestañas (`src/ui/tabs.rs`,
-`tab_bar`), que ahora comparten Ajustes y la ventana:
+(el panel completo) — con una barra de pestañas compartida (`src/ui/tabs.rs`,
+`tab_bar`), que entonces tenían Ajustes y la ventana:
 
 - Una sola implementación de pestañas: la activa con `●` + fondo + borde de
   acento; el texto siempre visible (no se identifica solo por color).
@@ -143,6 +143,11 @@ ventana principal reorganiza lo que ya existía en dos secciones — **Dictado**
 - La cabecera se queda solo con el conmutador de tema; el botón «Ajustes ▸»
   desaparece.
 - Todo color/espacio/radio sale de `src/theme.rs` (cero literales nuevos).
+
+> Nota (fase 2 del rediseno, frame Ajustes): `src/ui/tabs.rs` se retiró. La
+> navegación entre secciones es la barra lateral del marco de Figma y la
+> navegación de Ajustes es la suya (`ui::settings::settings_nav`, subrayado de
+> acento en la pestaña activa).
 
 ## 9. Registro con rotación (H2, `da2a622`)
 
