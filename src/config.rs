@@ -322,11 +322,13 @@ pub struct Config {
     /// 25 s (en el límite de los ~4-6 s esperados + margen para endpoints
     /// remotos Groq/Gemini; spec §3.4). Valores ≤ 0 caen al default.
     pub llm_timeout_secs: Option<u64>,
-    /// Ruta del ejecutable del server LLM local (`llama-server.exe`) que la
-    /// app lanza al arrancar cuando el endpoint local no responde. `None` =
-    /// autodetección por rutas comunes (D:\LlamaCPP, junto al exe de la app,
-    /// %LOCALAPPDATA%\LlamaCPP, PATH). Configurable en Ajustes avanzados
-    /// (ampliación de alcance 10/09/2026: en otro PC la ruta será distinta).
+    /// Ruta del override MANUAL del server LLM (histórico: se elegía a mano en
+    /// Ajustes con «Examinar…»). Desde el 14/10/2026 el server VIAJA con la
+    /// app (`vendor/llama/`, ver `llm::resolve_server_path`, que lo prueba
+    /// PRIMERO): este campo ya solo existe para no romper una instalación
+    /// antigua sin `vendor/`, donde el server vive en otro sitio. Nadie lo
+    /// escribe desde la UI; `heal_llama_server_path` limpia el valor obsoleto
+    /// al arrancar.
     pub llama_server_path: Option<String>,
     /// Umbral de sensibilidad del clasificador correctivo (spec §2:
     /// «el umbral debe favorecer la precisión sobre el recall»). Rango
@@ -689,9 +691,9 @@ impl Config {
     /// Ajustes. Cadena en blanco/ausente = autodetección (el hueco vacío
     /// de un campo borrado no se persiste como ruta inválida).
     ///
-    /// La RESOLUCIÓN final (config → rutas comunes → PATH) vive en
+    /// La RESOLUCIÓN final (vendado → config → rutas comunes → PATH) vive en
     /// `llm::resolve_server_path`, que además valida que el fichero exista:
-    /// aquí solo devolvemos lo que pidió el usuario.
+    /// aquí solo devolvemos lo que hubiera guardado.
     pub fn llama_server_path(&self) -> Option<&str> {
         self.llama_server_path
             .as_deref()
@@ -699,37 +701,42 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
-    /// Sanea y PERSISTE la ruta del server LLM (t_75732630). La app solo
-    /// arranca el `llama-server.exe` NATIVO de Windows, así que una ruta
-    /// que apunte a un wrapper (`llama.exe`, el valor que traía config.json)
-    /// o a un fichero inexistente deja de ser válida: se corrige a la mejor
-    /// ruta utilizable —el `llama-server.exe` hermano o la autodetección—
-    /// y se escribe en config.json. Sin esta corrección el proceso lanzado
-    /// no casaba con la validación por nombre de imagen de
-    /// `terminate_server_pid` y quedaba huérfano en VRAM al salir.
+    /// Sanea una config VIEJA del server LLM (14/10/2026, «cero rutas que
+    /// teclear»). El server VIAJA con la app (`vendor/llama/`), y el campo
+    /// `llama_server_path` ya no se edita en la UI: aquí no se intenta
+    /// «arreglar» la ruta (eso era lo viejo: resolver + persistir), se
+    /// LIMPIA cuando es basura — no existe, no es `llama-server.exe`, o hay
+    /// server vendado que la eclipsa (una ruta de una instalación anterior no
+    /// puede romper una instalación nueva).
     ///
-    /// Devuelve la ruta válida resultante (`None` si no hay server
-    /// instalado: la corrección IA se desactiva con aviso, el dictado sigue).
+    /// Se conserva cuando sigue siendo utilizable Y no hay server vendado:
+    /// una instalación antigua (sin `vendor/`) con el server en otro sitio
+    /// seguiría funcionando con su ruta manual.
+    ///
+    /// Devuelve la ruta que va a usarse (`None` si no hay server en ningún
+    /// sitio: la corrección IA se desactiva con aviso, el dictado sigue).
     pub fn heal_llama_server_path(&mut self) -> Option<PathBuf> {
-        let resolved = crate::llm::resolve_server_path(self)?;
-        let healthy = self
+        let vendado = crate::llm::exe_dir()
+            .as_deref()
+            .and_then(crate::llm::vendored_server_path_in)
+            .is_some();
+        let utilizable = self
             .llama_server_path()
             .map(|actual| {
                 let p = std::path::Path::new(actual);
                 p.is_file() && crate::llm::is_server_exe(p)
             })
             .unwrap_or(false);
-        if !healthy {
+        if self.llama_server_path.is_some() && (!utilizable || vendado) {
             crate::log!(
                 "config",
-                "ruta del server LLM saneada: «{}» → {}",
-                self.llama_server_path().unwrap_or("(autodetección)"),
-                resolved.display()
+                "ruta del server LLM obsoleta, se limpia: «{}» (el server va en el paquete)",
+                self.llama_server_path().unwrap_or("")
             );
-            self.llama_server_path = Some(resolved.to_string_lossy().into_owned());
+            self.llama_server_path = None;
             self.save();
         }
-        Some(resolved)
+        crate::llm::resolve_server_path(self)
     }
 
     /// Umbral del clasificador (0..=100). Default 50 (= conducta previa:
