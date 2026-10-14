@@ -103,6 +103,8 @@ arranca y apaga la propia app.
 | `src/ui/poll.rs` | El tick periódico (`handle_poll`): drena los canales de audio, transcripción y LLM, y refresca el progreso de descarga. | Era el bloque más grande de `update()` (248 líneas); el latido de la app merecía su fichero. |
 | `src/ui/bubble.rs` | Los eventos de la **burbuja flotante** (`handle_bubble_events`): abrir, pulsar, arrastrar, soltar. | El arrastre tiene reglas propias (captura del ratón, anclaje) y estaban ahogadas en el `match`. |
 | `src/ui/window_tray.rs` | Ventana principal, **bandeja** del sistema y arranque (`handle_window_and_tray`). | Ciclo de vida de las ventanas aparte: es lo primero que se revisa cuando algo «no aparece». |
+| `src/ui/shell.rs` | El **marco** del rediseño (frame *Dictado* de Figma): barra de ventana propia, barra lateral y el espacio de trabajo (`frame_window_bar`, `frame_sidebar`, `dictado_workspace`). | El marco lo dibuja la app (ventana sin decoración nativa): medidas y colores salen de `theme::chrome`/`theme::design_type`, no de literales en la vista. |
+| `src/ui/icons.rs` | Los 20 iconos vectoriales (lucide) del diseño, incrustados con `include_bytes!` desde `assets/icons/`. | Vectoriales nítidos a 12, 15, 18 o 30 px sin depender de rutas en disco ni de glifos del sistema. |
 | `src/theme.rs` | Los colores, tamaños y radios de toda la interfaz, con el contraste **medido** (fórmulas WCAG) en tests. | Un solo sitio donde cambiar el aspecto; los tests impiden que un cambio rompa la legibilidad. |
 | `src/fonts.rs` | Carga la fuente de emoji de Windows para que símbolos como ✓ y ↩ no salgan como cajas vacías. | El renderizador de texto de la UI no hace «fallback» de fuente por defecto. |
 

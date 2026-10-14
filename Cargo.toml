@@ -10,8 +10,10 @@ license = "MIT"
 # UI nativa (sin webview). `image` activa el widget `image` de iced y el
 # crate `image` 0.25 (que ya está en Cargo.lock) para que el usuario pueda
 # poner su propia imagen de fondo y un sprite o animación por frames en la
-# burbuja flotante (ver src/custom_image.rs).
-iced = { version = "0.13", features = ["tokio", "image"] }
+# burbuja flotante (ver src/custom_image.rs). `svg` habilita el widget `svg`:
+# los iconos del diseño (lucide, extraídos del Figma a assets/icons/) se
+# incrustan en el binario y se pintan vectoriales (ver src/ui/icons.rs).
+iced = { version = "0.13", features = ["tokio", "image", "svg"] }
 
 # Multi-ventana de Iced (la burbuja flotante es una segunda ventana del mismo
 # proceso, con vista y tema propios por window::Id)

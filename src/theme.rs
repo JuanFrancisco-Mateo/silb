@@ -22,7 +22,7 @@ use iced::border::Radius;
 use iced::theme::Palette;
 use iced::widget::{
     button, checkbox as check, container, pick_list as pick, progress_bar, rule,
-    scrollable as scroll, text_editor as editor, text_input as input,
+    scrollable as scroll, text_editor as editor, text_input as input, toggler as toggle,
 };
 use iced::{Background, Border, Color, Shadow, Theme};
 
@@ -38,13 +38,17 @@ macro_rules! rgb {
 // ─────────────────────────────── Tokens: color ───────────────────────────────
 // Paleta grafito (dark, por defecto). Acento violeta único #7C6CFF en ambos
 // modos; ok/warn/err se oscurecen ligeramente en light para contraste AA.
+//
+// Los valores de la paleta OSCURA son los medidos en el diseño de Figma
+// (`design/openwhispr-figma/raw/TOKENS.md`): tarjeta #1D1E24, campo #191A20,
+// texto #F1F0F5, secundario #A9A8B5, borde #303139 y acento activo #8D7AFF.
 pub const BG: Color = rgb!(0x17, 0x18, 0x1C); // grafito fondo
-pub const SURFACE: Color = rgb!(0x1F, 0x20, 0x26); // tarjetas e inputs
-pub const SURFACE_ALT: Color = rgb!(0x27, 0x28, 0x30); // hover, fondos secundarios
-pub const TEXT: Color = rgb!(0xF7, 0xF6, 0xF3);
-pub const DIM: Color = rgb!(0x9A, 0x9A, 0xA3);
+pub const SURFACE: Color = rgb!(0x1D, 0x1E, 0x24); // tarjetas (diseño)
+pub const SURFACE_ALT: Color = rgb!(0x19, 0x1A, 0x20); // campos y selects (diseño)
+pub const TEXT: Color = rgb!(0xF1, 0xF0, 0xF5);
+pub const DIM: Color = rgb!(0xA9, 0xA8, 0xB5);
 pub const ACCENT: Color = rgb!(0x7C, 0x6C, 0xFF); // violeta único
-pub const ACCENT_HOVER: Color = rgb!(0x8F, 0x82, 0xFF);
+pub const ACCENT_HOVER: Color = rgb!(0x8D, 0x7A, 0xFF);
 // Variante de acento SEGURA como color de texto normal: #7C6CFF sobre la
 // tarjeta grafito queda en ~4.2:1 (por debajo del AA 4.5:1 de WCAG para
 // texto pequeño). #8F82FF (y #6652F2 en claro) miden ≥ 4.5:1 sobre fondo Y
@@ -56,7 +60,7 @@ pub const WARN: Color = rgb!(0xF5, 0xA6, 0x23);
 // Rojo medido para AA sobre tarjeta oscura: #E54B4F quedaba en ~4.2:1; este
 // pasa 4.5:1 sobre fondo y tarjeta (ver test de contraste).
 pub const ERR: Color = rgb!(0xEB, 0x57, 0x57);
-pub const BORDER: Color = rgb!(0x2E, 0x30, 0x38);
+pub const BORDER: Color = rgb!(0x30, 0x31, 0x39);
 
 pub const BG_LIGHT: Color = rgb!(0xF6, 0xF5, 0xF2);
 pub const SURFACE_LIGHT: Color = rgb!(0xFF, 0xFF, 0xFF);
@@ -85,6 +89,34 @@ pub const BORDER_LIGHT: Color = rgb!(0xD9, 0xD9, 0xE0);
 /// un casi-negro grafito que mide ≥ 4.5:1 sobre #7C6CFF en ambos modos
 /// (el fondo del modo NO se puede usar aquí: en claro daría ~3.5:1).
 pub const INK_ON_ACCENT: Color = rgb!(0x17, 0x18, 0x1C);
+
+// ─────────── Chrome del rediseño (frame Dictado de Figma) ────────────────────
+// Superficies que NO son campos de la paleta semántica personalizable (el
+// usuario no las edita en Ajustes → Apariencia): son la «piel» del marco del
+// diseño. Se resuelven por modo desde [`chrome`], que además toma de la paleta
+// activa el texto, el secundario y el acento (así un override del usuario
+// sigue mandando en la marca y en los textos).
+pub const SIDEBAR: Color = rgb!(0x13, 0x14, 0x18); // barra lateral
+pub const WINDOW_BAR: Color = rgb!(0x15, 0x16, 0x1A); // barra de ventana propia
+pub const KEYCAP: Color = rgb!(0x24, 0x25, 0x2D); // keycaps de atajo, badges
+pub const NAV_ACTIVE: Color = rgb!(0x28, 0x23, 0x38); // nav activo (violeta tenue)
+pub const DIVIDER: Color = rgb!(0x27, 0x28, 0x2F); // separadores internos
+// Texto tenue (labels, versión, pistas): 11 px del diseño. MEDIDO: 4.54:1
+// sobre el fondo de ventana y sobre la sidebar, pero 4.25:1 sobre la tarjeta
+// y 4.44:1 sobre el campo — por debajo del AA 4.5:1 para texto pequeño (ver
+// `test` de contraste: la desviación queda registrada, no corregida por
+// cuenta propia, porque el valor viene del diseño).
+pub const FAINT: Color = rgb!(0x7F, 0x80, 0x8D);
+
+// Equivalentes en modo claro (el diseño de Figma es solo oscuro: estos tonos
+// son la traducción a claro del mismo rol, elegidos para mantener la jerarquía
+// fondo < sidebar < tarjeta y el contraste del texto tenue).
+pub const SIDEBAR_LIGHT: Color = rgb!(0xF0, 0xF0, 0xF4);
+pub const WINDOW_BAR_LIGHT: Color = rgb!(0xF3, 0xF3, 0xF7);
+pub const KEYCAP_LIGHT: Color = rgb!(0xE8, 0xE8, 0xEE);
+pub const NAV_ACTIVE_LIGHT: Color = rgb!(0xE7, 0xE3, 0xFF);
+pub const DIVIDER_LIGHT: Color = rgb!(0xE3, 0xE3, 0xEA);
+pub const FAINT_LIGHT: Color = rgb!(0x8A, 0x8A, 0x95);
 
 // ─────────────────────── Contraste WCAG (medido, no estimado) ────────────────
 // Fórmulas de WCAG 2.1: luminancia relativa + ratio (1..21). Públicas porque
@@ -663,9 +695,27 @@ pub const SPACE_4: u16 = 24;
 pub const SPACE_5: u16 = 32;
 pub const SPACE_6: u16 = 48;
 
-// Radios 8–10 px.
+// Radios 8–10 px (marco del rediseño: 12 px en tarjetas, 5 en keycaps).
 pub const RADIUS_SM: f32 = 8.0;
 pub const RADIUS_MD: f32 = 10.0;
+/// Radio de las tarjetas del rediseño (frame Dictado: 12 px).
+pub const RADIUS_LG: f32 = 12.0;
+/// Radio de los keycaps de atajo y badges del rediseño (5 px).
+pub const RADIUS_KEYCAP: f32 = 5.0;
+/// Radio del botón circular de grabación (círculo de 80 px = radio 40).
+pub const RADIUS_CIRCLE: f32 = 40.0;
+
+/// Padding de los botones de acción del marco (36 px de alto con un icono de
+/// 16 px): el del diseño, «Action» y «Copiar texto» del frame Dictado.
+pub const ACTION_BUTTON_PADDING: [f32; 2] = [10.0, 12.0];
+/// Padding de un keycap de atajo (alto 23 px con texto de 11 px).
+pub const KEYCAP_PADDING: [f32; 2] = [4.0, 7.0];
+/// Alto de la barra de ventana propia (`Window bar` del diseño).
+pub const WINDOW_BAR_HEIGHT: f32 = 40.0;
+/// Ancho de la barra lateral (`Sidebar` del diseño).
+pub const SIDEBAR_WIDTH: f32 = 204.0;
+/// Diámetro del botón circular de grabación (`Record button` del diseño).
+pub const RECORD_BUTTON_SIZE: f32 = 80.0;
 
 // Tamaños de fuente.
 pub const FONT_XS: u16 = 11;
@@ -700,6 +750,56 @@ pub fn font_sizes(factor: f32) -> FontSizes {
         lg: scale(FONT_LG),
         xl: scale(FONT_XL),
         hero: scale(FONT_HERO),
+    }
+}
+
+/// Escala tipográfica MEDIDA en el frame Dictado de Figma. Es independiente de
+/// [`FontSizes`] (la del panel de Ajustes, que viene de la UI anterior): cada
+/// tamaño sale del design context, no de la escala de 8 px. Se escala igual
+/// que `FontSizes` con el factor elegido en Ajustes → Apariencia.
+///
+/// Los nombres son por ROL (no por px) porque son los del diseño: `chrome` es
+/// el texto de 11 px (título de ventana, atajos, versión, pistas), `body` el de
+/// 12 px (estado, privacidad), `control` el de 13 px (selects, subtítulo)…
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DesignType {
+    /// 9 px — «OPEN» del wordmark.
+    pub brand_sub: u16,
+    /// 10 px — badges.
+    pub badge: u16,
+    /// 11 px — barra de ventana, keycaps, versión, pistas, pie.
+    pub chrome: u16,
+    /// 12 px — estado de grabación, privacidad, labels de tarjeta.
+    pub body: u16,
+    /// 13 px — valores de los selects, subtítulo de página, botones.
+    pub control: u16,
+    /// 14 px — navegación y títulos de tarjeta.
+    pub nav: u16,
+    /// 18 px — «Whispr» del wordmark.
+    pub brand: u16,
+    /// 19 px — texto transcrito (el cuerpo editable).
+    pub transcript: u16,
+    /// 22 px — acción principal de la tarjeta de grabación.
+    pub hero: u16,
+    /// 28 px — título de página.
+    pub title: u16,
+}
+
+/// Aplica el factor de tamaño de fuente (mismo clamp 8..=64 px que
+/// [`font_sizes`]) a la escala del diseño.
+pub fn design_type(factor: f32) -> DesignType {
+    let scale = |base: u16| ((base as f32 * factor).round() as u16).clamp(8, 64);
+    DesignType {
+        brand_sub: scale(9),
+        badge: scale(10),
+        chrome: scale(11),
+        body: scale(12),
+        control: scale(13),
+        nav: scale(14),
+        brand: scale(18),
+        transcript: scale(19),
+        hero: scale(22),
+        title: scale(28),
     }
 }
 
@@ -822,6 +922,62 @@ pub fn tokens(theme: &Theme) -> std::borrow::Cow<'static, UiPalette> {
     std::borrow::Cow::Borrowed(base)
 }
 
+/// Superficies y bordes del rediseño (frame Dictado de Figma) que NO son
+/// campos de la paleta personalizable. Se resuelven una vez por frame con
+/// [`chrome`]: así la UI no escribe ni un literal de color.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Chrome {
+    /// Fondo de la barra de ventana propia.
+    pub window_bar: Color,
+    /// Fondo de la barra lateral.
+    pub sidebar: Color,
+    /// Fondo de tarjeta.
+    pub card: Color,
+    /// Fondo de campos y selects.
+    pub field: Color,
+    /// Fondo de keycaps de atajo y badges.
+    pub keycap: Color,
+    /// Fondo del elemento de navegación activo.
+    pub nav_active: Color,
+    /// Separadores internos (divider, bordes de cabecera/pie de tarjeta).
+    pub divider: Color,
+    /// Borde de tarjetas y campos.
+    pub border: Color,
+    /// Texto primario.
+    pub text: Color,
+    /// Texto secundario.
+    pub secondary: Color,
+    /// Texto tenue (medido por debajo de AA sobre tarjeta: ver [`FAINT`]).
+    pub faint: Color,
+    /// Acento de marca.
+    pub accent: Color,
+    /// Acento activo (cursor, estados activos, hover del botón primario).
+    pub accent_active: Color,
+}
+
+/// Resuelve el chrome del marco para el tema activo. Toma de la paleta
+/// resuelta (con los overrides del usuario) el texto, el secundario, los
+/// bordes y el acento; el resto son los tonos medidos del diseño.
+pub fn chrome(theme: &Theme) -> Chrome {
+    let t = tokens(theme);
+    let dark = is_dark(theme);
+    Chrome {
+        window_bar: if dark { WINDOW_BAR } else { WINDOW_BAR_LIGHT },
+        sidebar: if dark { SIDEBAR } else { SIDEBAR_LIGHT },
+        card: t.surface,
+        field: t.surface_alt,
+        keycap: if dark { KEYCAP } else { KEYCAP_LIGHT },
+        nav_active: if dark { NAV_ACTIVE } else { NAV_ACTIVE_LIGHT },
+        divider: if dark { DIVIDER } else { DIVIDER_LIGHT },
+        border: t.border,
+        text: t.text,
+        secondary: t.dim,
+        faint: if dark { FAINT } else { FAINT_LIGHT },
+        accent: t.accent,
+        accent_active: t.accent_hover,
+    }
+}
+
 fn border(color: Color, width: f32, radius: f32) -> Border {
     Border {
         color,
@@ -843,13 +999,180 @@ pub fn with_alpha(c: Color, a: f32) -> Color {
 
 // ─────────────────────────────── Estilos de widgets ───────────────────────────────
 
-/// Tarjeta base: superficie + borde sutil + radio medio.
+// ─────────────────────────── Estilos del marco (diseño) ───────────────────────────
+
+/// Barra de ventana propia (`Window bar`): fondo propio, sin borde (el
+/// separador inferior lo pinta la UI con [`divider_rule`]).
+pub fn window_bar(theme: &Theme) -> container::Style {
+    let c = chrome(theme);
+    container::Style {
+        text_color: Some(c.faint),
+        background: Some(Background::Color(c.window_bar)),
+        ..container::Style::default()
+    }
+}
+
+/// Barra lateral (`Sidebar`): fondo propio; el separador derecho lo pinta la
+/// UI con un `rule` vertical.
+pub fn sidebar(theme: &Theme) -> container::Style {
+    let c = chrome(theme);
+    container::Style {
+        text_color: Some(c.text),
+        background: Some(Background::Color(c.sidebar)),
+        ..container::Style::default()
+    }
+}
+
+/// Separador interno del marco (1 px, color `Divider` del diseño).
+pub fn divider_rule(theme: &Theme) -> rule::Style {
+    rule::Style {
+        color: chrome(theme).divider,
+        width: 1,
+        radius: Radius::from(0.0),
+        fill_mode: rule::FillMode::Full,
+    }
+}
+
+/// Keycap de atajo (fondo keycap + borde de campo + radio 5).
+pub fn keycap(theme: &Theme) -> container::Style {
+    let c = chrome(theme);
+    container::Style {
+        text_color: Some(c.secondary),
+        background: Some(Background::Color(c.keycap)),
+        border: border(c.border, 1.0, RADIUS_KEYCAP),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Botón de icono del chrome (controles de ventana, ayuda, atajos a Ajustes):
+/// transparente; al hover, superficie keycap.
+pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
+    let c = chrome(theme);
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => {
+            Some(Background::Color(c.keycap))
+        }
+        _ => None,
+    };
+    button::Style {
+        background: bg,
+        text_color: c.faint,
+        border: border(Color::TRANSPARENT, 0.0, RADIUS_KEYCAP),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Elemento de navegación de la barra lateral: el activo lleva fondo
+/// `nav_active` y texto primario; el resto, texto secundario.
+pub fn nav_item(theme: &Theme, status: button::Status, active: bool) -> button::Style {
+    let c = chrome(theme);
+    let bg = if active {
+        Some(Background::Color(c.nav_active))
+    } else {
+        match status {
+            button::Status::Hovered | button::Status::Pressed => {
+                Some(Background::Color(c.keycap))
+            }
+            _ => None,
+        }
+    };
+    button::Style {
+        background: bg,
+        text_color: if active { c.text } else { c.secondary },
+        border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Botón circular de grabación (80 px de acento): el hover sube al acento
+/// activo del diseño.
+pub fn record(theme: &Theme, status: button::Status) -> button::Style {
+    let c = chrome(theme);
+    let bg = match status {
+        button::Status::Hovered | button::Status::Pressed => c.accent_active,
+        _ => c.accent,
+    };
+    button::Style {
+        background: Some(Background::Color(bg)),
+        text_color: INK_ON_ACCENT,
+        border: border(Color::TRANSPARENT, 0.0, RADIUS_CIRCLE),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Interruptor del marco (`Corrección IA`): apagado en superficie keycap,
+/// encendido en acento.
+pub fn toggler(theme: &Theme, status: toggle::Status) -> toggle::Style {
+    let c = chrome(theme);
+    let is_toggled = match status {
+        toggle::Status::Active { is_toggled } | toggle::Status::Hovered { is_toggled } => {
+            is_toggled
+        }
+        toggle::Status::Disabled => false,
+    };
+    let (bg, fg) = if is_toggled {
+        (c.accent, INK_ON_ACCENT)
+    } else {
+        (c.keycap, c.secondary)
+    };
+    toggle::Style {
+        background: bg,
+        background_border_width: 1.0,
+        background_border_color: if is_toggled { c.accent } else { c.border },
+        foreground: fg,
+        foreground_border_width: 0.0,
+        foreground_border_color: Color::TRANSPARENT,
+    }
+}
+
+/// Punto de estado del marco (color de estado del micrófono: el punto solo
+/// nunca comunica, va siempre con su etiqueta al lado).
+pub fn dot(color: Color) -> container::Style {
+    container::Style {
+        text_color: None,
+        background: Some(Background::Color(color)),
+        border: border(Color::TRANSPARENT, 0.0, 3.0),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Barra del medidor de nivel del micrófono (3 px de ancho, radio 2).
+pub fn level_bar(theme: &Theme) -> container::Style {
+    let c = chrome(theme);
+    container::Style {
+        text_color: None,
+        background: Some(Background::Color(c.faint)),
+        border: border(Color::TRANSPARENT, 0.0, 2.0),
+        shadow: Shadow::default(),
+    }
+}
+
+/// Editor del transcript sobre la tarjeta (`Editable text` del diseño): sin
+/// relleno propio ni borde en reposo — el texto vive en la tarjeta. El foco
+/// sigue siendo visible (1.5 px de acento), requisito de accesibilidad.
+pub fn transcript_editor(theme: &Theme, status: editor::Status) -> editor::Style {
+    let c = chrome(theme);
+    let (border_color, border_width) = match status {
+        editor::Status::Focused => (c.accent, 1.5),
+        _ => (Color::TRANSPARENT, 0.0),
+    };
+    editor::Style {
+        background: Background::Color(Color::TRANSPARENT),
+        border: border(border_color, border_width, RADIUS_SM),
+        icon: c.faint,
+        placeholder: c.faint,
+        value: c.text,
+        selection: with_alpha(c.accent, 0.35),
+    }
+}
+
+/// Tarjeta base: superficie + borde sutil + radio de tarjeta del diseño.
 pub fn card(theme: &Theme) -> container::Style {
     let t = tokens(theme);
     container::Style {
         text_color: Some(t.text),
         background: Some(Background::Color(t.surface)),
-        border: border(t.border, 1.0, RADIUS_MD),
+        border: border(t.border, 1.0, RADIUS_LG),
         shadow: Shadow::default(),
     }
 }
@@ -1076,9 +1399,119 @@ mod tests {
     }
 
     #[test]
-    fn radios_dentro_de_8_10px() {
+    fn radios_dentro_de_8_12px() {
         assert!(RADIUS_SM >= 8.0 && RADIUS_SM <= 10.0);
-        assert!(RADIUS_MD >= 8.0 && RADIUS_MD <= 10.0);
+        assert!(RADIUS_MD >= 8.0 && RADIUS_MD <= 12.0);
+        // Del diseño: tarjeta 12, keycap 5.
+        assert_eq!(RADIUS_LG, 12.0);
+        assert_eq!(RADIUS_KEYCAP, 5.0);
+        assert_eq!(RADIUS_CIRCLE, RECORD_BUTTON_SIZE / 2.0);
+    }
+
+    #[test]
+    fn design_type_factor_1_es_la_escala_medida_en_figma() {
+        let ty = design_type(1.0);
+        assert_eq!(ty.brand_sub, 9);
+        assert_eq!(ty.badge, 10);
+        assert_eq!(ty.chrome, 11);
+        assert_eq!(ty.body, 12);
+        assert_eq!(ty.control, 13);
+        assert_eq!(ty.nav, 14);
+        assert_eq!(ty.brand, 18);
+        assert_eq!(ty.transcript, 19);
+        assert_eq!(ty.hero, 22);
+        assert_eq!(ty.title, 28);
+        // Jerarquía: estrictamente creciente con el factor de baseline y NO
+        // decreciente en cualquier factor (con 0.85 los tamaños pequeños se
+        // redondean y dos escalones contiguos pueden coincidir: 9→8 y 10→9).
+        for f in [0.85, 1.0, 1.15, 1.3] {
+            let t = design_type(f);
+            let cadena = [
+                t.brand_sub,
+                t.badge,
+                t.chrome,
+                t.body,
+                t.control,
+                t.nav,
+                t.brand,
+                t.transcript,
+                t.hero,
+                t.title,
+            ];
+            assert!(
+                cadena.windows(2).all(|w| w[0] <= w[1]),
+                "jerarquía rota con factor {f}: {cadena:?}"
+            );
+            assert!(cadena.iter().all(|v| (8..=64).contains(v)));
+            assert!(
+                cadena[0] < cadena[9],
+                "el título tiene que quedar por encima del subtítulo del wordmark ({f})"
+            );
+        }
+    }
+
+    #[test]
+    fn chrome_resuelve_por_modo_y_sigue_la_paleta_del_usuario() {
+        reset_palette_override();
+        let dark = chrome(&custom(true));
+        assert_eq!(dark.sidebar, SIDEBAR);
+        assert_eq!(dark.window_bar, WINDOW_BAR);
+        assert_eq!(dark.keycap, KEYCAP);
+        assert_eq!(dark.nav_active, NAV_ACTIVE);
+        assert_eq!(dark.divider, DIVIDER);
+        assert_eq!(dark.faint, FAINT);
+        // Del diseño: tarjeta y campo salen de la paleta semántica.
+        assert_eq!(dark.card, SURFACE);
+        assert_eq!(dark.field, SURFACE_ALT);
+        assert_eq!(dark.border, BORDER);
+        assert_eq!(dark.text, TEXT);
+        assert_eq!(dark.secondary, DIM);
+        assert_eq!(dark.accent, ACCENT);
+        assert_eq!(dark.accent_active, ACCENT_HOVER);
+
+        let light = chrome(&custom(false));
+        assert_ne!(light.sidebar, dark.sidebar, "el chrome también tiene modo claro");
+        assert_eq!(light.sidebar, SIDEBAR_LIGHT);
+        assert_eq!(light.card, SURFACE_LIGHT);
+
+        // Un override del usuario llega al chrome (marca y textos).
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                accent: Some("#00AAFF".into()),
+                text: Some("#FFFFFF".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = resolve_palette(&cfg, true);
+        let _scope = PaletteOverrideScope::new(p);
+        let custom_chrome = chrome(&custom(true));
+        assert_eq!(custom_chrome.accent, parse_hex("#00AAFF").unwrap());
+        assert_eq!(custom_chrome.text, parse_hex("#FFFFFF").unwrap());
+    }
+
+    /// El texto tenue del diseño (#7F808D) NO pasa AA sobre la tarjeta ni
+    /// sobre el campo: se registra el ratio medido (la tarea pide reportarlo,
+    /// no cambiarlo por cuenta propia). Si alguien «arregla» el token sin
+    /// tocar este test, el número deja de cuadrar.
+    #[test]
+    fn faint_del_diseno_registra_su_ratio_medido() {
+        let sobre_fondo = contrast_ratio(FAINT, BG);
+        let sobre_tarjeta = contrast_ratio(FAINT, SURFACE);
+        let sobre_campo = contrast_ratio(FAINT, SURFACE_ALT);
+        let sobre_sidebar = contrast_ratio(FAINT, SIDEBAR);
+        assert!(
+            sobre_fondo >= 4.5 && sobre_sidebar >= 4.5,
+            "fondo {sobre_fondo:.2} / sidebar {sobre_sidebar:.2}"
+        );
+        assert!(
+            (4.1..4.5).contains(&sobre_tarjeta),
+            "se esperaba < AA sobre tarjeta, mide {sobre_tarjeta:.2}"
+        );
+        assert!(
+            (4.3..4.5).contains(&sobre_campo),
+            "se esperaba < AA sobre campo, mide {sobre_campo:.2}"
+        );
     }
 
     #[test]

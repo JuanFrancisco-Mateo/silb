@@ -31,10 +31,10 @@ use std::time::Duration;
 use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
-    button, column, container, pick_list, progress_bar, row, scrollable, text, text_editor,
-    Button, Column, Space, Text,
+    button, column, container, horizontal_rule, pick_list, row, text, text_editor, vertical_rule,
+    Button, Column, Text,
 };
-use iced::{window, Background, Color, Element, Font, Length, Point, Subscription, Task, Theme};
+use iced::{window, Background, Color, Element, Length, Point, Subscription, Task, Theme};
 
 use crate::audio::AudioCapture;
 use crate::config::{
@@ -122,11 +122,10 @@ pub enum StartupEvent {
 }
 
 /// Lectura visual del estado del micrófono (feedback doble: color + texto).
-struct MicUi {
-    color: Color,
-    hint_color: Color,
-    label: String,
-    hint: String,
+pub(crate) struct MicUi {
+    pub(crate) color: Color,
+    pub(crate) label: String,
+    pub(crate) hint: String,
 }
 
 /// La instrucción hablada que se está enviando al LLM corrector. Si la
@@ -337,6 +336,18 @@ pub enum Message {
     /// desde la vista, para que la ventana tenga pestañas como Ajustes en vez
     /// de una columna de cosas.
     WindowSectionSelected(WindowSection),
+    /// Arrastra la ventana principal desde la barra de ventana propia: la
+    /// decoración nativa está desactivada (el marco la dibuja la app), así que
+    /// el movimiento de la ventana lo pide la UI con `window::drag`.
+    DragMainWindow,
+    /// Minimiza la ventana principal (control propio de la barra de ventana).
+    MinimizeMainWindow,
+    /// Alterna maximizada / restaurada (control propio de la barra).
+    MaximizeMainWindow,
+    /// Abre el panel de Ajustes en una sección concreta: lo usan los atajos del
+    /// marco (el icono de ayuda de la barra lateral → Avanzado; el de sliders
+    /// de la tarjeta de grabación → Dictado).
+    OpenSettingsSection(SettingsSection),
     /// Abre en el Explorador la carpeta donde vive el registro
     /// (`%APPDATA%/whispr-open/`). Pedido del usuario: «me pierdo buscando el
     /// log» (H2 del QA 24/09/2026).
@@ -1653,11 +1664,11 @@ impl WhisprApp {
     }
 
     /// Aviso de nivel del turno en curso (`None` si el nivel es normal).
-    fn mic_peak_hint(&self) -> Option<MicPeakHint> {
+    pub(crate) fn mic_peak_hint(&self) -> Option<MicPeakHint> {
         mic_peak_hint(self.mic_level_percent(), self.recording_secs())
     }
 
-    fn mic_level_percent(&self) -> u32 {
+    pub(crate) fn mic_level_percent(&self) -> u32 {
         self.audio
             .as_ref()
             .map(|a| (a.level() * 100.0) as u32)
@@ -1666,11 +1677,10 @@ impl WhisprApp {
 
     /// Lectura del estado para el hero: color de estado + label + hint
     /// (feedback doble, nunca solo color).
-    fn mic_ui(&self, t: &UiPalette) -> MicUi {
+    pub(crate) fn mic_ui(&self, t: &UiPalette) -> MicUi {
         match &self.status {
             Status::Idle => MicUi {
                 color: t.dim,
-                hint_color: t.dim,
                 label: "Listo".to_string(),
                 hint: format!(
                     "Pulsa el círculo o {} y empieza a hablar",
@@ -1682,19 +1692,16 @@ impl WhisprApp {
                 // (fs.md) sobre tarjeta; el violeta de marca mide ~4.2:1
                 // ahí (ver tests de contraste en theme.rs).
                 color: t.accent_text,
-                hint_color: t.dim,
                 label: "Grabando…".to_string(),
                 hint: "Suelta el atajo o pulsa para transcribir".to_string(),
             },
             Status::Transcribing => MicUi {
                 color: t.warn,
-                hint_color: t.dim,
                 label: "Transcribiendo…".to_string(),
                 hint: "Procesando el audio con Whisper".to_string(),
             },
             Status::Correcting => MicUi {
                 color: t.warn,
-                hint_color: t.dim,
                 label: "Corrigiendo con IA…".to_string(),
                 hint: "La IA de corrección revisa lo que dictaste".to_string(),
             },
@@ -1704,7 +1711,6 @@ impl WhisprApp {
                 total,
             } => MicUi {
                 color: t.warn,
-                hint_color: t.dim,
                 // Requisito R4: tamaño descargado/total + tiempo restante
                 // (medido con la EMA de velocidad), no solo un porcentaje.
                 label: download_progress_label(
@@ -1717,7 +1723,6 @@ impl WhisprApp {
             },
             Status::Error(e) => MicUi {
                 color: t.err,
-                hint_color: t.err,
                 label: "Error".to_string(),
                 hint: e.clone(),
             },
@@ -1843,6 +1848,7 @@ impl WhisprApp {
                 | Message::ToggleSettings
                 | Message::ToggleAdvancedSettings
                 | Message::SettingsSectionSelected(..)
+                | Message::OpenSettingsSection(..)
                 | Message::WindowSectionSelected(..)) => self.handle_palette_settings(m),
             m @ Message::Poll => self.handle_poll(m),
             m @ (Message::BubbleOpened(..)
@@ -1855,6 +1861,9 @@ impl WhisprApp {
             // ── Bandeja del sistema ─────────────────────────────────────────
             m @ (Message::WindowOpened(..)
                 | Message::ToggleMainWindow
+                | Message::DragMainWindow
+                | Message::MinimizeMainWindow
+                | Message::MaximizeMainWindow
                 | Message::FontLoaded(..)
                 | Message::Startup(..)
                 | Message::RetryStartup
@@ -2117,300 +2126,30 @@ impl WhisprApp {
             return self.loading_view(&t, fs);
         }
 
-        // ── Cabecera: wordmark + controles globales ──────────────────────────
-        // El botón de tema muestra el modo EFECTIVO (Auto incluido) y cicla
-        // Auto → Claro → Oscuro al pulsarlo.
-        let theme_toggle = match self.config.theme_mode() {
-            ThemeMode::Auto => "◐ Auto",
-            ThemeMode::Claro => "☀ Claro",
-            ThemeMode::Oscuro => "☾ Oscuro",
-        };
-        // El botón «Ajustes ▸» de la cabecera desaparece: abrir Ajustes es
-        // ahora una PESTAÑA de la ventana (barra de secciones, abajo).
-        let header = row![
-            text("Whispr Open")
-                .size(fs.xl)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-            Space::with_width(Length::Fill),
-            secondary_button(theme_toggle).on_press(Message::ToggleTheme),
-        ]
-        .spacing(theme::SPACE_2)
-        .align_y(iced::Alignment::Center);
-
-        // ── Secciones de la VENTANA (UI 24/09/2026) ────────────────────────
-        // Mismo lenguaje que Ajustes: la fila de pestañas va ARRIBA y la
-        // sección activa se marca con `●` además del color. Dos secciones,
-        // una pregunta cada una: «Dictado» (hero + nota) y «Ajustes» (panel).
-        let window_section = self.window_section();
-        let window_tabs = crate::ui::tabs::tab_bar(
-            WindowSection::ALL
-                .iter()
-                .map(|section| {
-                    crate::ui::tabs::Tab::new(
-                        section.label(),
-                        Message::WindowSectionSelected(*section),
-                        window_section == *section,
-                    )
-                })
-                .collect(),
-            fs,
-        );
-
-        // ── Estado del corrector IA (chip) ─────────────────────────────────
-        // Transparencia (requisito UX 10/09/2026): el usuario ve SIEMPRE si
-        // al dictar puede actuar la IA correctora y con qué modelo. Verde =
-        // activa, ámbar = se dicta sin corregir (motivo visible), gris =
-        // apagada a propósito o aún comprobando. Misma lógica pura que la
-        // línea de estado de Ajustes (`llm_status_ui`).
-        let llm_chip = {
-            let ui = llm_status_ui(
-                self.config.ai_correction_enabled(),
-                &self.llm_status,
-                &self.config.llm_settings().model,
-            );
-            let color = match ui.kind {
-                "ok" => t.ok,
-                "warn" => t.warn,
-                _ => t.dim,
-            };
-            ui_text(ui.label).size(fs.sm).color(color)
-        };
-
-        // ── Hero: estado del micrófono (tira horizontal compacta) ────────────
-        // En portrait el hero deja de ser una columna centrada y pasa a una
-        // fila: punto de estado + label + hint a la derecha; la barra de
-        // nivel/progreso va debajo, a todo el ancho de la tarjeta.
-        // Feedback doble intacto: color de estado (punto + borde) y label.
-        let mic = self.mic_ui(&t);
-        let mut hero_content = column![row![
-            text("●").size(fs.xl).color(mic.color),
-            column![
-                text(mic.label).size(fs.hero).color(t.text),
-                text(mic.hint).size(fs.sm).color(mic.hint_color),
-            ]
-            .width(Length::Fill)
-            .spacing(theme::SPACE_1),
-        ]
-        .spacing(theme::SPACE_3)
-        .align_y(iced::Alignment::Center),]
-        .spacing(theme::SPACE_2);
-
-        // Micro-feedback (>= 200 ms) no decorativo: nivel del mic / progreso.
-        match &self.status {
-            Status::Recording => {
-                let level = self.mic_level_percent();
-                hero_content = hero_content.push(
-                    progress_bar(0.0..=100.0, level as f32)
-                        .width(Length::Fill)
-                        .style(move |th| theme::progress(th, t.accent)),
-                );
-                // Pico del turno (UI-FUTURA P2): la barra dibuja el PICO que
-                // retiene `AudioCapture`, así que se etiqueta como tal y se
-                // avisa cuando el micro va mudo o saturado. Se pinta con
-                // tokens del tema (funciona igual en claro y oscuro).
-                let mut fila = row![
-                    text(format!("pico {level}%")).size(fs.xxs).color(t.dim),
-                    Space::with_width(Length::Fill),
-                ]
-                .align_y(iced::Alignment::Center);
-                if let Some(hint) = self.mic_peak_hint() {
-                    fila = fila.push(ui_text(hint.label()).size(fs.xxs).color(t.warn));
-                }
-                hero_content = hero_content.push(fila);
-            }
-            Status::Downloading {
-                downloaded, total, ..
-            } if *total > 0 => {
-                let pct = (*downloaded as f32 / *total as f32 * 100.0).min(100.0);
-                hero_content = hero_content.push(
-                    progress_bar(0.0..=100.0, pct)
-                        .width(Length::Fill)
-                        .style(move |th| theme::progress(th, t.warn)),
-                );
-            }
-            _ => {}
-        }
-
-        let hero = button(
-            container(hero_content)
-                .width(Length::Fill)
-                .padding(theme::SPACE_3)
-                .style(move |th| theme::mic_card(th, mic.color)),
-        )
-        .on_press(Message::Toggle)
-        .style(theme::mic);
-
-        // ── Transcript: editor multilínea (requisito R3) ─────────────────────
-        // La nota se puede corregir a mano: un error de Whisper ya no
-        // obliga a re-dictar. El editor gestiona su propio scroll (sige al
-        // cursor); el dictado nuevo llega con el cursor al final
-        // (`sync_editor_from_transcript`).
-        let transcript_card = container(
-            text_editor(&self.transcript_editor)
-                .placeholder(self.placeholder_text.as_str())
-                .on_action(Message::TranscriptEdited)
-                .size(fs.md)
-                .padding(theme::SPACE_3)
-                .height(Length::Fill)
-                .style(theme::text_editor),
-        )
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(theme::flat);
-
-        // ── Acciones discretas ───────────────────────────────────────────────
-        let inject_label = if self.config.auto_inject.unwrap_or(true) {
-            "Otra vez"
+        // ── Marco del rediseño (frame «Dictado» de Figma) ────────────────────
+        // Barra de ventana propia (40 px) + barra lateral (204 px) + espacio de
+        // trabajo. La barra lateral sustituye a la fila de pestañas anterior:
+        // «Dictado» y «Ajustes» son las dos secciones de la ventana, y el pie
+        // de privacidad vive dentro de la sección de dictado (junto al
+        // interruptor de corrección IA, como en el diseño).
+        let c = theme::chrome(&self.theme());
+        let ty = theme::design_type(self.config.font_size().factor());
+        let workspace: Element<'_, Message> = if self.settings_open {
+            self.settings_workspace(&t)
         } else {
-            "Escribir en app"
+            self.dictado_workspace(c, ty, &t)
         };
-        // Confirmación visual breve del copiado (requisito R3): «✓ Copiado»
-        // ~2 s en el propio botón (caduca en el Poll).
-        let copy_label: &str = if self.copied_at.is_some() {
-            "✓ Copiado"
-        } else {
-            "Copiar"
-        };
-        // Borrado explícito y reversible (requisito R3): primer clic ARMA
-        // la confirmación; el borrado real («Sí, borrar») lleva backup para
-        // deshacer. La confirmación caduca a los 5 s.
-        let clear_controls: Element<'_, Message> = if self.clear_armed {
+        let content = column![
+            self.frame_window_bar(c, ty),
+            horizontal_rule(1).style(theme::divider_rule),
             row![
-                text("¿Borrar la nota?").size(fs.sm).color(t.warn),
-                button(ui_text("Sí, borrar"))
-                    .on_press(Message::ClearTranscript)
-                    .padding(theme::SECONDARY_BUTTON_PADDING)
-                    .style(theme::primary),
-                secondary_button("No").on_press(Message::ClearPressed),
+                self.frame_sidebar(c, ty),
+                vertical_rule(1).style(theme::divider_rule),
+                workspace,
             ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center)
-            .into()
-        } else {
-            secondary_button("Limpiar")
-                .on_press(Message::ClearPressed)
-                .into()
-        };
-        let actions = row![
-            secondary_button(copy_label).on_press(Message::CopyTranscript),
-            clear_controls,
-            if self.last_turn.is_empty() {
-                secondary_button(inject_label)
-            } else {
-                secondary_button(inject_label).on_press(Message::InjectLast)
-            },
+            .height(Length::Fill),
         ]
-        .spacing(theme::SPACE_2)
-        .align_y(iced::Alignment::Center);
-
-        // ── Feedback textual ────────────────────────────────────────────────
-        // Con undo disponible, el feedback lleva el botón «Deshacer» (spec
-        // §4.3: AI transparente y overrideable — un nivel de undo basta).
-        // Con diff pendiente (modo confirmar), lleva «Aplicar» / «Descartar».
-        let feedback: Element<'_, Message> = if self.pending_diff.is_some() {
-            // Modo confirmar activo: el diff está esperando decisión.
-            // Mantenemos el texto del last_correction (puesto por
-            // handle_llm_correction) y añadimos los dos botones.
-            let label = self
-                .last_correction
-                .as_deref()
-                .unwrap_or("Corrección IA pendiente de confirmación");
-            row![
-                text(label)
-                    .size(fs.sm)
-                    .color(t.warn)
-                    .shaping(Shaping::Advanced),
-                button(ui_text("Aplicar"))
-                    .on_press(Message::ApplyPendingDiff)
-                    .padding(theme::SECONDARY_BUTTON_PADDING)
-                    .style(theme::primary),
-                secondary_button("Descartar").on_press(Message::DiscardPendingDiff),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center)
-            .into()
-        } else if let Some(corr) = &self.last_correction {
-            let color = if feedback_is_warning(corr) {
-                t.warn
-            } else {
-                t.ok
-            };
-            let mut row_el = row![text(corr.as_str())
-                .size(fs.sm)
-                .color(color)
-                // El texto puede traer glifos de UI (↩ de «deshecha ↩»):
-                // Advanced activa el fallback de fuente.
-                .shaping(Shaping::Advanced)]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center);
-            if self.undo_state.is_some() {
-                row_el = row_el.push(
-                    secondary_button("↩ Deshacer").on_press(Message::UndoLastCorrection),
-                );
-            }
-            // Reversibilidad del borrado (requisito R3): junto al aviso
-            // «Nota borrada» vive el deshacer específico del borrado.
-            if self.cleared_backup.is_some() {
-                row_el = row_el.push(
-                    secondary_button("↩ Deshacer borrado")
-                        .on_press(Message::UndoClearTranscript),
-                );
-            }
-            row_el.into()
-        } else if !self.removed_fillers.is_empty() {
-            text(format!(
-                "Muletillas eliminadas: {}",
-                self.removed_fillers.join(", ")
-            ))
-            .size(fs.sm)
-            .color(t.dim)
-            .into()
-        } else {
-            text("").into()
-        };
-
-        // ── Cuerpo de la sección activa ────────────────────────────────────
-        // «Dictado» reúne lo del turno (chip del corrector, hero, nota y sus
-        // acciones) en una columna; «Ajustes» es el panel de siempre con su
-        // propio scroll. La nota conserva su scroll independiente y no se
-        // empuja hacia abajo al abrir Ajustes.
-        let section_body: Element<'_, Message> = if self.settings_open {
-            scrollable(self.settings_view(&t))
-                .style(theme::scrollable)
-                .height(Length::Fill)
-                .into()
-        } else {
-            let mut dictado = column![llm_chip, hero, transcript_card]
-                .spacing(theme::SPACE_3)
-                .height(Length::Fill);
-            // Las acciones y el feedback operan sobre la nota: van con ella.
-            dictado = dictado.push(actions).push(feedback);
-            dictado.into()
-        };
-
-        // ── Pie de confianza (requisito R4): siempre visible, discreto ─────
-        // Promesa HONESTA: la transcripción es siempre local, pero si el
-        // usuario activó la corrección en la nube, el texto corregido SÍ
-        // sale (así lo elige y así se le dice — jamás una promesa falsa).
-        let trust_line = trust_footer_line(
-            self.config.ai_correction_enabled()
-                && matches!(
-                    self.config.correction_provider(),
-                    CorrectionProvider::Cloud
-                ),
-        );
-        let footer = container(text(trust_line).size(fs.xxs).color(t.dim))
-            .width(Length::Fill)
-            .align_x(iced::alignment::Horizontal::Center)
-            .padding(theme::SPACE_1);
-
-        let mut content = column![header, window_tabs, section_body]
-            .spacing(theme::SPACE_3)
-            .padding(theme::SPACE_3);
-        // El pie de confianza va SIEMPRE (también dentro de Ajustes): la
-        // promesa de privacidad no desaparece al abrir un panel.
-        content = content.push(footer);
+        .height(Length::Fill);
 
         // Personalización III: si el usuario eligió una imagen de fondo,
         // se apila DEBAJO del contenido como capa de fondo (stack con la
@@ -2768,7 +2507,7 @@ pub(crate) fn llm_status_ui(enabled: bool, status: &LlmStatus, model: &str) -> L
 /// el color que el usuario ve, así que no puede vivir escondida en la
 /// vista. Avisos: esperas, problemas del corrector, micro desconectado,
 /// turnos vacíos y el tope de grabación.
-fn feedback_is_warning(feedback: &str) -> bool {
+pub(crate) fn feedback_is_warning(feedback: &str) -> bool {
     feedback.starts_with("Esperando")
         || feedback.contains("no disponible")
         || feedback.contains("no sé qué corregir")
@@ -2847,13 +2586,18 @@ fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
 /// Línea del pie de confianza (requisito R4). HONESTA por encima de todo:
 /// con la corrección en la nube activada, el texto corregido SÍ sale del
 /// PC — y el pie lo dice en vez de prometer una privacidad falsa.
-fn trust_footer_line(cloud_correction_active: bool) -> &'static str {
+pub(crate) fn trust_footer_line(cloud_correction_active: bool) -> &'static str {
     if cloud_correction_active {
         "Transcripción local · la corrección IA usa la nube"
     } else {
         "Transcripción local · nada sale de tu PC"
     }
 }
+
+/// Idiomas que ofrecen los selectores de idioma (barra lateral de la ventana
+/// principal y Ajustes → Dictado: la misma lista en los dos sitios). «auto» es
+/// la autodetección de Whisper.
+pub(crate) const LANGUAGE_OPTIONS: &[&str] = &["auto", "es", "en", "fr", "de", "it", "pt"];
 
 /// Etiqueta legible del idioma para el `pick_list`. La opción "auto"
 /// representa autodetección; cualquier valor en `Option<String>` (incluido
