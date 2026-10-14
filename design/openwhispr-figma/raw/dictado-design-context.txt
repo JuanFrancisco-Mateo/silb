@@ -1,0 +1,296 @@
+const assetPathPrefix = "https://www.figma.com/api/mcp/asset/8d26fa61-05ec-4104-b643-1c94ffe731e3";
+const imgMinus = `${assetPathPrefix}/98f6e.svg`;
+const imgSquare = `${assetPathPrefix}/22899.svg`;
+const imgX = `${assetPathPrefix}/3d4bd.svg`;
+const imgWhisprSymbol = `${assetPathPrefix}/7fe91.svg`;
+const imgAudioLines = `${assetPathPrefix}/661af.svg`;
+const imgSlidersHorizontal = `${assetPathPrefix}/5bb3a.svg`;
+const imgShieldCheck = `${assetPathPrefix}/208b9.svg`;
+const imgCircleHelp = `${assetPathPrefix}/15650.svg`;
+const imgMic = `${assetPathPrefix}/d85a7.svg`;
+const imgStatusIndicator = `${assetPathPrefix}/81828.svg`;
+const imgMic1 = `${assetPathPrefix}/76fb7.svg`;
+const imgChevronDown = `${assetPathPrefix}/249a1.svg`;
+const imgLanguages = `${assetPathPrefix}/33cf3.svg`;
+const imgCpu = `${assetPathPrefix}/c7217.svg`;
+const imgSlidersHorizontal1 = `${assetPathPrefix}/11748.svg`;
+const imgTrash2 = `${assetPathPrefix}/7f4ec.svg`;
+const imgCopy = `${assetPathPrefix}/43812.svg`;
+const imgPencil = `${assetPathPrefix}/d24ce.svg`;
+const imgSparkles = `${assetPathPrefix}/db3e2.svg`;
+const imgDisabledSwitch = `${assetPathPrefix}/fc489.svg`;
+const imgHardDrive = `${assetPathPrefix}/1d1c3.svg`;
+
+export default function WhisprOpenDictado() {
+  return (
+    <div className="bg-[#17181c] border border-[#303139] border-solid content-stretch flex flex-col items-start overflow-clip relative rounded-[14px] size-full" data-node-id="3:484" data-name="Whispr Open · Dictado">
+      <div className="bg-[#15161a] border-[#27282f] border-b border-solid content-stretch flex h-[40px] items-center justify-between overflow-clip pl-[20px] pr-[16px] relative shrink-0 w-full" data-node-id="3:485" data-name="Window bar">
+        <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:486">
+          Whispr Open
+        </p>
+        <div className="content-stretch flex gap-[24px] items-center overflow-clip relative shrink-0" data-node-id="3:487" data-name="Window controls">
+          <div className="relative shrink-0 size-[12px]" data-node-id="3:718" data-name="minus">
+            <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgMinus} />
+          </div>
+          <div className="relative shrink-0 size-[12px]" data-node-id="3:721" data-name="square">
+            <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgSquare} />
+          </div>
+          <div className="relative shrink-0 size-[12px]" data-node-id="3:724" data-name="x">
+            <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgX} />
+          </div>
+        </div>
+      </div>
+      <div className="content-stretch flex flex-[1_0_0] items-start min-h-px overflow-clip relative w-full" data-node-id="3:491" data-name="Workspace">
+        <div className="bg-[#131418] border-[#27282f] border-r border-solid content-stretch flex flex-col gap-[32px] h-full items-start overflow-clip pb-[20px] pt-[28px] px-[16px] relative shrink-0 w-[204px]" data-node-id="3:492" data-name="Sidebar">
+          <div className="content-stretch flex gap-[10px] items-center overflow-clip pl-[8px] relative shrink-0 w-full" data-node-id="3:493" data-name="Brand">
+            <div className="relative shrink-0 size-[32px]" data-node-id="3:494" data-name="Whispr symbol">
+              <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgWhisprSymbol} />
+            </div>
+            <div className="[word-break:break-word] content-stretch flex flex-col gap-px items-start leading-[normal] not-italic overflow-clip relative shrink-0 whitespace-nowrap" data-node-id="3:498" data-name="Wordmark">
+              <p className="font-['Inter:Semi_Bold'] font-semibold relative shrink-0 text-[#f1f0f5] text-[18px]" data-node-id="3:499">
+                Whispr
+              </p>
+              <p className="font-['Inter:Medium'] font-medium relative shrink-0 text-[#7f808d] text-[9px]" data-node-id="3:500">
+                OPEN
+              </p>
+            </div>
+          </div>
+          <div className="content-stretch flex flex-col gap-[6px] items-start overflow-clip relative shrink-0 w-full" data-node-id="3:501" data-name="Main navigation">
+            <div className="bg-[#282338] content-stretch flex gap-[11px] h-[40px] items-center overflow-clip px-[12px] relative rounded-[8px] shrink-0 w-full" data-node-id="3:502" data-name="Navigation item">
+              <div className="relative shrink-0 size-[18px]" data-node-id="3:727" data-name="audio-lines">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgAudioLines} />
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Medium'] font-medium leading-[1.4] not-italic relative shrink-0 text-[#f1f0f5] text-[14px] whitespace-nowrap" data-node-id="3:504">
+                Dictado
+              </p>
+            </div>
+            <div className="bg-[#131418] content-stretch flex gap-[11px] h-[40px] items-center overflow-clip px-[12px] relative rounded-[8px] shrink-0 w-full" data-node-id="3:505" data-name="Navigation item">
+              <div className="relative shrink-0 size-[18px]" data-node-id="3:730" data-name="sliders-horizontal">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgSlidersHorizontal} />
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[14px] whitespace-nowrap" data-node-id="3:507">
+                Ajustes
+              </p>
+            </div>
+          </div>
+          <div className="flex-[1_0_0] min-h-px relative w-full" data-node-id="3:508" data-name="Sidebar space" />
+          <div className="content-stretch flex flex-col gap-[9px] items-start overflow-clip p-[12px] relative shrink-0 w-full" data-node-id="3:509" data-name="Local privacy">
+            <div className="content-stretch flex gap-[8px] items-center overflow-clip relative shrink-0" data-node-id="3:510" data-name="Privacy label">
+              <div className="relative shrink-0 size-[16px]" data-node-id="3:733" data-name="shield-check">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgShieldCheck} />
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[12px] whitespace-nowrap" data-node-id="3:512">
+                Solo en tu equipo
+              </p>
+            </div>
+            <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:513">
+              Sin nube. Sin cuentas.
+            </p>
+          </div>
+          <div className="bg-[#27282f] h-px relative shrink-0 w-full" data-node-id="3:514" data-name="Divider" />
+          <div className="content-stretch flex items-start justify-between overflow-clip px-[12px] relative shrink-0 w-full" data-node-id="3:515" data-name="Version">
+            <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:516">
+              v0.8.2
+            </p>
+            <div className="relative shrink-0 size-[15px]" data-node-id="3:736" data-name="circle-help">
+              <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgCircleHelp} />
+            </div>
+          </div>
+        </div>
+        <div className="content-stretch flex flex-[1_0_0] flex-col gap-[24px] h-full items-start min-w-px overflow-clip pb-[24px] pt-[32px] px-[40px] relative" data-node-id="3:518" data-name="Dictation workspace">
+          <div className="[word-break:break-word] content-stretch flex flex-col gap-[6px] items-start not-italic overflow-clip relative shrink-0 w-full" data-node-id="3:519" data-name="Page heading">
+            <p className="font-['Inter:Semi_Bold'] font-semibold leading-[normal] relative shrink-0 text-[#f1f0f5] text-[28px] w-full" data-node-id="3:520">
+              Dictado
+            </p>
+            <p className="font-['Inter:Regular'] font-normal leading-[1.5] relative shrink-0 text-[#a9a8b5] text-[13px] w-full" data-node-id="3:521">
+              Tu voz, convertida en texto. En tu equipo.
+            </p>
+          </div>
+          <div className="bg-[#1d1e24] border border-[#303139] border-solid content-stretch flex flex-col items-start overflow-clip relative rounded-[12px] shrink-0 w-full" data-node-id="3:522" data-name="Recording console">
+            <div className="content-stretch flex gap-[24px] items-center overflow-clip p-[24px] relative shrink-0 w-full" data-node-id="3:523" data-name="Recording control">
+              <div className="bg-[#7c6cff] content-stretch flex items-center justify-center overflow-clip relative rounded-[40px] shrink-0 size-[80px]" data-node-id="3:524" data-name="Record button">
+                <div className="relative shrink-0 size-[30px]" data-node-id="3:739" data-name="mic">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgMic} />
+                </div>
+              </div>
+              <div className="content-stretch flex flex-[1_0_0] flex-col gap-[8px] items-start min-w-px overflow-clip relative" data-node-id="3:526" data-name="Recording status">
+                <div className="content-stretch flex gap-[7px] items-center overflow-clip relative shrink-0" data-node-id="3:527" data-name="Ready status">
+                  <div className="relative shrink-0 size-[6px]" data-node-id="3:528" data-name="Status indicator">
+                    <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgStatusIndicator} />
+                  </div>
+                  <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[12px] whitespace-nowrap" data-node-id="3:529">
+                    Listo para dictar
+                  </p>
+                </div>
+                <p className="[word-break:break-word] font-['Inter:Medium'] font-medium leading-[normal] not-italic relative shrink-0 text-[#f1f0f5] text-[22px] whitespace-nowrap" data-node-id="3:530">
+                  Iniciar dictado
+                </p>
+                <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[12px] whitespace-nowrap" data-node-id="3:531">
+                  Pulsa el micrófono o usa el atajo
+                </p>
+              </div>
+              <div className="content-stretch flex flex-col gap-[12px] items-end overflow-clip relative shrink-0" data-node-id="3:532" data-name="Shortcut and signal">
+                <div className="content-stretch flex gap-[4px] items-center overflow-clip relative shrink-0" data-node-id="3:533" data-name="Keyboard shortcut">
+                  <div className="bg-[#24252d] border border-[#303139] border-solid content-stretch flex items-start overflow-clip px-[7px] py-[4px] relative rounded-[5px] shrink-0" data-node-id="3:534" data-name="Key">
+                    <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[11px] whitespace-nowrap" data-node-id="3:535">
+                      Ctrl
+                    </p>
+                  </div>
+                  <div className="bg-[#24252d] border border-[#303139] border-solid content-stretch flex items-start overflow-clip px-[7px] py-[4px] relative rounded-[5px] shrink-0" data-node-id="3:536" data-name="Key">
+                    <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[11px] whitespace-nowrap" data-node-id="3:537">
+                      Shift
+                    </p>
+                  </div>
+                  <div className="bg-[#24252d] border border-[#303139] border-solid content-stretch flex items-start overflow-clip px-[7px] py-[4px] relative rounded-[5px] shrink-0" data-node-id="3:538" data-name="Key">
+                    <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[11px] whitespace-nowrap" data-node-id="3:539">
+                      D
+                    </p>
+                  </div>
+                </div>
+                <div className="content-stretch flex gap-[3px] h-[17px] items-center overflow-clip relative shrink-0" data-node-id="3:540" data-name="Microphone level">
+                  <div className="bg-[#7f808d] relative rounded-[2px] shrink-0 size-[3px]" data-node-id="3:541" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[5px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:542" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[7px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:543" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[4px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:544" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[10px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:545" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[6px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:546" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[4px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:547" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[8px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:548" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[5px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:549" data-name="Level bar" />
+                  <div className="bg-[#7f808d] relative rounded-[2px] shrink-0 size-[3px]" data-node-id="3:550" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[6px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:551" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[4px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:552" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[8px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:553" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[5px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:554" data-name="Level bar" />
+                  <div className="bg-[#7f808d] relative rounded-[2px] shrink-0 size-[3px]" data-node-id="3:555" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[6px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:556" data-name="Level bar" />
+                  <div className="bg-[#7f808d] h-[4px] relative rounded-[2px] shrink-0 w-[3px]" data-node-id="3:557" data-name="Level bar" />
+                  <div className="bg-[#7f808d] relative rounded-[2px] shrink-0 size-[3px]" data-node-id="3:558" data-name="Level bar" />
+                </div>
+              </div>
+            </div>
+            <div className="border-[#303139] border-solid border-t content-stretch flex gap-[12px] h-[62px] items-center overflow-clip px-[24px] relative shrink-0 w-full" data-node-id="3:559" data-name="Recording preferences">
+              <div className="bg-[#191a20] border border-[#303139] border-solid content-stretch flex gap-[8px] h-[36px] items-center overflow-clip px-[12px] relative rounded-[8px] shrink-0 w-[244px]" data-node-id="3:560" data-name="Selection">
+                <div className="relative shrink-0 size-[15px]" data-node-id="3:742" data-name="mic">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgMic1} />
+                </div>
+                <p className="[word-break:break-word] flex-[1_0_0] font-['Inter:Regular'] font-normal leading-[normal] min-w-px not-italic relative text-[#f1f0f5] text-[13px]" data-node-id="3:562">
+                  Micrófono del sistema
+                </p>
+                <div className="relative shrink-0 size-[14px]" data-node-id="3:745" data-name="chevron-down">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgChevronDown} />
+                </div>
+              </div>
+              <div className="bg-[#191a20] border border-[#303139] border-solid content-stretch flex gap-[8px] h-[36px] items-center overflow-clip px-[12px] relative rounded-[8px] shrink-0 w-[160px]" data-node-id="3:564" data-name="Selection">
+                <div className="relative shrink-0 size-[15px]" data-node-id="3:748" data-name="languages">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgLanguages} />
+                </div>
+                <p className="[word-break:break-word] flex-[1_0_0] font-['Inter:Regular'] font-normal leading-[normal] min-w-px not-italic relative text-[#f1f0f5] text-[13px]" data-node-id="3:566">
+                  Español
+                </p>
+                <div className="relative shrink-0 size-[14px]" data-node-id="3:751" data-name="chevron-down">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgChevronDown} />
+                </div>
+              </div>
+              <div className="content-stretch flex flex-[1_0_0] gap-[7px] items-center min-w-px overflow-clip relative" data-node-id="3:568" data-name="Model status">
+                <div className="relative shrink-0 size-[15px]" data-node-id="3:754" data-name="cpu">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgCpu} />
+                </div>
+                <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[12px] whitespace-nowrap" data-node-id="3:570">
+                  Small (preciso)
+                </p>
+              </div>
+              <div className="relative shrink-0 size-[16px]" data-node-id="3:757" data-name="sliders-horizontal">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgSlidersHorizontal1} />
+              </div>
+            </div>
+          </div>
+          <div className="bg-[#1d1e24] border border-[#303139] border-solid content-stretch flex flex-[1_0_0] flex-col items-start min-h-[320px] overflow-clip relative rounded-[12px] w-full" data-node-id="3:572" data-name="Transcript editor">
+            <div className="border-[#27282f] border-b border-solid content-stretch flex gap-[10px] h-[64px] items-center overflow-clip px-[24px] relative shrink-0 w-full" data-node-id="3:573" data-name="Editor toolbar">
+              <p className="[word-break:break-word] font-['Inter:Medium'] font-medium leading-[1.4] not-italic relative shrink-0 text-[#f1f0f5] text-[14px] whitespace-nowrap" data-node-id="3:574">
+                Transcripción
+              </p>
+              <div className="bg-[#24252d] content-stretch flex items-start overflow-clip px-[7px] py-[3px] relative rounded-[4px] shrink-0" data-node-id="3:575" data-name="Concept badge">
+                <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[10px] whitespace-nowrap" data-node-id="3:576">
+                  EJEMPLO
+                </p>
+              </div>
+              <div className="flex-[1_0_0] h-px min-w-px relative" data-node-id="3:577" data-name="Toolbar space" />
+              <div className="content-stretch flex gap-[7px] items-center overflow-clip px-[12px] relative shrink-0" data-node-id="3:578" data-name="Clear action">
+                <div className="relative shrink-0 size-[15px]" data-node-id="3:760" data-name="trash-2">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgTrash2} />
+                </div>
+                <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[12px] whitespace-nowrap" data-node-id="3:580">
+                  Limpiar
+                </p>
+              </div>
+              <div className="bg-[#7c6cff] border border-[#7c6cff] border-solid content-stretch flex gap-[8px] h-[36px] items-center overflow-clip px-[12px] relative rounded-[8px] shrink-0" data-node-id="3:581" data-name="Action">
+                <div className="relative shrink-0 size-[16px]" data-node-id="3:763" data-name="copy">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgCopy} />
+                </div>
+                <p className="[word-break:break-word] font-['Inter:Medium'] font-medium leading-[1.4] not-italic relative shrink-0 text-[#f1f0f5] text-[13px] whitespace-nowrap" data-node-id="3:583">
+                  Copiar texto
+                </p>
+              </div>
+            </div>
+            <div className="content-stretch flex flex-[1_0_0] flex-col gap-[20px] items-start min-h-px overflow-clip pb-[24px] pt-[26px] px-[28px] relative w-full" data-node-id="3:584" data-name="Editable text">
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.7] min-w-full not-italic relative shrink-0 text-[#f1f0f5] text-[19px] w-[min-content]" data-node-id="3:585">
+                El jueves revisamos la nueva propuesta de diseño. La idea es simplificar la navegación y dar más espacio a lo importante.
+              </p>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.7] min-w-full not-italic relative shrink-0 text-[#f1f0f5] text-[19px] w-[min-content]" data-node-id="3:586">
+                Prepararé una primera versión para compartirla con el equipo antes de la reunión.
+              </p>
+              <div className="bg-[#8d7aff] h-[24px] relative shrink-0 w-[2px]" data-node-id="3:587" data-name="Text cursor" />
+            </div>
+            <div className="border-[#27282f] border-solid border-t content-stretch flex h-[42px] items-center justify-between overflow-clip px-[24px] relative shrink-0 w-full" data-node-id="3:588" data-name="Editor status">
+              <div className="content-stretch flex gap-[7px] items-center overflow-clip relative shrink-0" data-node-id="3:589" data-name="Edit hint">
+                <div className="relative shrink-0 size-[13px]" data-node-id="3:766" data-name="pencil">
+                  <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgPencil} />
+                </div>
+                <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:591">
+                  Texto editable
+                </p>
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:592">
+                48 palabras
+              </p>
+            </div>
+          </div>
+          <div className="content-stretch flex items-center justify-between overflow-clip relative shrink-0 w-full" data-node-id="3:593" data-name="Dictation footer">
+            <div className="content-stretch flex gap-[10px] items-center overflow-clip relative shrink-0" data-node-id="3:594" data-name="AI correction">
+              <div className="relative shrink-0 size-[15px]" data-node-id="3:769" data-name="sparkles">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgSparkles} />
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#a9a8b5] text-[12px] whitespace-nowrap" data-node-id="3:596">
+                Corrección IA
+              </p>
+              <div className="h-[22px] relative shrink-0 w-[36px]" data-node-id="3:597" data-name="Disabled switch">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgDisabledSwitch} />
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:599">
+                Desactivada
+              </p>
+            </div>
+            <div className="content-stretch flex gap-[7px] items-center overflow-clip relative shrink-0" data-node-id="3:600" data-name="Local processing">
+              <div className="relative shrink-0 size-[14px]" data-node-id="3:772" data-name="hard-drive">
+                <img alt="" className="absolute block inset-0 max-w-none size-full" src={imgHardDrive} />
+              </div>
+              <p className="[word-break:break-word] font-['Inter:Regular'] font-normal leading-[1.4] not-italic relative shrink-0 text-[#7f808d] text-[11px] whitespace-nowrap" data-node-id="3:602">
+                Transcripción 100 % local
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+SUPER CRITICAL: The generated React+Tailwind code MUST be converted to match the target project's technology stack and styling system.
+1. Analyze the target codebase to identify: technology stack, styling approach, component patterns, and design tokens
+2. Convert React syntax to the target framework/library
+3. Transform all Tailwind classes to the target styling system while preserving exact visual design
+4. Follow the project's existing patterns and conventions
+DO NOT install any Tailwind as a dependency unless the user instructs you to do so.
+
+Node ids have been added to the code as data attributes, e.g. `data-node-id="1:2"`.
+The generated code contains image and SVG URL constants, e.g. const image = `${assetPathPrefix}/<asset file name>`, where assetPathPrefix is declared once at the top of the code and every asset URL interpolates it. These URLs are temporary download sources and expire after 7 days. Download each asset into the project with curl -L, then replace its URL in the generated code with a reference to the downloaded asset. Never use the temporary URLs as runtime image sources.
