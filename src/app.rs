@@ -214,16 +214,6 @@ pub enum Message {
     /// Timeout HTTP en segundos (1..=120). Sale del slider; el getter
     /// lo pasa a `LlmConfig::timeout_secs` y `ureq::timeout`.
     LlmTimeoutChanged(u32),
-    /// Ruta del ejecutable del server LLM (`llama-server.exe`) tecleada en
-    /// Ajustes. Vacío = autodetección por rutas comunes.
-    LlmServerPathChanged(String),
-    /// Abre el diálogo nativo «Examinar…» para elegir `llama-server.exe`.
-    LlmServerPathBrowse,
-    /// Resultado del diálogo de archivo (None = cancelado). Persiste la
-    /// ruta elegida en config.json.
-    LlmServerPathPicked(Option<String>),
-    /// Vuelve a la autodetección (borra la ruta explícita de config.json).
-    LlmServerPathReset,
     /// Umbral del clasificador (0..=100). 0 = clasificador pasivo
     /// (atajo equivalente al toggle maestro apagado); 100 =
     /// imposible que enrute; default 50 = conducta previa.
@@ -1785,10 +1775,6 @@ impl WhisprApp {
                 | Message::LlmModelChanged(..)
                 | Message::LlmApiKeyChanged(..)
                 | Message::LlmTimeoutChanged(..)
-                | Message::LlmServerPathChanged(..)
-                | Message::LlmServerPathBrowse
-                | Message::LlmServerPathPicked(..)
-                | Message::LlmServerPathReset
                 | Message::LlmThresholdChanged(..)
                 | Message::LlmConfirmToggled(..)
                 | Message::ApplyPendingDiff
@@ -2452,18 +2438,6 @@ pub(crate) fn secondary_button<'a>(label: impl Into<String>) -> Button<'a, Messa
         .style(theme::secondary)
 }
 
-/// Placeholder del campo «Server LLM» de Ajustes: muestra la ruta que se
-/// resolvería AHORA MISMO si el usuario la dejara vacía (autodetección), o
-/// un aviso si no hay ningún candidato. Informativo: no valida nada.
-pub(crate) fn auto_server_placeholder(cfg: &Config) -> String {
-    match crate::llm::resolve_server_path(cfg) {
-        Some(p) => format!("auto: {}", p.display()),
-        None => {
-            "auto: no encontrado — usa «Examinar…» o un endpoint".to_string()
-        }
-    }
-}
-
 /// Lectura del estado del corrector IA para la UI (chip del estado principal
 /// + línea de estado en Ajustes). Función pura y testeable: la transparencia
 /// sobre CUÁNDO se usa el LLM es un requisito UX (10/09/2026), así que la
@@ -2907,9 +2881,20 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     }
 
     let Some(model_path) = crate::llm::resolve_model_path(&llm.model) else {
+        // Sin modelo no hay corrección, pero NO se le pide ninguna ruta al
+        // usuario (requisito 14/10/2026): el GGUF se busca solo junto a la app
+        // (`vendor/models`) y en la carpeta de modelos de la app. Descargarlo
+        // automáticamente está pendiente: `llm.model` es un nombre libre y no
+        // hay origen (repo HF) conocido para él.
+        crate::log!(
+            "startup",
+            "modelo LLM «{}» no encontrado en {:#?}",
+            llm.model,
+            crate::llm::model_search_roots()
+        );
         let _ = tx.send(StartupEvent::LlmDisabled(format!(
-            "no se encontró el modelo LLM «{}» en las rutas habituales. \
-             La corrección IA se desactiva; el dictado sigue funcionando.",
+            "no está instalado el modelo del corrector «{}»; \
+             el dictado sigue funcionando sin corrección",
             llm.model
         )));
         return;
@@ -2918,14 +2903,20 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     let port = crate::llm::port_from_base_url(&llm.base_url);
     let Some(server_bin) = crate::llm::resolve_server_path(&cfg) else {
         // Sin ejecutable no hay server local que levantar: la corrección se
-        // desactiva con aviso. El usuario puede configurar la ruta en
-        // Ajustes avanzados («Server LLM») o usar un endpoint
-        // OpenAI-compatible editable (proveedor Custom/Cloud).
-        let _ = tx.send(StartupEvent::LlmDisabled(format!(
-            "no se encontró el ejecutable del server LLM (llama-server.exe). \
-             Configúralo en Ajustes o usa un endpoint OpenAI-compatible. \
-             El dictado sigue funcionando."
-        )));
+        // desactiva con aviso y el dictado sigue. NO se le pide una ruta al
+        // usuario (requisito 14/10/2026): el server viaja en el paquete
+        // (`vendor/llama/`); si no está, esta instalación no lo trae y el
+        // único ajuste manual que queda es el endpoint OpenAI-compatible.
+        crate::log!(
+            "startup",
+            "sin server LLM: no hay ninguno vendado junto a {:?} ni instalado en el equipo",
+            crate::llm::exe_dir()
+        );
+        let _ = tx.send(StartupEvent::LlmDisabled(
+            "el server LLM integrado no está disponible en esta instalación; \
+             el dictado sigue funcionando sin corrección"
+                .to_string(),
+        ));
         return;
     };
     crate::log!(

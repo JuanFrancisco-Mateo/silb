@@ -30,8 +30,8 @@ use iced::widget::{
 use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding};
 
 use crate::app::{
-    auto_server_placeholder, dictionary_list, filler_lists, language_hint, language_label,
-    llm_status_ui, ui_text, FillerCategory, Message, SettingsSection, WhisprApp,
+    dictionary_list, filler_lists, language_hint, language_label, llm_status_ui, ui_text,
+    FillerCategory, Message, SettingsSection, WhisprApp,
 };
 use crate::config::{
     BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, CorrectionProvider, FontSize,
@@ -1413,44 +1413,11 @@ impl WhisprApp {
                         ty,
                     ),
                     // El resto de la tarjeta: la API key (que solo existe con
-                    // proveedor que la exija) y el compuesto del server local, que
-                    // es más ancho que la columna de control (lleva «Examinar…» y
-                    // «✕») y por eso va en una fila ancha con el borde derecho
-                    // compartido: el «✕» acaba en la misma x que los selects.
+                    // proveedor que la exija). El server LLM ya no tiene fila:
+                    // viaja en el paquete (`vendor/llama/`) y no se configura.
                 ]
                 .into_iter()
                 .chain(self.api_key_rows(c, ty))
-                .chain(vec![
-                    wide_row(
-                        row![
-                            text("Server LLM").size(ty.nav).font(medium()).color(c.text),
-                            text_input(
-                                &auto_server_placeholder(&self.config),
-                                self.config.llama_server_path.as_deref().unwrap_or(""),
-                            )
-                            .on_input(Message::LlmServerPathChanged)
-                            .padding(theme::FIELD_PADDING)
-                            .size(ty.control)
-                            .style(theme::text_input)
-                            .width(Length::Fill),
-                            button("Examinar…")
-                                .padding(theme::SECONDARY_BUTTON_PADDING)
-                                .on_press(Message::LlmServerPathBrowse)
-                                .style(theme::secondary),
-                            button(ui_text("✕")).on_press(Message::LlmServerPathReset),
-                        ]
-                        .spacing(theme::SPACE_2)
-                        .align_y(Alignment::Center)
-                        .into(),
-                    ),
-                    note_row(
-                        "Ejecutable llama-server.exe que la app lanza al arrancar. \
-                     Vacío = autodetección (D:\\LlamaCPP, junto a la app…). Solo \
-                     indícalo aquí si la app no lo encuentra sola.",
-                        c.faint,
-                        ty,
-                    ),
-                ])
                 .collect(),
             ),
             c,

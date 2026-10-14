@@ -8,6 +8,8 @@
 ;   Windows 10 1809+ / Windows 11. La app usa Iced 0.13 + whisper.cpp + CUDA
 ;   estático; el instalador NO incluye los modelos GGML (se descargan en el
 ;   primer arranque desde Hugging Face; ver src/transcribe.rs::ensure_model).
+;   SÍ incluye el server LLM (`{app}\vendor\llama\`, ver vendor/README.md):
+;   ~44 MB en CPU o ~700 MB con el pack CUDA de `vendor\llama\cuda\`.
 ;
 ; CÓMO COMPILARLO (Windows):
 ;   cmd /c ""C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss"
@@ -89,6 +91,11 @@ Source: "{#MyReleaseDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversio
 ; Icono que verá el acceso directo (mismo .ico que el binario, redundante
 ; pero Inno lo necesita para el .lnk; el .exe ya lleva el suyo).
 Source: "..\assets\whispr-open.ico"; DestDir: "{app}"; Flags: ignoreversion
+; Server LLM EMBARCADO: viaja con la app para que el usuario no teclee
+; ninguna ruta (la app lo busca en {app}\vendor\llama\llama-server.exe). Lo
+; copia packaging\vendor-llama.sh desde el build local de llama.cpp; NO va a
+; git. El subdirectorio cuda\ (runtime CUDA opcional) entra con recursesubdirs.
+Source: "..\vendor\llama\*"; DestDir: "{app}\vendor\llama"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 ; Menú Inicio (siempre).

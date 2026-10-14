@@ -93,6 +93,44 @@ pub fn is_server_exe(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
+/// Directorio del ejecutable REAL de la app (`std::env::current_exe()`): en
+/// dev es `target/<perfil>/`, instalada es la carpeta de `silb.exe` ({app}).
+/// Es el ancla de todo lo que VIAJA con la app (`vendor/`).
+pub fn exe_dir() -> Option<std::path::PathBuf> {
+    std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
+}
+
+/// Server LLM EMBARCADO en el paquete: `vendor/llama/llama-server.exe`,
+/// hermano del exe de la app. Candidato nº1 de `resolve_server_path`: el
+/// usuario no teclea ninguna ruta (requisito 14/10/2026).
+pub fn vendored_server_path_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let p = dir.join("vendor").join("llama").join(SERVER_EXE_NAME);
+    p.is_file().then_some(p)
+}
+
+/// Runtime CUDA OPCIONAL del server vendado: `vendor/llama/cuda/`, si existe
+/// y hay driver NVIDIA. Con él el server se arranca con ese directorio como
+/// cwd — el cargador de backends de ggml busca `ggml-cuda*.dll` en el cwd
+/// (verificado con el binario real; el PATH NO sirve para el descubrimiento)
+/// — y con el directorio al frente del PATH, para las dependencias de
+/// `ggml-cuda.dll` (cudart/cublas). Sin pack, el server corre en CPU.
+pub fn vendored_cuda_dir_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
+    let cuda = dir.join("vendor").join("llama").join("cuda");
+    cuda.is_dir().then_some(cuda)
+}
+
+/// ¿Hay driver NVIDIA en la máquina? El pack CUDA solo se usa con él: cargar
+/// `ggml-cuda.dll` sin driver es un fallo de arranque, no una mejora.
+fn nvidia_driver_present() -> bool {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+    std::path::Path::new(&root)
+        .join("System32")
+        .join("nvcuda.dll")
+        .is_file()
+}
+
 /// Corrige una ruta de server LLM que no es `llama-server.exe` (p. ej. el
 /// wrapper `llama.exe` de la instalación histórica): si en el MISMO
 /// directorio existe `llama-server.exe`, devuelve esa ruta; si no, `None`
@@ -1217,10 +1255,10 @@ pub fn port_from_base_url(base_url: &str) -> u16 {
 /// (WSL, wrapper `llama.exe`) se rechaza aquí.
 ///
 /// Detalles críticos del spawn (verificados con el binario real):
-/// - `current_dir` = directorio del exe: el binario es un stub que carga
-///   `llama-server-impl.dll` y sus dependencias (cublas64_13.dll, ggml-*)
-///   desde ese directorio; lanzarlo con otro cwd puede fallar en la carga
-///   (STATUS_ENTRYPOINT_NOT_FOUND).
+/// - `current_dir` = directorio del exe (o `cuda/` si hay pack CUDA): el
+///   binario es un stub que carga `llama-server-impl.dll` y sus dependencias
+///   (cublas64_13.dll, ggml-*) desde ese directorio; lanzarlo con otro cwd
+///   puede fallar en la carga (STATUS_ENTRYPOINT_NOT_FOUND).
 /// - `CREATE_NO_WINDOW`: server sin consola (la app es GUI).
 /// - stdout/stderr redirigidos a `llama-server.log` junto a la config: sin
 ///   consola los writes a stdout fallarían y el log permite diagnosticar
@@ -1250,6 +1288,22 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
         ));
     }
     let cwd = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    // Pack CUDA opcional junto al server vendado (`vendor/llama/cuda/`): el
+    // cwd pasa a ser ese directorio porque el cargador de backends de ggml
+    // busca los `ggml-*.dll` en el cwd y en el directorio del exe — y sus
+    // dependencias (cudart/cublas) se resuelven por PATH, así que el pack va
+    // al frente. Sin pack (o sin driver NVIDIA) se arranca desde el
+    // directorio del exe: CPU, y sin avisos.
+    let cuda_dir = cwd.join("cuda");
+    let use_cuda = cuda_dir.is_dir() && nvidia_driver_present();
+    if cuda_dir.is_dir() && !use_cuda {
+        crate::log!(
+            "llm",
+            "pack CUDA en {} ignorado: no hay driver NVIDIA (el server corre en CPU)",
+            cuda_dir.display()
+        );
+    }
+    let cwd = if use_cuda { cuda_dir.clone() } else { cwd };
     let args = build_server_args(model, port);
     let log_path = crate::config::config_path()
         .parent()
@@ -1258,13 +1312,28 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     let log_file = std::fs::File::create(&log_path)
         .map_err(|e| format!("no se pudo abrir el log del server ({log_path:?}): {e}"))?;
 
-    let child = Command::new(exe)
+    let mut command = Command::new(exe);
+    command
         .args(&args)
-        .current_dir(cwd)
+        .current_dir(&cwd)
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
-        .stdout(Stdio::from(log_file.try_clone().map_err(|e| format!("log del server: {e}"))?))
-        .stderr(Stdio::from(log_file))
+        .stdout(Stdio::from(
+            log_file
+                .try_clone()
+                .map_err(|e| format!("log del server: {e}"))?,
+        ))
+        .stderr(Stdio::from(log_file));
+    if use_cuda {
+        let current = std::env::var_os("PATH").unwrap_or_default();
+        let with_cuda: Vec<std::path::PathBuf> = std::iter::once(cuda_dir.clone())
+            .chain(std::env::split_paths(&current))
+            .collect();
+        if let Ok(joined) = std::env::join_paths(with_cuda) {
+            command.env("PATH", joined);
+        }
+    }
+    let child = command
         .spawn()
         .map_err(|e| format!("no se pudo lanzar {}: {e}", exe.display()))?;
 
@@ -1423,18 +1492,34 @@ pub fn kill_launched_server() -> bool {
     terminate_server_pid(pid)
 }
 
-/// Ruta del ejecutable `llama-server.exe` a usar: la configurada en
-/// Ajustes si existe en disco, o la primera de las rutas comunes que
-/// exista. `None` si no hay ningún candidato → el arranque lo reporta como
+/// Ruta del ejecutable `llama-server.exe` a usar. Orden (14/10/2026, «cero
+/// rutas que teclear»): el server EMBARCADO en el paquete
+/// (`vendor/llama/llama-server.exe` junto al exe de la app) → la ruta del
+/// config (override manual histórico, validado) → autodetección (rutas
+/// comunes y PATH). El vendado GANA al config: una ruta vieja en config.json
+/// (de una instalación anterior) no puede romper una instalación nueva.
+/// `None` si no hay ningún candidato → el arranque lo reporta como
 /// `LlmDisabled` con aviso (el endpoint OpenAI-compatible editable sigue
 /// disponible como alternativa).
 pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::PathBuf> {
-    if let Some(explicit) = cfg.llama_server_path() {
-        if let Some(fixed) = explicit_server_path(explicit) {
-            return Some(fixed);
-        }
-    }
-    resolve_server_path_with(&default_server_roots())
+    resolve_server_path_in(
+        exe_dir().as_deref(),
+        cfg.llama_server_path(),
+        &default_server_roots(),
+    )
+}
+
+/// Núcleo del orden de resolución, parametrizable para tests con directorios
+/// temporales (nada de disco real: ni `D:\LlamaCPP` ni PATH de la máquina).
+pub(crate) fn resolve_server_path_in(
+    exe_dir: Option<&std::path::Path>,
+    explicit: Option<&str>,
+    common: &[std::path::PathBuf],
+) -> Option<std::path::PathBuf> {
+    exe_dir
+        .and_then(vendored_server_path_in)
+        .or_else(|| explicit.and_then(explicit_server_path))
+        .or_else(|| resolve_server_path_with(common))
 }
 
 /// Decide SOLO sobre la ruta explícita de Ajustes («Server LLM»). Separada
@@ -1484,10 +1569,11 @@ pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf>
     }
 }
 
-/// Candidatos de ruta del server LLM, en orden de preferencia:
+/// Candidatos de AUTODETECCIÓN del server LLM (el vendado y el config se
+/// prueban ANTES, en `resolve_server_path_in`), en orden de preferencia:
 /// 1. `D:\LlamaCPP\llama-server.exe` (instalación histórica de Juanfri,
 ///    build CUDA 13 con cublas64_13.dll) — y su gemelo `C:\LlamaCPP`.
-/// 2. Junto al exe de la app (distribución portable de la app + server).
+/// 2. Junto al exe de la app (layout plano, sin `vendor/`).
 /// 3. `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` (instalación por usuario).
 /// 4. PATH de Windows (`llama-server.exe` en cualquier directorio del PATH).
 fn default_server_roots() -> Vec<std::path::PathBuf> {
@@ -1527,12 +1613,29 @@ fn resolve_server_path_with(roots: &[std::path::PathBuf]) -> Option<std::path::P
 /// coincida. Recorrido acotado en profundidad para no escanear discos
 /// enteros.
 pub fn resolve_model_path(model_name: &str) -> Option<std::path::PathBuf> {
-    resolve_model_path_with(model_name, &default_model_roots())
+    resolve_model_path_with(model_name, &model_roots_in(exe_dir().as_deref()))
 }
 
-fn default_model_roots() -> Vec<std::path::PathBuf> {
+/// Raíces donde busca el GGUF del corrector `resolve_model_path` (log de
+/// diagnóstico cuando no aparece: el usuario no tiene que escribir ninguna).
+pub fn model_search_roots() -> Vec<std::path::PathBuf> {
+    model_roots_in(exe_dir().as_deref())
+}
+
+/// Raíces donde buscar el GGUF del corrector, en orden:
+/// 1. `vendor/models` junto al exe: el modelo puede VIAJAR con la app (misma
+///    raíz `vendor/` que el server; si no está, no pasa nada).
+/// 2. `%APPDATA%\whispr-open\models`: la MISMA carpeta donde la app descarga
+///    los modelos de whisper — es el sitio natural para el GGUF descargado.
+/// 3. LM Studio e instalaciones de llama.cpp con carpeta `models` propia
+///    (compatibilidad con lo que ya hubiera en la máquina).
+fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut roots: Vec<PathBuf> = Vec::new();
+    if let Some(dir) = exe_dir {
+        roots.push(dir.join("vendor").join("models"));
+    }
+    roots.push(crate::transcribe::models_dir());
     // LM Studio: la carpeta por defecto de modelos del usuario.
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join(".lmstudio").join("models"));
@@ -2657,6 +2760,109 @@ mod tests {
         assert_eq!(resolve_server_path_with(&[]), None);
         let _ = std::fs::remove_dir_all(&dir);
         let _ = std::fs::remove_dir_all(&otros);
+    }
+
+    /// Orden de resolución del server (14/10/2026): el que VIAJA con la app
+    /// (`vendor/llama/`) gana al config y a las rutas comunes; el config
+    /// inválido no rompe nada; sin vendado se autodetecta. Todo con
+    /// directorios temporales: ni `D:\LlamaCPP` ni el PATH de la máquina
+    /// entran en juego.
+    #[test]
+    fn el_server_vendado_gana_al_config_y_a_la_autodeteccion() {
+        let base = std::env::temp_dir().join(format!("whispr-orden-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        // layout instalado: <app>/silb.exe + <app>/vendor/llama/llama-server.exe
+        let app = base.join("app");
+        // y una carpeta «sin vendor», como un desarrollo desde target/
+        let sin_vendor = base.join("sin-vendor");
+        std::fs::create_dir_all(&sin_vendor).unwrap();
+        std::fs::create_dir_all(app.join("vendor").join("llama")).unwrap();
+        let vendado = app.join("vendor").join("llama").join("llama-server.exe");
+        std::fs::write(&vendado, b"stub").unwrap();
+        // server «de antes» apuntado a mano en config.json, y uno «común»
+        let manual_dir = base.join("manual");
+        std::fs::create_dir_all(&manual_dir).unwrap();
+        let manual = manual_dir.join("llama-server.exe");
+        std::fs::write(&manual, b"stub").unwrap();
+        let comun_dir = base.join("comun");
+        std::fs::create_dir_all(&comun_dir).unwrap();
+        let comun = comun_dir.join("llama-server.exe");
+        std::fs::write(&comun, b"stub").unwrap();
+        let comunes = vec![comun.clone()];
+
+        // 1) vendado + config válido distinto → gana el VENDADO (una ruta
+        //    vieja en config.json no rompe una instalación nueva).
+        assert_eq!(
+            resolve_server_path_in(Some(&app), Some(&manual.to_string_lossy()), &comunes),
+            Some(vendado.clone())
+        );
+        // 2) vendado + config INVÁLIDO (no existe) → el vendado.
+        assert_eq!(
+            resolve_server_path_in(
+                Some(&app),
+                Some(&base.join("fantasma.exe").to_string_lossy()),
+                &comunes
+            ),
+            Some(vendado.clone())
+        );
+        // 3) sin vendado + config válido → el config (override manual).
+        assert_eq!(
+            resolve_server_path_in(Some(&sin_vendor), Some(&manual.to_string_lossy()), &comunes),
+            Some(manual.clone())
+        );
+        // 4) sin vendado + config inválido → autodetección por rutas comunes.
+        assert_eq!(
+            resolve_server_path_in(
+                Some(&sin_vendor),
+                Some(&base.join("fantasma.exe").to_string_lossy()),
+                &comunes
+            ),
+            Some(comun.clone())
+        );
+        // 5) sin nada → None (el arranque lo reporta como LlmDisabled).
+        assert_eq!(
+            resolve_server_path_in(None, None, &[]),
+            None,
+            "sin candidatos no se inventa ninguna ruta"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// El GGUF del corrector se busca también junto al exe (`vendor/models`) y
+    /// en la carpeta de modelos de la app (`%APPDATA%\whispr-open\models`),
+    /// ambas por delante de las raíces heredadas (LM Studio, D:\LlamaCPP…).
+    #[test]
+    fn el_modelo_se_busca_en_vendor_models_y_en_la_carpeta_de_la_app() {
+        let app = std::env::temp_dir().join(format!("whispr-vendor-model-{}", std::process::id()));
+        let vendor_models = app.join("vendor").join("models");
+        std::fs::create_dir_all(&vendor_models).unwrap();
+        std::fs::write(vendor_models.join("corrector.gguf"), b"gguf").unwrap();
+
+        let roots = model_roots_in(Some(&app));
+        assert_eq!(roots[0], vendor_models, "vendor/models va primero");
+        assert_eq!(
+            roots[1],
+            crate::transcribe::models_dir(),
+            "la carpeta de modelos de la app (misma que la de whisper) va después"
+        );
+        assert_eq!(
+            resolve_model_path_with("corrector.gguf", &roots),
+            Some(vendor_models.join("corrector.gguf"))
+        );
+        let _ = std::fs::remove_dir_all(&app);
+    }
+
+    /// El pack CUDA es solo un subdirectorio junto al server vendado: existe o
+    /// no existe, y sin él no se toca nada (el server corre en CPU).
+    #[test]
+    fn el_pack_cuda_es_el_subdirectorio_cuda_junto_al_server() {
+        let app = std::env::temp_dir().join(format!("whispr-cuda-{}", std::process::id()));
+        std::fs::create_dir_all(app.join("vendor").join("llama")).unwrap();
+        assert_eq!(vendored_cuda_dir_in(&app), None, "sin cuda/ no hay pack");
+        let cuda = app.join("vendor").join("llama").join("cuda");
+        std::fs::create_dir_all(&cuda).unwrap();
+        assert_eq!(vendored_cuda_dir_in(&app), Some(cuda));
+        let _ = std::fs::remove_dir_all(&app);
     }
 
     #[test]

@@ -4,6 +4,11 @@
 # Empaquetado
 /packaging/Output/
 
+# Server LLM embarcado (binarios de llama.cpp: ~44 MB en CPU, ~700 MB con el
+# pack CUDA). Viajan con la app, NO con el repo: los copia
+# packaging/vendor-llama.sh desde el build local (D:\LlamaCPP). Ver vendor/README.md.
+/vendor/llama/
+
 # Metadatos del entorno de agentes (Freebuff)
 /.freebuff/
 
