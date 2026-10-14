@@ -1,4 +1,4 @@
-//! Rectificaciones habladas — port directo de src/domain/correction.ts (Whispr Open web).
+//! Rectificaciones habladas — port directo de src/domain/correction.ts (Silb web).
 //!
 //! Detección de frases del tipo "no, quería decir X" / "mejor dicho X" para
 //! reemplazar el turno dictado por la corrección expresada.

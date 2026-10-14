@@ -1,9 +1,9 @@
-# ROADMAP — Whispr Open
+# ROADMAP — Silb
 
 > **El roadmap vivo de este proyecto es [`docs/ROADMAP.md`](docs/ROADMAP.md).**
 > Este fichero es solo el punto de entrada.
 
-Whispr Open es una app de **dictado por voz local y de escritorio nativo**
+Silb es una app de **dictado por voz local y de escritorio nativo**
 (Rust + Iced + whisper.cpp). Rama activa: `native-iced`. La rama `main`
 conserva la versión web legada (React/TS + Tauri) y no se toca desde aquí; su
 plan original quedó archivado en

@@ -1,6 +1,6 @@
 # AGENTS.md — Reglas de entorno para agentes autónomos
 
-Proyecto: **Whispr Open** — dictado por voz local NATIVO de escritorio
+Proyecto: **Silb** — dictado por voz local NATIVO de escritorio
 (Iced + whisper.cpp vía whisper-rs). Cero frontend web (sin webview, sin
 React/TS/Vite — eso vive en la rama `main` como versión legada).
 Rama activa: `native-iced`. Ruta: `E:\AI\FREEBUFF` (desde WSL: `/mnt/e/AI/FREEBUFF`).

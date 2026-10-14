@@ -1,7 +1,7 @@
-; whispr-open.iss — instalador de Whispr Open v0.3.0 (Fase 5 / R7).
+; whispr-open.iss — instalador de Silb v0.3.0 (Fase 5 / R7).
 ;
 ; INSTALACIÓN POR USUARIO (sin admin):
-;   Whispr Open se instala en %LOCALAPPDATA%\Programs\WhisprOpen, igual que
+;   Silb se instala en %LOCALAPPDATA%\Programs\Silb, igual que
 ;   cualquier app de Microsoft Store o winget. Cero UAC, cero prompts.
 ;
 ; DESTINATARIOS:
@@ -11,27 +11,30 @@
 ;
 ; CÓMO COMPILARLO (Windows):
 ;   cmd /c ""C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss"
-;   Salida: packaging\Output\whispr-open-0.3.0-setup.exe (~20-25 MB, LZMA).
+;   Salida: packaging\Output\silb-0.3.0-setup.exe (~20-25 MB, LZMA).
 ;
 ; VARIABLES DE USUARIO (las que se pueden sobreescribir por línea de comandos
 ; con /D="nombre=valor"):
-;   WHISPR_RELEASE_DIR  directorio con whispr-open.exe (por defecto ..\target\release)
+;   WHISPR_RELEASE_DIR  directorio con silb.exe (por defecto ..\target\release)
 ;   WHISPR_VERSION      versión del paquete (por defecto 0.3.0)
 ;
 ; Ejemplo con override:
 ;   ISCC.exe /DWHISPR_VERSION=0.3.1 /DWHISPR_RELEASE_DIR=D:\builds\release packaging\whispr-open.iss
 
 #define MyReleaseDir GetEnv("WHISPR_RELEASE_DIR") ? GetEnv("WHISPR_RELEASE_DIR") : "..\target\release"
-#define MyAppName "Whispr Open"
+#define MyAppName "Silb"
 #define MyAppPublisher "Whispr Open contributors"
 #define MyAppURL "https://github.com/JuanFrancisco-Mateo/whispr-open"
-#define MyAppExeName "whispr-open.exe"
+#define MyAppExeName "silb.exe"
 #ifndef MyAppVersion
   #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.3.0"
 #endif
 
 [Setup]
 ; GUID estable del producto (cambia SOLO si cambia el nombre o el editor).
+; Se MANTIENE tras el renombrado a Silb: es el mismo producto, así una
+; instalación anterior se ACTUALIZA EN SITIO (Inno reutiliza el directorio del
+; registro) en vez de aparecer dos veces en «Agregar o quitar programas».
 AppId={{6E2A0E9C-1B5B-4F0E-9C8C-5F8F7B6A7D11}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -41,7 +44,7 @@ AppPublisherURL={#MyAppURL}
 AppSupportURL={#MyAppURL}
 AppUpdatesURL={#MyAppURL}
 AppCopyright=Copyright (c) 2026 Whispr Open contributors
-; Instalación POR USUARIO en %LOCALAPPDATA%\Programs\WhisprOpen. Cero UAC.
+; Instalación POR USUARIO en %LOCALAPPDATA%\Programs\Silb. Cero UAC.
 DefaultDirName={localappdata}\Programs\{#MyAppName}
 ; Sin privilegio de administrador: el instalador corre con el usuario actual.
 PrivilegesRequired=lowest
@@ -63,10 +66,10 @@ InfoAfterFile=
 Uninstallable=yes
 UninstallDisplayIcon={app}\{#MyAppExeName}
 UninstallDisplayName={#MyAppName}
-UninstallFilesDir={localappdata}\Programs\{#MyAppName}
+UninstallFilesDir={app}
 ; Nombre del desinstalador.
 OutputDir=Output
-OutputBaseFilename=whispr-open-{#MyAppVersion}-setup
+OutputBaseFilename=silb-{#MyAppVersion}-setup
 ; Permite instalar sobre una versión anterior sin desinstalar primero.
 MinVersion=10.0
 ArchitecturesAllowed=x64compatible
@@ -118,7 +121,7 @@ begin
   begin
     if MsgBox(
       '¿Quieres borrar también tu configuración personal y los modelos descargados?' + #13#10 +
-      '(Si dices NO, podrás seguir usando Whispr Open si lo reinstalas.)',
+      '(Si dices NO, podrás seguir usando Silb si lo reinstalas.)',
       mbConfirmation, MB_YESNO
     ) = IDYES then
     begin

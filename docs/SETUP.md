@@ -1,6 +1,6 @@
 # SETUP — Corrección IA: proveedores Local, Custom y Cloud
 
-Guía breve para dejar funcionando el corrector IA de Whispr Open. El detalle
+Guía breve para dejar funcionando el corrector IA de Silb. El detalle
 del diseño (routing, ciclo de vida de memoria, guard anti-truncación) está en
 `docs/CORRECCION-VOZ.md`; aquí solo el «cómo se configura cada proveedor».
 

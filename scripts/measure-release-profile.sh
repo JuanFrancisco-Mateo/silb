@@ -12,7 +12,7 @@
 cd "$(dirname "$0")/.."
 
 CARGO="/mnt/c/Users/usuario/.cargo/bin/cargo.exe"
-EXE="target/release/whispr-open.exe"
+EXE="target/release/silb.exe"
 
 # Variables de salida.
 S_BASE=""

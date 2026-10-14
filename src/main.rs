@@ -1,4 +1,4 @@
-//! Whispr Open — dictado local de escritorio nativo.
+//! Silb — dictado local de escritorio nativo.
 
 //! App de ventana pura: sin consola de Windows (la app es GUI; los logs van
 //! a archivo vía `log`, no a una terminal). En debug (cargo run) los logs
@@ -10,7 +10,7 @@ use whispr_open::app::WhisprApp;
 fn main() -> iced::Result {
     whispr_open::log!(
         "main",
-        "Whispr Open {} iniciando",
+        "Silb {} iniciando",
         env!("CARGO_PKG_VERSION")
     );
     // H2 (QA 24/09/2026): el usuario se pierde buscando el log. La ruta

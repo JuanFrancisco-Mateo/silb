@@ -56,7 +56,7 @@ pub const BUBBLE_TOP_OFFSET: f32 = 48.0;
 
 /// Título único de la ventana de la burbuja: sirve para localizarla por HWND
 /// (FindWindowW) y aplicarle WS_EX_NOACTIVATE tras crearse.
-pub const BUBBLE_TITLE: &str = "WhisprOpen-Bubble";
+pub const BUBBLE_TITLE: &str = "Silb-Bubble";
 
 /// `window::Id` de la burbuja en formato numérico (`Id` es Display). Se guarda
 /// aquí porque `iced::event::listen_with` exige una `fn` estática sin
@@ -232,7 +232,7 @@ pub fn bubble_theme() -> Theme {
     use iced::theme::Palette;
 
     Theme::custom(
-        "Whispr Open — burbuja".to_string(),
+        "Silb — burbuja".to_string(),
         Palette {
             background: Color::TRANSPARENT,
             text: Color::WHITE,
@@ -441,7 +441,7 @@ impl iced_winit::Program for WhisprApp {
         if self.is_bubble_window(id) {
             BUBBLE_TITLE.to_string()
         } else {
-            "Whispr Open — Dictado local".to_string()
+            "Silb — Dictado local".to_string()
         }
     }
 
@@ -948,7 +948,7 @@ mod tests {
         // FindWindowW por título exige coincidencia exacta UTF-16; mantener el
         // título libre de caracteres no ASCII para que la búsqueda sea fiable.
         assert!(BUBBLE_TITLE.is_ascii());
-        assert_eq!(BUBBLE_TITLE, "WhisprOpen-Bubble");
+        assert_eq!(BUBBLE_TITLE, "Silb-Bubble");
     }
 
     #[test]

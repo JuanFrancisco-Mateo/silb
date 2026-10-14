@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Generador determinista del icono multirresolución de Whispr Open.
+"""Generador determinista del icono multirresolución de Silb.
 
 Salida: ``<out>/whispr-open.ico`` con entradas a 16, 24, 32, 48, 64, 128 y 256
 px, todas con el mismo lenguaje visual (círculo violeta #7C6CFF sobre fondo

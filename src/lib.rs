@@ -1,4 +1,4 @@
-//! Whispr Open — dictado local de escritorio nativo (Iced + whisper.cpp).
+//! Silb — dictado local de escritorio nativo (Iced + whisper.cpp).
 //!
 //! Módulos:
 //! - `domain`: lógica pura portada de la versión web (corrección, muletillas, diccionario).

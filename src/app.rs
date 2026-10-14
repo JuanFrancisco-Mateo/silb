@@ -1,4 +1,4 @@
-//! UI de Whispr Open con Iced: dictado por turnos, transcript acumulado,
+//! UI de Silb con Iced: dictado por turnos, transcript acumulado,
 //! limpieza de muletillas, diccionario personal, selector de modelo e
 //! inyección en la app activa.
 //!

@@ -1,6 +1,6 @@
 <div align="center">
 
-![Whispr Open — dictado por voz local para Windows](docs/img/banner.png)
+![Silb — dictado por voz local para Windows](docs/img/banner.png)
 
 **Dictado por voz local y de escritorio nativo. Alternativa open-source al flujo de Wispr Flow.**
 
@@ -61,9 +61,9 @@ si eliges un proveedor Cloud.
 ## Capturas
 
 <p align="center">
-  <img src="docs/img/ventana-principal.png" alt="Ventana principal de Whispr Open con el tema por defecto" width="260">
+  <img src="docs/img/ventana-principal.png" alt="Ventana principal de Silb con el tema por defecto" width="260">
   &nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="docs/img/burbuja.png" alt="Burbuja flotante de Whispr Open" width="88">
+  <img src="docs/img/burbuja.png" alt="Burbuja flotante de Silb" width="88">
 </p>
 
 Ventana principal y burbuja flotante con el **tema por defecto** (claro/oscuro
@@ -89,12 +89,12 @@ El recorrido completo de una frase, fichero por fichero, está en
 
 ## Instalar
 
-- **Instalador** (recomendado): `whispr-open-X.Y.Z-setup.exe` desde la página
+- **Instalador** (recomendado): `silb-X.Y.Z-setup.exe` desde la página
   de [Releases](https://github.com/JuanFrancisco-Mateo/whispr-open/releases).
-  Instala en `%LOCALAPPDATA%\Programs\WhisprOpen` **sin permisos de
+  Instala en `%LOCALAPPDATA%\Programs\Silb` **sin permisos de
   administrador**, con acceso directo, entrada en «Agregar o quitar programas»
   y desinstalador.
-- **Portable**: el propio `whispr-open.exe` autocontenido, sin instalación.
+- **Portable**: el propio `silb.exe` autocontenido, sin instalación.
 - **¿Aún no hay releases publicadas?** Compílalo en unos minutos (ver abajo).
 
 Detalles de empaquetado, tamaños medidos y firma en
@@ -116,7 +116,7 @@ cargo run --release
 ```
 
 La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda
-en `target\release\whispr-open.exe` y **no necesita nada instalado para
+en `target\release\silb.exe` y **no necesita nada instalado para
 ejecutarse**.
 
 > **Nota para WSL**: usa el cargo de Windows (`cmd.exe /c "cd /d <ruta> && <ruta>\cargo.exe run --release"`); apuntar al cargo de WSL genera un binario Linux que no enlaza.

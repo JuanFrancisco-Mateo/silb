@@ -1,11 +1,20 @@
 # EMPAQUETADO Y DISTRIBUCIÓN — especificación
 
-Objetivo: convertir `target/release/whispr-open.exe` en distribuciones
+> **Renombrado a Silb (v0.3.0)**: el binario pasa a llamarse `silb.exe` y el
+> instalador `silb-X.Y.Z-setup.exe` (AppName `Silb`, mismo `AppId`, así una
+> instalación anterior se actualiza en sitio). Las rutas de los comandos de este
+> documento ya lo reflejan. Las MEDIDAS de las tablas (§7, §8) se tomaron sobre
+> el binario anterior (`whispr-open.exe`: mismo código, antes del renombrado) y
+> no se han vuelto a medir. Nombres internos que NO cambian: el `.ico`
+> (`assets/whispr-open.ico`), el script `packaging/whispr-open.iss`, el paquete
+> de Cargo (`whispr-open`) y los datos del usuario (`%APPDATA%\whispr-open\`).
+
+Objetivo: convertir `target/release/silb.exe` en distribuciones
 instalables y confiables para Windows 10/11.
 
 Estado al cierre de la **Fase 5 (R7, 11/09/2026, v0.3.0)**: instalador
 Inno Setup funcional (objetivo ≤25 MiB, sin admin,
-`%LOCALAPPDATA%\Programs\WhisprOpen`),
+`%LOCALAPPDATA%\Programs\Silb`),
 icono `.ico` multirresolución (16/24/32/48/64/128/256, color `#7C6CFF`,
 fondo transparente) generado por código e incrustado en el `.exe` y en los
 accesos directos, variante portable = el propio `.exe` release (sin
@@ -42,13 +51,13 @@ Un único ejecutable autocontenido, sin instalación.
 ### 1.2 Instalador (Inno Setup)
 
 **Recomendación:** Inno Setup (v6.7.3+). Cubre: instalar a
-`%LOCALAPPDATA%\Programs\WhisprOpen\` (sin admin), accesos directos (menú
+`%LOCALAPPDATA%\Programs\Silb\` (sin admin), accesos directos (menú
 Inicio + escritorio), desinstalador, integración con `SignTool` para firmar
 en el mismo pipeline.
 
 Contenido del instalador:
 
-- `whispr-open.exe` (+ DLLs necesarias, si las hubiera; el binario actual
+- `silb.exe` (+ DLLs necesarias, si las hubiera; el binario actual
   no requiere runtime externo gracias a MSVC static).
 - Icono `.ico` (se usa también para el acceso directo; el `.exe` ya lo
   lleva incrustado, el segundo es redundante para `IconFilename`).
@@ -59,12 +68,12 @@ Contenido del instalador:
 
 | Artefacto | Tamaño |
 |---|---|
-| `target/release/whispr-open.exe` (sin icono) | 44.226.048 B (42,18 MiB) |
-| `target/release/whispr-open.exe` (con icono incrustado) | 44.854.272 B (42,77 MiB, +628 KB) |
-| `target/release/whispr-open.exe` (tras Personalización I+II+III, feat `image` activada) | 47.178.240 B (44,99 MiB) |
-| `packaging/Output/whispr-open-0.2.0-setup.exe` (R6 inicial, feat `image` desactivada) | 23.769.034 B (22,67 MiB) |
-| `packaging/Output/whispr-open-0.2.0-setup.exe` (tras Personalización III, feat `image` activa) | 24.332.697 B (23,21 MiB) |
-| `packaging/Output/whispr-open-0.3.0-setup.exe` (R7, v0.3.0 con personalización completa) | (medido en §8.4) |
+| `target/release/silb.exe` (sin icono) | 44.226.048 B (42,18 MiB) |
+| `target/release/silb.exe` (con icono incrustado) | 44.854.272 B (42,77 MiB, +628 KB) |
+| `target/release/silb.exe` (tras Personalización I+II+III, feat `image` activada) | 47.178.240 B (44,99 MiB) |
+| `packaging/Output/silb-0.2.0-setup.exe` (R6 inicial, feat `image` desactivada) | 23.769.034 B (22,67 MiB) |
+| `packaging/Output/silb-0.2.0-setup.exe` (tras Personalización III, feat `image` activa) | 24.332.697 B (23,21 MiB) |
+| `packaging/Output/silb-0.3.0-setup.exe` (R7, v0.3.0 con personalización completa) | (medido en §8.4) |
 
 Compresión LZMA2/ultra64 reduce el binario de ~45 MiB a ~23 MiB
 (~52 % del original). Objetivo ≤25 MiB: **CUMPLIDO** (margen 1,79 MiB
@@ -204,7 +213,7 @@ assets del instalador) es el canal natural para v1.
 cd /d E:\AI\FREEBUFF
 C:\Users\usuario\.cargo\bin\cargo.exe build --release
 
-:: Salida: target\release\whispr-open.exe (≈42,77 MiB con icono)
+:: Salida: target\release\silb.exe (≈42,77 MiB con icono)
 ```
 
 El manifest SxS del CRT lo genera el propio compilador MSVC (no
@@ -231,7 +240,7 @@ sobreescribir).
 ```
 
 El instalador **no requiere elevación** (`PrivilegesRequired=lowest`),
-instala en `%LOCALAPPDATA%\Programs\WhisprOpen`, registra el
+instala en `%LOCALAPPDATA%\Programs\Silb`, registra el
 desinstalador en
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\{AppId}_is1`
 y muestra la licencia MIT antes de pedir confirmación.
@@ -240,16 +249,16 @@ y muestra la licencia MIT antes de pedir confirmación.
 
 ```cmd
 :: Instalar (silencioso, sin wizard):
-packaging\Output\whispr-open-0.3.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
+packaging\Output\silb-0.3.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
 
 :: Verificar que el icono está incrustado:
-powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; [System.Drawing.Icon]::ExtractAssociatedIcon('%LOCALAPPDATA%\Programs\Whispr Open\whispr-open.exe')"
+powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; [System.Drawing.Icon]::ExtractAssociatedIcon('%LOCALAPPDATA%\Programs\Silb\silb.exe')"
 
 :: Medir RAM en reposo y tras el prerroll del modelo (muestreo cada 10 s):
-powershell -NoProfile -Command "Get-Process whispr-open | Select WorkingSet64,PrivateMemorySize64"
+powershell -NoProfile -Command "Get-Process silb | Select WorkingSet64,PrivateMemorySize64"
 
 :: Desinstalar (silencioso, preserva config y modelos):
-"%LOCALAPPDATA%\Programs\Whispr Open\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+"%LOCALAPPDATA%\Programs\Silb\unins000.exe" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART
 ```
 
 ---
@@ -340,8 +349,8 @@ final con la personalización completa integrada (Ajustes por secciones
 
 | Artefacto | Tamaño (B) | Tamaño (MiB) |
 |---|---:|---:|
-| `target/release/whispr-open.exe` (v0.3.0) | **47.177.728** | **44,99** |
-| `packaging/Output/whispr-open-0.3.0-setup.exe` | **24.331.612** | **23,20** |
+| `target/release/silb.exe` (v0.3.0) | **47.177.728** | **44,99** |
+| `packaging/Output/silb-0.3.0-setup.exe` | **24.331.612** | **23,20** |
 | `assets/whispr-open.ico` (16/24/32/48/64/128/256) | 372.526 | 363,79 KiB |
 
 **Δ vs R6:** el `.exe` es idéntico al byte (-0 B; el cambio de versión
@@ -353,18 +362,18 @@ del instalador:** CUMPLIDO (margen 1,80 MiB).
 WorkingSet 484,6 MiB, PrivateMemory 1.243,9 MiB. Coherente con la medición
 de R6 (486 / 1.213 MiB).
 
-**Smoke del exe (`target/release/whispr-open.exe` directo, sin instalar):**
-- PID arranca; log escribe `Whispr Open 0.3.0 iniciando` en `%APPDATA%\whispr-open\whispr-open.log`.
+**Smoke del exe (`target/release/silb.exe` directo, sin instalar):**
+- PID arranca; log escribe `Silb 0.3.0 iniciando` en `%APPDATA%\whispr-open\whispr-open.log`.
 - Prerroll de whisper en ~1 s; bandeja lista; ventana principal registrada (id=2); burbuja aplicada noact+pos+tamaño 72.
-- `taskkill /T /PID <pid>` → 0 instancias whispr-open.exe y 0 instancias llama-server.exe.
+- `taskkill /T /PID <pid>` → 0 instancias silb.exe y 0 instancias llama-server.exe.
 
 **Smoke del instalador (`scripts/install-smoke.py`):**
-- install exit=0; ARP con `DisplayName=Whispr Open`, `DisplayVersion=0.3.0`, `Publisher=Whispr Open contributors`, `DisplayIcon=...\whispr-open.exe`.
-- uninstall exit=0; ARP Whispr Open tras uninstall = `eliminado OK`.
+- install exit=0; ARP con `DisplayName=Silb`, `DisplayVersion=0.3.0`, `Publisher=Whispr Open contributors`, `DisplayIcon=...\silb.exe`.
+- uninstall exit=0; ARP Silb tras uninstall = `eliminado OK`.
 
 **Guard de instancia única:** verificado. La segunda ejecución registra
 `[main] ya hay otra instancia corriendo: salgo sin tocar atajo ni bandeja`,
-muestra `MessageBoxW` con título «Whispr Open» y **no** registra bandeja,
+muestra `MessageBoxW` con título «Silb» y **no** registra bandeja,
 burbuja ni atajo global.
 
 Detalle completo en `INFORME-CIERRE.md` (raíz del repo).
@@ -374,7 +383,7 @@ Detalle completo en `INFORME-CIERRE.md` (raíz del repo).
 ## 9. Criterios de aceptación
 
 - ✅ Un `.exe` portable con icono propio que arranca sin consola.
-- ✅ Un instalador que: instala en `%LOCALAPPDATA%\Programs\WhisprOpen`,
+- ✅ Un instalador que: instala en `%LOCALAPPDATA%\Programs\Silb`,
   crea accesos directos (menú Inicio + escritorio), registra desinstalador
   en `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall`, muestra
   versión correcta, **sin elevación de administrador**.

@@ -1,4 +1,4 @@
-"""Smoke test: install + verify + uninstall the new whispr-open installer.
+"""Smoke test: install + verify + uninstall the new silb installer.
 Drives the installer/uninstaller via subprocess with Inno Setup silent flags,
 without opening any wizard window.
 """
@@ -8,8 +8,8 @@ import sys
 import time
 import winreg
 
-LOCAL_PROGRAMS = os.path.join(os.environ["LOCALAPPDATA"], "Programs", "Whispr Open")
-START_MENU = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs", "Whispr Open")
+LOCAL_PROGRAMS = os.path.join(os.environ["LOCALAPPDATA"], "Programs", "Silb")
+START_MENU = os.path.join(os.environ["APPDATA"], "Microsoft", "Windows", "Start Menu", "Programs", "Silb")
 DESKTOP = os.path.join(os.environ["USERPROFILE"], "Desktop")
 UNINSTALL_KEY = r"Software\Microsoft\Windows\CurrentVersion\Uninstall"
 
@@ -30,7 +30,7 @@ for unins_name in ("unins000.exe", "unins001.exe"):
             print(f"  TIMEOUT: el uninstaller {unins_name} no responde (probablemente roto); lo dejo huérfano")
         time.sleep(3)
 
-# 2) Install (the installer creates Whispr Open if it doesn't exist)
+# 2) Install (the installer creates Silb if it doesn't exist)
 print("=== Instalando ===")
 r = subprocess.run([installer, "/SP-", "/S", "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/CLOSEAPPLICATIONS"],
                   capture_output=True, timeout=300)
@@ -51,14 +51,14 @@ print(f"  Menu Inicio ({START_MENU}):")
 if os.path.exists(START_MENU):
     for f in sorted(os.listdir(START_MENU)):
         print(f"    {f}")
-print(f"  Escritorio (Whispr*):")
+print(f"  Escritorio (Silb*):")
 for f in sorted(os.listdir(DESKTOP)):
-    if "whispr" in f.lower() or "Whispr" in f:
+    if "silb" in f.lower():
         print(f"    {f}")
 
 # 3) ARP verification
 print("=== Verificando ARP ===")
-installed_exe = os.path.join(LOCAL_PROGRAMS, "whispr-open.exe")
+installed_exe = os.path.join(LOCAL_PROGRAMS, "silb.exe")
 if not os.path.exists(installed_exe):
     print(f"ERROR: {installed_exe} no existe tras instalar")
     sys.exit(4)
@@ -76,7 +76,7 @@ def find_arp_entry():
             try:
                 with winreg.OpenKey(root, sub_name) as sub:
                     dn, _ = winreg.QueryValueEx(sub, "DisplayName")
-                    if dn == "Whispr Open":
+                    if dn == "Silb":
                         return sub_name
             except (OSError, FileNotFoundError):
                 pass
@@ -85,7 +85,7 @@ def find_arp_entry():
 
 arp_subkey = find_arp_entry()
 if arp_subkey is None:
-    print("  ARP: NO encontrado 'Whispr Open' en HKCU Uninstall")
+    print("  ARP: NO encontrado 'Silb' en HKCU Uninstall")
     sys.exit(5)
 print(f"  ARP subkey: HKCU\\{UNINSTALL_KEY}\\{arp_subkey}")
 fields = ["DisplayName", "DisplayVersion", "Publisher", "InstallLocation", "DisplayIcon", "InstallDate", "EstimatedSize"]
@@ -123,6 +123,6 @@ if os.path.exists(LOCAL_PROGRAMS):
 
 # ARP re-check
 arp_subkey2 = find_arp_entry()
-print(f"  ARP Whispr Open tras uninstall: {'TODAVIA PRESENTE' if arp_subkey2 else 'eliminado OK'}")
+print(f"  ARP Silb tras uninstall: {'TODAVIA PRESENTE' if arp_subkey2 else 'eliminado OK'}")
 
 print("=== Smoke test terminado ===")
