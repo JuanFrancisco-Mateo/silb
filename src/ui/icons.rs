@@ -1,6 +1,6 @@
 //! Iconos vectoriales del rediseño (frame Dictado de Figma).
 //!
-//! Los 20 SVG que usa el marco se extrajeron del propio Figma
+//! Los 19 SVG que usa el marco se extrajeron del propio Figma
 //! (`design/openwhispr-figma/raw/icons/`) y se copiaron a `assets/icons/`;
 //! aquí se incrustan en el binario con `include_bytes!` (cero I/O en runtime,
 //! cero dependencia de rutas en disco). Son iconos lucide monocromos: el
@@ -23,7 +23,6 @@ pub const WHISPR_SYMBOL: &[u8] = include_bytes!("../../assets/icons/whisprsymbol
 pub const AUDIO_LINES: &[u8] = include_bytes!("../../assets/icons/audiolines-661af.svg");
 pub const SLIDERS: &[u8] = include_bytes!("../../assets/icons/slidershorizontal-5bb3a.svg");
 pub const SLIDERS_SM: &[u8] = include_bytes!("../../assets/icons/slidershorizontal1-11748.svg");
-pub const SHIELD_CHECK: &[u8] = include_bytes!("../../assets/icons/shieldcheck-208b9.svg");
 pub const CIRCLE_HELP: &[u8] = include_bytes!("../../assets/icons/circlehelp-15650.svg");
 
 // ── Tarjeta de grabación y transcripción ────────────────────────────────────

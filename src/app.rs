@@ -32,9 +32,9 @@ use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
     button, column, container, horizontal_rule, pick_list, row, text, text_editor, vertical_rule,
-    Button, Column, Text,
+    Button, Column, Space, Text,
 };
-use iced::{window, Background, Color, Element, Length, Point, Subscription, Task, Theme};
+use iced::{window, Background, Color, Element, Length, Padding, Point, Subscription, Task, Theme};
 
 use crate::audio::AudioCapture;
 use crate::config::{
@@ -2583,16 +2583,11 @@ fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
         )
     }
 
-/// Línea del pie de confianza (requisito R4). HONESTA por encima de todo:
-/// con la corrección en la nube activada, el texto corregido SÍ sale del
-/// PC — y el pie lo dice en vez de prometer una privacidad falsa.
-pub(crate) fn trust_footer_line(cloud_correction_active: bool) -> &'static str {
-    if cloud_correction_active {
-        "Transcripción local · la corrección IA usa la nube"
-    } else {
-        "Transcripción local · nada sale de tu PC"
-    }
-}
+/// Aviso del pie cuando la corrección IA usa la NUBE (requisito R4: HONESTO
+/// por encima de todo). El texto de privacidad local («Transcripción local ·
+/// nada sale de tu PC») se retiró de la UI por redundante con el README; este
+/// aviso solo aparece cuando el turno SÍ sale del equipo.
+pub(crate) const CLOUD_CORRECTION_NOTICE: &str = "Transcripción local · la corrección IA usa la nube";
 
 /// Idiomas que ofrecen los selectores de idioma (barra lateral de la ventana
 /// principal y Ajustes → Dictado: la misma lista en los dos sitios). «auto» es
@@ -2641,7 +2636,25 @@ pub(crate) fn mic_pick_list(
     // Los nombres de dispositivos son largos: el selector se ajusta al
     // ancho disponible (critical en portrait).
     .width(Length::Fill)
+    .padding(theme::FIELD_PADDING)
     .style(theme::pick_list)
+    .into()
+}
+
+/// Fila de una lista con acción de borrado: el contenido a la izquierda y el
+/// «✕» pegado a la COLUMNA DERECHA de la lista (misma x para todas las filas),
+/// no detrás de cada palabra. Diccionario y muletillas comparten tratamiento.
+fn list_row<'a>(content: Element<'a, Message>, message: Message) -> Element<'a, Message> {
+    row![
+        content,
+        Space::with_width(Length::Fill),
+        button(ui_text("✕"))
+            .on_press(message)
+            .style(theme::secondary),
+    ]
+    .width(Length::Fill)
+    .spacing(theme::SPACE_2)
+    .align_y(iced::Alignment::Center)
     .into()
 }
 
@@ -2653,18 +2666,20 @@ pub(crate) fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes)
     }
     let mut col = Column::new().spacing(theme::SPACE_1);
     for (idx, entry) in entries.iter().enumerate() {
-        col = col.push(
-            row![
-                text(format!("{} → {}", entry.from, entry.to)).size(fs.md),
-                button(ui_text("✕"))
-                    .on_press(Message::RemoveEntry(idx))
-                    .style(theme::secondary),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
+        col = col.push(list_row(
+            text(format!("{} → {}", entry.from, entry.to))
+                .size(fs.md)
+                .into(),
+            Message::RemoveEntry(idx),
+        ));
     }
-    col.into()
+    col.padding(Padding {
+        top: 0.0,
+        right: theme::AUX_COL_WIDTH + theme::SPACE_2 as f32,
+        bottom: 0.0,
+        left: 0.0,
+    })
+    .into()
 }
 
 /// Listas de muletillas por categoría con botón ✕ para quitar (idéntico en
@@ -2688,22 +2703,22 @@ pub(crate) fn filler_lists(fillers: &FillerWords, fs: theme::FontSizes) -> Eleme
         }
         col = col.push(text(format!("{}:", category.label())).size(fs.xxs));
         for (idx, word) in words.iter().enumerate() {
-            col = col.push(
-                row![
-                    text(word.clone()).size(fs.md),
-                    button(ui_text("✕"))
-                        .on_press(Message::RemoveFiller {
-                            category,
-                            index: idx,
-                        })
-                        .style(theme::secondary),
-                ]
-                .spacing(theme::SPACE_2)
-                .align_y(iced::Alignment::Center),
-            );
+            col = col.push(list_row(
+                text(word.clone()).size(fs.md).into(),
+                Message::RemoveFiller {
+                    category,
+                    index: idx,
+                },
+            ));
         }
     }
-    col.into()
+    col.padding(Padding {
+        top: 0.0,
+        right: theme::AUX_COL_WIDTH + theme::SPACE_2 as f32,
+        bottom: 0.0,
+        left: 0.0,
+    })
+    .into()
 }
 
 /// Transcribe en un hilo de trabajo: a) descarga el modelo si falta (la
@@ -3254,17 +3269,14 @@ mod tests {
         assert_eq!(download_eta_text(total, total, Some(rate)), "casi listo");
     }
 
-    /// El pie de confianza es honesto (R4): con la corrección en la nube
-    /// activa NO promete «nada sale de tu PC».
+    /// El aviso del pie es honesto (R4): con la corrección en la nube activa
+    /// NO promete «nada sale de tu PC» (y el texto local redundante ya no
+    /// existe en la UI: solo queda este aviso).
     #[test]
-    fn pie_de_confianza_no_miente_con_la_nube_activa() {
-        assert_eq!(
-            trust_footer_line(false),
-            "Transcripción local · nada sale de tu PC"
-        );
-        let con_nube = trust_footer_line(true);
-        assert!(con_nube.contains("nube"), "{con_nube}");
-        assert!(!con_nube.contains("nada sale"), "{con_nube}");
+    fn el_aviso_de_nube_no_miente() {
+        let aviso = CLOUD_CORRECTION_NOTICE;
+        assert!(aviso.contains("nube"), "{aviso}");
+        assert!(!aviso.contains("nada sale"), "{aviso}");
     }
 
     /// Los nombres del selector de proveedor (requisito 10/09/2026) son
