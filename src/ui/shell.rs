@@ -20,14 +20,14 @@
 
 use iced::widget::text::Shaping;
 use iced::widget::{
-    button, column, container, horizontal_rule, mouse_area, pick_list, row, text,
-    text_editor, toggler, Space,
+    button, column, container, horizontal_rule, mouse_area, pick_list, row, text, text_editor,
+    toggler, Space,
 };
 use iced::{Alignment, Element, Length, Padding};
 
 use crate::app::{
     feedback_is_warning, language_label, secondary_button, ui_text, Message, SettingsSection,
-    Status, WindowSection, WhisprApp, LANGUAGE_OPTIONS,
+    Status, WhisprApp, WindowSection, LANGUAGE_OPTIONS,
 };
 use crate::theme::{self, Chrome, DesignType};
 use crate::ui::icons;
@@ -44,9 +44,7 @@ const LEVEL_BARS: usize = 18;
 /// Alturas (px) de las barras del medidor en el diseño. Son la FORMA del
 /// medidor; la altura real de cada barra se escala con el nivel del micrófono
 /// (con el micro en silencio quedan en 3 px, el mínimo).
-const LEVEL_SHAPE: [u16; LEVEL_BARS] = [
-    3, 5, 7, 4, 10, 6, 4, 8, 5, 3, 6, 4, 8, 5, 3, 6, 4, 3,
-];
+const LEVEL_SHAPE: [u16; LEVEL_BARS] = [3, 5, 7, 4, 10, 6, 4, 8, 5, 3, 6, 4, 8, 5, 3, 6, 4, 3];
 
 impl WhisprApp {
     /// `Window bar` (40 px): título, control de tema y controles de ventana
@@ -168,19 +166,14 @@ impl WhisprApp {
         });
 
         container(
-            column![
-                brand,
-                nav,
-                Space::with_height(Length::Fill),
-                version,
-            ]
-            .spacing(32.0)
-            .padding(Padding {
-                top: 28.0,
-                right: 16.0,
-                bottom: 20.0,
-                left: 16.0,
-            }),
+            column![brand, nav, Space::with_height(Length::Fill), version,]
+                .spacing(32.0)
+                .padding(Padding {
+                    top: 28.0,
+                    right: 16.0,
+                    bottom: 20.0,
+                    left: 16.0,
+                }),
         )
         .width(theme::SIDEBAR_WIDTH)
         .height(Length::Fill)
@@ -198,7 +191,7 @@ impl WhisprApp {
     ) -> Element<'_, Message> {
         let heading = column![
             text("Dictado").size(ty.title).color(c.text),
-            text("Tu voz, convertida en texto. En tu equipo.")
+            text("Tu voz, convertida en texto.")
                 .size(ty.control)
                 .color(c.secondary),
         ]
@@ -265,7 +258,11 @@ impl WhisprApp {
         let mic = self.mic_ui(t);
         let dot_color = mic.color;
         let recording = matches!(self.status, Status::Recording);
-        let level = if recording { self.mic_level_percent() } else { 0 };
+        let level = if recording {
+            self.mic_level_percent()
+        } else {
+            0
+        };
 
         let record_button = button(
             container(icons::icon(icons::MIC, 30.0))
@@ -318,7 +315,9 @@ impl WhisprApp {
             }
             Status::Recording => {
                 let mut pista = row![
-                    text(format!("pico {level}%")).size(ty.chrome).color(c.faint),
+                    text(format!("pico {level}%"))
+                        .size(ty.chrome)
+                        .color(c.faint),
                     Space::with_width(Length::Fill),
                 ]
                 .align_y(Alignment::Center);
@@ -533,7 +532,9 @@ impl WhisprApp {
     }
 
     /// «Limpiar» con la confirmación armada de siempre (borrar la nota es
-    /// destructivo y explícito: primer clic arma, segundo borra).
+    /// destructivo y explícito: primer clic arma, segundo borra). Con la nota
+    /// vacía no hay nada que borrar: el botón sale DESHABILITADO (iced pinta
+    /// `Status::Disabled`, que ahora se ve apagado) en vez de activo.
     fn clear_control(&self, _ty: DesignType) -> Element<'_, Message> {
         if self.clear_armed {
             return row![
@@ -550,7 +551,7 @@ impl WhisprApp {
             .align_y(Alignment::Center)
             .into();
         }
-        button(
+        let limpiar = button(
             row![
                 icons::icon(icons::TRASH, 15.0),
                 ui_text("Limpiar").size(theme::FONT_SM),
@@ -558,15 +559,18 @@ impl WhisprApp {
             .spacing(7.0)
             .align_y(Alignment::Center),
         )
-        .on_press(Message::ClearPressed)
         .padding(Padding {
             top: 8.0,
             right: 12.0,
             bottom: 8.0,
             left: 12.0,
         })
-        .style(theme::secondary)
-        .into()
+        .style(theme::secondary);
+        if word_count(&self.transcript) > 0 {
+            limpiar.on_press(Message::ClearPressed).into()
+        } else {
+            limpiar.into()
+        }
     }
 
     /// «Otra vez» / «Escribir en app»: reinserción del último turno.
@@ -579,20 +583,19 @@ impl WhisprApp {
         if self.last_turn.is_empty() {
             secondary_button(label).into()
         } else {
-            secondary_button(label)
-                .on_press(Message::InjectLast)
-                .into()
+            secondary_button(label).on_press(Message::InjectLast).into()
         }
     }
 
-    /// «Copiar texto» (acción principal de la tarjeta).
+    /// «Copiar texto» (acción principal de la tarjeta). Sin texto no hay nada
+    /// que copiar: sale DESHABILITADO (no activo).
     fn copy_control(&self, _c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let label = if self.copied_at.is_some() {
             "✓ Copiado"
         } else {
             "Copiar texto"
         };
-        button(
+        let copiar = button(
             row![
                 icons::icon(icons::COPY, 16.0),
                 ui_text(label).size(ty.control),
@@ -600,15 +603,18 @@ impl WhisprApp {
             .spacing(8.0)
             .align_y(Alignment::Center),
         )
-        .on_press(Message::CopyTranscript)
         .padding(Padding {
             top: theme::ACTION_BUTTON_PADDING[0],
             right: theme::ACTION_BUTTON_PADDING[1],
             bottom: theme::ACTION_BUTTON_PADDING[0],
             left: theme::ACTION_BUTTON_PADDING[1],
         })
-        .style(theme::primary)
-        .into()
+        .style(theme::primary);
+        if word_count(&self.transcript) > 0 {
+            copiar.on_press(Message::CopyTranscript).into()
+        } else {
+            copiar.into()
+        }
     }
 
     /// Feedback del último turno (diff pendiente, corrección aplicada con
@@ -650,14 +656,12 @@ impl WhisprApp {
             .spacing(8.0)
             .align_y(Alignment::Center);
             if self.undo_state.is_some() {
-                fila = fila.push(
-                    secondary_button("↩ Deshacer").on_press(Message::UndoLastCorrection),
-                );
+                fila =
+                    fila.push(secondary_button("↩ Deshacer").on_press(Message::UndoLastCorrection));
             }
             if self.cleared_backup.is_some() {
                 fila = fila.push(
-                    secondary_button("↩ Deshacer borrado")
-                        .on_press(Message::UndoClearTranscript),
+                    secondary_button("↩ Deshacer borrado").on_press(Message::UndoClearTranscript),
                 );
             }
             return Some(fila.into());

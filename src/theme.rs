@@ -102,11 +102,11 @@ pub const WINDOW_BAR: Color = rgb!(0x15, 0x16, 0x1A); // barra de ventana propia
 pub const KEYCAP: Color = rgb!(0x24, 0x25, 0x2D); // keycaps de atajo, badges
 pub const NAV_ACTIVE: Color = rgb!(0x28, 0x23, 0x38); // nav activo (violeta tenue)
 pub const DIVIDER: Color = rgb!(0x27, 0x28, 0x2F); // separadores internos
-// Texto tenue (labels, versión, pistas): 11 px del diseño. MEDIDO: 4.54:1
-// sobre el fondo de ventana y sobre la sidebar, pero 4.25:1 sobre la tarjeta
-// y 4.44:1 sobre el campo — por debajo del AA 4.5:1 para texto pequeño (ver
-// `test` de contraste: la desviación queda registrada, no corregida por
-// cuenta propia, porque el valor viene del diseño).
+                                                   // Texto tenue (labels, versión, pistas): 11 px del diseño. MEDIDO: 4.54:1
+                                                   // sobre el fondo de ventana y sobre la sidebar, pero 4.25:1 sobre la tarjeta
+                                                   // y 4.44:1 sobre el campo — por debajo del AA 4.5:1 para texto pequeño (ver
+                                                   // `test` de contraste: la desviación queda registrada, no corregida por
+                                                   // cuenta propia, porque el valor viene del diseño).
 pub const FAINT: Color = rgb!(0x7F, 0x80, 0x8D);
 
 // Equivalentes en modo claro (el diseño de Figma es solo oscuro: estos tonos
@@ -356,7 +356,9 @@ impl PaletteField {
             PaletteField::SurfaceAlt => "Fondo al pasar el cursor sobre elementos.",
             PaletteField::Text => "Color principal del texto (≥ 4.5:1 sobre fondo y tarjeta).",
             PaletteField::Dim => "Texto secundario (labels, pistas). Mide ≥ 4.5:1 también.",
-            PaletteField::Accent => "Color de marca (botones primarios, foco,Checks). Acepta ≥ 3:1.",
+            PaletteField::Accent => {
+                "Color de marca (botones primarios, foco,Checks). Acepta ≥ 3:1."
+            }
             PaletteField::AccentHover => "Acento al pasar el cursor sobre el botón primario.",
             PaletteField::AccentText => "Acento usado como TEXTO normal (≥ 4.5:1 sobre fondo).",
             PaletteField::Ok => "Estados correctos (verde). Mide ≥ 4.5:1 como texto.",
@@ -422,11 +424,7 @@ pub fn resolve_palette(cfg: &Config, dark: bool) -> UiPalette {
     let Some(overrides) = cfg.palette.as_ref() else {
         return base;
     };
-    fn pick(
-        field: PaletteField,
-        overrides: &PaletteConfig,
-        default: Color,
-    ) -> Color {
+    fn pick(field: PaletteField, overrides: &PaletteConfig, default: Color) -> Color {
         let raw = match field {
             PaletteField::Bg => &overrides.bg,
             PaletteField::Surface => &overrides.surface,
@@ -441,9 +439,7 @@ pub fn resolve_palette(cfg: &Config, dark: bool) -> UiPalette {
             PaletteField::Err => &overrides.err,
             PaletteField::Border => &overrides.border,
         };
-        raw.as_deref()
-            .and_then(parse_hex)
-            .unwrap_or(default)
+        raw.as_deref().and_then(parse_hex).unwrap_or(default)
     }
     UiPalette {
         bg: pick(PaletteField::Bg, overrides, base.bg),
@@ -713,6 +709,48 @@ pub const ACTION_BUTTON_PADDING: [f32; 2] = [10.0, 12.0];
 pub const KEYCAP_PADDING: [f32; 2] = [4.0, 7.0];
 /// Alto de la barra de ventana propia (`Window bar` del diseño).
 pub const WINDOW_BAR_HEIGHT: f32 = 40.0;
+
+// ───────────── Rejilla única de las 5 pestañas de Ajustes (frame 3:604) ──────
+//
+// La consistencia NO se copia de una pantalla: se DERIVA de esta rejilla, que
+// es la única fuente de las medidas de las cinco pestañas (General,
+// Apariencia, Dictado, Corrección IA, Avanzado). Cero literales en la UI.
+// Todas las medidas salen del design context del frame Ajustes
+// (`design/openwhispr-figma/raw/metadata-arbol-capas.txt`):
+//
+//   nodo            medida
+//   3:638 / 3:639   contenido 916 px (márgenes de página de 40, en shell.rs)
+//   3:656 (Fila)    68 px de alto · rótulo en x=20 → inset horizontal 20
+//   3:657 (Rótulo)  columna de rótulo/ayuda 606 px
+//   3:660 / 3:667   250 px de ancho, x=646 → borde derecho x=896 (= inset 20)
+//   3:692 (Switch)  36×22, x=860 → el MISMO borde derecho x=896
+//   3:691 (Estado)  etiqueta de estado con borde derecho a 20 px del switch
+//   3:672           fila del modelo: 82 px (icono de 42 + 20 arriba y abajo)
+//   3:654           título de sección de 15 px, tarjeta a 10 px (y=25)
+//   3:653→3:670     separación entre secciones 20 px (161 → 181)
+//   3:642 / 3:643   pestaña de 43 px de alto, separación 28 px (x=0 → 113)
+pub const GRID_CONTENT_WIDTH: f32 = 916.0;
+pub const GRID_LABEL_WIDTH: f32 = 606.0;
+pub const GRID_CONTROL_WIDTH: f32 = 250.0;
+pub const GRID_ROW_HEIGHT: f32 = 68.0;
+pub const GRID_ROW_PAD_V: f32 = 15.0;
+pub const GRID_ROW_PAD_H: f32 = 20.0;
+pub const GRID_MODEL_ROW_HEIGHT: f32 = 82.0;
+pub const GRID_SECTION_GAP: f32 = 20.0;
+pub const GRID_SECTION_TITLE_GAP: f32 = 10.0;
+pub const GRID_TAB_HEIGHT: f32 = 43.0;
+pub const GRID_TAB_GAP: f32 = 28.0;
+pub const GRID_TOGGLE_SIZE: f32 = 22.0;
+/// Ancho del interruptor del diseño (nodo `3:692`). NO se aplica al widget:
+/// iced pinta el suyo al doble del alto (`size` × 2 = 44 px) y su layout
+/// ignora el ancho pedido, así que la app lleva el switch 8 px más ancho que
+/// el frame. Lo que la rejilla fija es su BORDE DERECHO, que sí coincide.
+pub const GRID_TOGGLE_WIDTH: f32 = 36.0;
+pub const GRID_TOGGLE_GAP: f32 = 20.0;
+/// Separación entre bloques de la página (cabecera → pestañas → contenido),
+/// nodo `3:639`: 22 px (92 → 114 y 157 → 179).
+pub const GRID_BLOCK_GAP: f32 = 22.0;
+
 /// Ancho de la barra lateral (`Sidebar` del diseño).
 pub const SIDEBAR_WIDTH: f32 = 204.0;
 /// Diámetro del botón circular de grabación (`Record button` del diseño).
@@ -864,7 +902,14 @@ pub fn custom(dark: bool) -> Theme {
 pub fn custom_with_palette(p: &UiPalette) -> Theme {
     Theme::custom(
         // El nombre no se usa para lógica; dejamos uno estable por modo.
-        format!("Silb — {}", if is_palette_dark(p) { "oscuro" } else { "claro" }),
+        format!(
+            "Silb — {}",
+            if is_palette_dark(p) {
+                "oscuro"
+            } else {
+                "claro"
+            }
+        ),
         Palette {
             background: p.bg,
             text: p.text,
@@ -1050,9 +1095,7 @@ pub fn keycap(theme: &Theme) -> container::Style {
 pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     let c = chrome(theme);
     let bg = match status {
-        button::Status::Hovered | button::Status::Pressed => {
-            Some(Background::Color(c.keycap))
-        }
+        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(c.keycap)),
         _ => None,
     };
     button::Style {
@@ -1071,9 +1114,7 @@ pub fn nav_item(theme: &Theme, status: button::Status, active: bool) -> button::
         Some(Background::Color(c.nav_active))
     } else {
         match status {
-            button::Status::Hovered | button::Status::Pressed => {
-                Some(Background::Color(c.keycap))
-            }
+            button::Status::Hovered | button::Status::Pressed => Some(Background::Color(c.keycap)),
             _ => None,
         }
     };
@@ -1195,12 +1236,18 @@ pub fn flat(theme: &Theme) -> container::Style {
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
     let bg = match status {
+        button::Status::Disabled => t.surface_alt,
         button::Status::Hovered | button::Status::Pressed => t.accent_hover,
-        _ => t.accent,
+        button::Status::Active => t.accent,
+    };
+    let fg = if matches!(status, button::Status::Disabled) {
+        chrome(theme).faint
+    } else {
+        INK_ON_ACCENT
     };
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color: INK_ON_ACCENT,
+        text_color: fg,
         border: border(Color::TRANSPARENT, 0.0, RADIUS_SM),
         shadow: Shadow::default(),
     }
@@ -1229,11 +1276,15 @@ pub const FIELD_PADDING: Padding = Padding {
 pub const AUX_COL_WIDTH: f32 = 64.0;
 
 /// Botón secundario (acciones discretas): transparente, texto dim → texto al hover.
+/// `Disabled` (un botón sin `on_press`): texto aún más apagado, para que se
+/// VEA que la acción no está disponible (iced da `Status::Disabled` cuando el
+/// botón no tiene mensaje al pulsar).
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
     let (bg, fg) = match status {
+        button::Status::Disabled => (None, chrome(theme).faint),
         button::Status::Hovered | button::Status::Pressed => (Some(t.surface_alt), t.text),
-        _ => (None, t.dim),
+        button::Status::Active => (None, t.dim),
     };
     button::Style {
         background: bg.map(Background::Color),
@@ -1463,12 +1514,22 @@ mod tests {
             panic!("el subrayado debe ser un gradiente");
         };
         let stops: Vec<_> = linear.stops.iter().flatten().collect();
-        assert_eq!(stops.len(), 4, "dos paradas para la franja y dos para el resto");
+        assert_eq!(
+            stops.len(),
+            4,
+            "dos paradas para la franja y dos para el resto"
+        );
         assert_eq!(stops[0].offset, 0.0);
-        assert_eq!(stops[0].color, DARK.accent_hover, "la franja va en el acento activo");
+        assert_eq!(
+            stops[0].color, DARK.accent_hover,
+            "la franja va en el acento activo"
+        );
         assert!((stops[1].offset - 2.0 / 43.0).abs() < 1e-6);
         assert_eq!(stops[1].color, stops[0].color, "la franja es maciza");
-        assert!(stops[2].color.a < 0.01, "por encima de la franja, transparente");
+        assert!(
+            stops[2].color.a < 0.01,
+            "por encima de la franja, transparente"
+        );
 
         // Sin ser la activa no se pinta nada.
         let Background::Gradient(Gradient::Linear(inactive)) = tab_underline(&th, false, 43.0)
@@ -1490,6 +1551,61 @@ mod tests {
         for s in [SPACE_2, SPACE_3, SPACE_4, SPACE_5, SPACE_6] {
             assert_eq!(s % 8, 0, "spacing {s} debe ser múltiplo de 8");
         }
+    }
+
+    /// La rejilla de las 5 pestañas de Ajustes cuadra con el frame `3:604`:
+    /// el contenido de 916 px = inset 20 + rótulo 606 + hueco 20 + control 250
+    /// + inset 20. Si alguien mueve una pieza, la fila deja de cuadrar con el
+    /// diseño y el test lo canta antes de que se vea descuadrado en la UI.
+    #[test]
+    fn la_rejilla_de_ajustes_cuadra_con_el_frame_3604() {
+        assert_eq!(
+            GRID_ROW_PAD_H
+                + GRID_LABEL_WIDTH
+                + GRID_ROW_PAD_H
+                + GRID_CONTROL_WIDTH
+                + GRID_ROW_PAD_H,
+            GRID_CONTENT_WIDTH,
+            "rótulo + control + insets deben sumar el contenido de 916 px"
+        );
+        // El interruptor (36×22, nodo 3:692) cae DENTRO de la columna de
+        // control de 250 y comparte su borde derecho (x=214 dentro de la caja).
+        // iced lo pinta 8 px más ancho (44 = size×2): se queda como está y se
+        // reporta; lo que la rejilla fija es el borde derecho.
+        assert_eq!(GRID_TOGGLE_WIDTH, 36.0, "nodo 3:692");
+        assert_eq!(GRID_TOGGLE_SIZE, 22.0, "nodo 3:692");
+        assert_eq!(GRID_CONTROL_WIDTH - GRID_TOGGLE_WIDTH, 214.0);
+        // Fila: 15 + 38 (rótulo + ayuda) + 15 = 68 (nodo 3:656).
+        assert_eq!(GRID_ROW_PAD_V * 2.0 + 38.0, GRID_ROW_HEIGHT);
+        // Pestañas y separaciones del frame.
+        assert_eq!(GRID_TAB_HEIGHT, 43.0, "nodo 3:642");
+        assert_eq!(GRID_TAB_GAP, 28.0, "x=0 → 113, nodo 3:642");
+        assert_eq!(GRID_SECTION_GAP, 20.0, "nodos 3:653 → 3:670");
+        assert_eq!(GRID_SECTION_TITLE_GAP, 10.0, "y=0 → 25, nodo 3:654");
+    }
+
+    /// Un botón sin acción (iced entrega `Status::Disabled`) no puede verse
+    /// igual que uno activo: es el requisito de coherencia de estado.
+    #[test]
+    fn el_boton_deshabilitado_se_ve_distinto() {
+        reset_palette_override();
+        let th = custom(true);
+        let sec_act = secondary(&th, button::Status::Active);
+        let sec_dis = secondary(&th, button::Status::Disabled);
+        assert_ne!(sec_act.text_color, sec_dis.text_color);
+        assert_eq!(sec_dis.text_color, chrome(&th).faint);
+        assert!(
+            sec_dis.background.is_none(),
+            "el secundario deshabilitado no lleva relleno"
+        );
+        let pri_act = primary(&th, button::Status::Active);
+        let pri_dis = primary(&th, button::Status::Disabled);
+        assert_ne!(
+            format!("{:?}", pri_act.background),
+            format!("{:?}", pri_dis.background),
+            "el primario deshabilitado no puede llevar el relleno de acento"
+        );
+        assert_ne!(pri_act.text_color, pri_dis.text_color);
     }
 
     #[test]
@@ -1564,7 +1680,10 @@ mod tests {
         assert_eq!(dark.accent_active, ACCENT_HOVER);
 
         let light = chrome(&custom(false));
-        assert_ne!(light.sidebar, dark.sidebar, "el chrome también tiene modo claro");
+        assert_ne!(
+            light.sidebar, dark.sidebar,
+            "el chrome también tiene modo claro"
+        );
         assert_eq!(light.sidebar, SIDEBAR_LIGHT);
         assert_eq!(light.card, SURFACE_LIGHT);
 
@@ -1799,7 +1918,7 @@ mod tests {
         assert_eq!(c2.r, 1.0); // f → ff
         assert_eq!(c2.g, 0.0); // 0 → 00
         assert!((c2.b - 170.0 / 255.0).abs() < 0.001); // a → aa
-        // Sin `#`, lowercase.
+                                                       // Sin `#`, lowercase.
         let c3 = parse_hex("7c6cff").unwrap();
         assert_eq!(c3.r, 0x7C as f32 / 255.0);
         assert_eq!(c3.g, 0x6C as f32 / 255.0);
@@ -1821,18 +1940,30 @@ mod tests {
         assert!(parse_hex("#FF").is_none());
         assert!(parse_hex("#FFFF").is_none()); // 4 = ARGB hex CSS, NO lo aceptamos
         assert!(parse_hex("#FFFFFFFF").is_none()); // 8 dígitos con alpha no es editable
-        // Caracteres no hex.
+                                                   // Caracteres no hex.
         assert!(parse_hex("#GGGGGG").is_none());
         assert!(parse_hex("#XX00FF").is_none());
         assert!(parse_hex("no es hex").is_none());
         assert!(parse_hex("##").is_none());
         // NUNCA panic; la app puede llamar a esto desde UI sin try/catch.
         let opts = [
-            "", "#", "#FF", "#FFFF", "#FFFFFFFF", "#GGGGGG",
-            "no es hex", "##", "  ", "0xZZ", "café",
+            "",
+            "#",
+            "#FF",
+            "#FFFF",
+            "#FFFFFFFF",
+            "#GGGGGG",
+            "no es hex",
+            "##",
+            "  ",
+            "0xZZ",
+            "café",
         ];
         for opt in opts {
-            assert!(parse_hex(opt).is_none(), "parse_hex({opt:?}) debería ser None");
+            assert!(
+                parse_hex(opt).is_none(),
+                "parse_hex({opt:?}) debería ser None"
+            );
         }
     }
 
@@ -1922,9 +2053,7 @@ mod tests {
         // Cada campo debe coincidir con el original (con tolerancia epsilon
         // por el redondeo de f32 → u8 → f32).
         fn approx(a: Color, b: Color) -> bool {
-            (a.r - b.r).abs() < 0.01
-                && (a.g - b.g).abs() < 0.01
-                && (a.b - b.b).abs() < 0.01
+            (a.r - b.r).abs() < 0.01 && (a.g - b.g).abs() < 0.01 && (a.b - b.b).abs() < 0.01
         }
         for (field, (orig, res)) in [
             ("bg", (original.bg, resolved.bg)),
@@ -1933,7 +2062,10 @@ mod tests {
             ("text", (original.text, resolved.text)),
             ("dim", (original.dim, resolved.dim)),
             ("accent", (original.accent, resolved.accent)),
-            ("accent_hover", (original.accent_hover, resolved.accent_hover)),
+            (
+                "accent_hover",
+                (original.accent_hover, resolved.accent_hover),
+            ),
             ("accent_text", (original.accent_text, resolved.accent_text)),
             ("ok", (original.ok, resolved.ok)),
             ("warn", (original.warn, resolved.warn)),
@@ -1964,7 +2096,10 @@ mod tests {
         let bajo = Color::from_rgb(0.5, 0.5, 0.5);
         let fondo = Color::from_rgb(0.5, 0.5, 0.5);
         let ratio = contrast_ratio(bajo, fondo);
-        assert!(ratio < 3.0, "mismo gris sobre mismo gris debe ser <3:1, midió {ratio:.2}");
+        assert!(
+            ratio < 3.0,
+            "mismo gris sobre mismo gris debe ser <3:1, midió {ratio:.2}"
+        );
         // Combinación legible: blanco sobre negro.
         assert!(contrast_ratio(Color::WHITE, Color::BLACK) >= 3.0);
         // Texto blanco sobre fondo blanco: contraste = 1:1 (ilegible).

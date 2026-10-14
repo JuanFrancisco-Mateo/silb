@@ -24,7 +24,7 @@
 use iced::border::Radius;
 use iced::font::Weight;
 use iced::widget::{
-    button, checkbox, column, container, horizontal_rule, pick_list, row, scrollable, slider, text,
+    button, column, container, horizontal_rule, pick_list, row, scrollable, slider, text,
     text_input, toggler, Column, Row, Space,
 };
 use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding};
@@ -41,13 +41,10 @@ use crate::theme::{self, Chrome, DesignType, UiPalette};
 use crate::transcribe::Model;
 use crate::ui::icons;
 
-/// Ancho de los controles de una fila de preferencia (el `Selection` de 250 px
-/// del frame Ajustes).
-const CONTROL_WIDTH: f32 = 250.0;
-
-/// Alto de la caja de una pestaña de Ajustes (el `Settings navigation` del
-/// frame mide 43 px).
-const TAB_BOX_HEIGHT: f32 = 43.0;
+/// Ancho de la columna de control (nodo `3:660`, el `Selection` de 250 px del
+/// frame Ajustes). Sale de [`theme::GRID_CONTROL_WIDTH`]: en esta vista no se
+/// escribe ni una medida a mano.
+const CONTROL_WIDTH: f32 = theme::GRID_CONTROL_WIDTH;
 
 /// Peso `Medium` para los rótulos del diseño (la app no bundlea Inter: se le
 /// pide el peso al family por defecto del sistema, ver `fonts.rs`).
@@ -59,7 +56,7 @@ fn medium() -> Font {
 }
 
 /// Rótulo de sección del diseño (12 px, secundario) + su tarjeta, separados
-/// por los 10 px que mide el frame.
+/// por los 10 px que mide el frame (nodo `3:654`).
 fn section_block<'a>(
     label: &str,
     card: Element<'a, Message>,
@@ -73,7 +70,7 @@ fn section_block<'a>(
             .color(c.secondary),
         card,
     ]
-    .spacing(10.0)
+    .spacing(theme::GRID_SECTION_TITLE_GAP)
     .width(Length::Fill)
     .into()
 }
@@ -89,11 +86,69 @@ fn design_card<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
         }
         card = card.push(row);
     }
-    container(card).width(Length::Fill).style(theme::card).into()
+    container(card)
+        .width(Length::Fill)
+        .style(theme::card)
+        .into()
 }
 
-/// Fila de preferencia del diseño (68 px, px 20 / py 15): rótulo 14 px medium
-/// con su ayuda 12 px tenue a la izquierda y el control a la derecha.
+/// Columna de control de la rejilla: ancho FIJO (nodo `3:660`, 250 px) con el
+/// control pegado a su borde derecho. Es lo que hace que selects, campos,
+/// botones, interruptores e iconos de acción terminen en la MISMA x en las 5
+/// pestañas (el `Selection` de `3:667` comparte borde derecho con el switch de
+/// `3:692` y con el botón `Action` de `3:682`).
+fn control_slot<'a>(control: Element<'a, Message>) -> Element<'a, Message> {
+    container(control)
+        .width(Length::Fixed(CONTROL_WIDTH))
+        .align_x(Alignment::End)
+        .into()
+}
+
+/// Interruptor de la rejilla: el switch pegado al borde derecho de la columna
+/// (nodo `3:692`: 36×22 con su borde derecho en la misma x que los selects) y,
+/// si lo hay, el texto de estado a su izquierda (nodo `3:691`, borde derecho a
+/// 20 px del switch). La fila es de ancho propio y la alinea `control_slot`, así
+/// que un estado más largo («Desactivada») NO desplaza el switch.
+fn toggle_control<'a>(
+    state: Option<&str>,
+    value: bool,
+    on_toggle: impl Fn(bool) -> Message + 'a,
+    c: Chrome,
+    ty: DesignType,
+) -> Element<'a, Message> {
+    let switch = toggler(value)
+        .on_toggle(on_toggle)
+        .size(theme::GRID_TOGGLE_SIZE)
+        // iced reserva `spacing`/2 = 8 px para su etiqueta interna aunque no la
+        // use: sin ponerlo a 0, el switch dibujado queda 8 px antes del borde
+        // derecho de la columna.
+        .spacing(0.0)
+        .style(theme::toggler);
+    match state {
+        Some(state) => row![
+            text(state.to_string())
+                .size(ty.chrome)
+                .color(c.faint)
+                .align_x(Alignment::End),
+            switch,
+        ]
+        .spacing(theme::GRID_TOGGLE_GAP)
+        .align_y(Alignment::Center)
+        .into(),
+        None => row![switch].align_y(Alignment::Center).into(),
+    }
+}
+
+/// Hueco de la columna de control para las filas informativas (sin control):
+/// el rótulo conserva los 606 px de la rejilla (nodo `3:657`).
+fn no_control<'a>() -> Element<'a, Message> {
+    Space::new(0.0, 0.0).into()
+}
+
+/// Fila de preferencia de la rejilla (nodo `3:656`, 68 px): rótulo de 14 px
+/// medium con su ayuda de 12 px tenue a la izquierda y el control en la columna
+/// fija de la derecha, centrado verticalmente. Alto FIJO: la ayuda es de UNA
+/// línea; las explicaciones largas van en [`note_row`].
 fn preference_row<'a>(
     label: &str,
     help: Option<&str>,
@@ -106,39 +161,51 @@ fn preference_row<'a>(
         .font(medium())
         .color(c.text)]
     .spacing(4.0)
-    .width(Length::Fill);
+    .width(Length::Fixed(theme::GRID_LABEL_WIDTH));
     if let Some(help) = help {
         left = left.push(text(help.to_string()).size(ty.body).color(c.faint));
     }
     container(
-        row![left, control]
-            .spacing(20.0)
+        row![left, control_slot(control)]
+            .spacing(theme::GRID_ROW_PAD_H)
             .align_y(Alignment::Center)
             .width(Length::Fill),
     )
     .width(Length::Fill)
-    .height(Length::Fixed(68.0))
-    .padding(Padding {
-        top: 15.0,
-        right: 20.0,
-        bottom: 15.0,
-        left: 20.0,
-    })
+    .height(Length::Fixed(theme::GRID_ROW_HEIGHT))
+    .padding(row_padding())
     .into()
 }
 
+/// Explicación larga de la app (el diseño no las trae): mismo inset horizontal
+/// que las filas (nodo `3:656`, x=20) y alto del contenido, para que el texto
+/// pueda ocupar las líneas que necesite sin recortarse en una fila de 68 px.
+fn note_row<'a>(content: &str, color: Color, ty: DesignType) -> Element<'a, Message> {
+    container(text(content.to_string()).size(ty.body).color(color))
+        .width(Length::Fill)
+        .padding(row_padding())
+        .into()
+}
+
+/// Inset de una fila de tarjeta: 15 px arriba y abajo, 20 a los lados (nodo
+/// `3:656`: rótulo en x=20, y=15). Uno solo para todas las filas de las 5
+/// pestañas.
+fn row_padding() -> Padding {
+    Padding {
+        top: theme::GRID_ROW_PAD_V,
+        right: theme::GRID_ROW_PAD_H,
+        bottom: theme::GRID_ROW_PAD_V,
+        left: theme::GRID_ROW_PAD_H,
+    }
+}
+
 /// Fila de tarjeta sin control a la derecha: el contenido ocupa todo el ancho
-/// (listas, formularios y textos largos) con el mismo inset que las filas de
+/// (listas, formularios y compuestos) con el mismo inset que las filas de
 /// preferencia.
 fn wide_row<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     container(content)
         .width(Length::Fill)
-        .padding(Padding {
-            top: 15.0,
-            right: 20.0,
-            bottom: 15.0,
-            left: 20.0,
-        })
+        .padding(row_padding())
         .into()
 }
 
@@ -177,7 +244,7 @@ impl WhisprApp {
             body,
             self.settings_footer(c, ty),
         ]
-        .spacing(22.0)
+        .spacing(theme::GRID_BLOCK_GAP)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
@@ -309,17 +376,14 @@ impl WhisprApp {
         let model = self.config.selected_model();
         let model_label = model.label().to_string();
         let model_size = model.approx_mb();
-        let model_control: Element<'_, Message> = pick_list(
-            Model::all().to_vec(),
-            Some(model),
-            Message::ModelSelected,
-        )
-        .placeholder("Modelo")
-        .width(Length::Fixed(CONTROL_WIDTH))
-        .text_size(ty.control)
-        .padding(theme::FIELD_PADDING)
-        .style(theme::pick_list)
-        .into();
+        let model_control: Element<'_, Message> =
+            pick_list(Model::all().to_vec(), Some(model), Message::ModelSelected)
+                .placeholder("Modelo")
+                .width(Length::Fixed(CONTROL_WIDTH))
+                .text_size(ty.control)
+                .padding(theme::FIELD_PADDING)
+                .style(theme::pick_list)
+                .into();
         let model_tile = container(icons::icon(icons::CPU, 21.0))
             .width(42.0)
             .height(42.0)
@@ -334,25 +398,35 @@ impl WhisprApp {
                 },
                 ..container::Style::default()
             });
+        // Fila del modelo instalado (nodo `3:672`): 82 px = icono de 42 px + 20
+        // arriba y abajo; el botón/selector de la derecha acaba en el mismo
+        // borde que la columna de control de la rejilla (`3:682` x=770 → 896).
         let model_row = container(
             row![
                 model_tile,
                 column![
                     text(model_label).size(ty.nav).font(medium()).color(c.text),
-                    text(format!("{model_size} MB · Se ejecuta sin conexión"))
+                    text(format!("{model_size} MB"))
                         .size(ty.body)
                         .color(c.faint),
                 ]
                 .spacing(5.0)
                 .width(Length::Fill),
-                model_control,
+                control_slot(model_control),
             ]
             .spacing(16.0)
             .align_y(Alignment::Center)
             .width(Length::Fill),
         )
         .width(Length::Fill)
-        .padding(20.0);
+        .height(Length::Fixed(theme::GRID_MODEL_ROW_HEIGHT))
+        .align_y(Alignment::Center)
+        .padding(Padding {
+            top: 0.0,
+            right: theme::GRID_ROW_PAD_H,
+            bottom: 0.0,
+            left: theme::GRID_ROW_PAD_H,
+        });
         col = col.push(section_block(
             "Modelo de voz",
             design_card(vec![model_row.into()]),
@@ -362,28 +436,34 @@ impl WhisprApp {
 
         // ── Al terminar el dictado ──────────────────────────────────────
         let ai_enabled = self.config.ai_correction_enabled();
-        let ai_control: Element<'_, Message> = row![
-            text(if ai_enabled { "Activada" } else { "Desactivada" })
-                .size(ty.chrome)
-                .color(c.faint),
-            toggler(ai_enabled)
-                .on_toggle(Message::ToggleAiCorrection)
-                .size(22.0)
-                .style(theme::toggler),
-        ]
-        .spacing(20.0)
-        .align_y(Alignment::Center)
-        .into();
-        let cleanup_control: Element<'_, Message> = toggler(self.config.cleanup_enabled())
-            .on_toggle(Message::ToggleCleanup)
-            .size(22.0)
-            .style(theme::toggler)
-            .into();
-        let inject_control: Element<'_, Message> = toggler(self.config.auto_inject.unwrap_or(true))
-            .on_toggle(Message::ToggleAutoInject)
-            .size(22.0)
-            .style(theme::toggler)
-            .into();
+        // Interruptores de la rejilla: el switch siempre en la columna de
+        // control y el estado («Activada»/«Desactivada») a su izquierda, que
+        // no lo desplaza (nodos `3:691` y `3:692`).
+        let ai_control = toggle_control(
+            Some(if ai_enabled {
+                "Activada"
+            } else {
+                "Desactivada"
+            }),
+            ai_enabled,
+            Message::ToggleAiCorrection,
+            c,
+            ty,
+        );
+        let cleanup_control = toggle_control(
+            None,
+            self.config.cleanup_enabled(),
+            Message::ToggleCleanup,
+            c,
+            ty,
+        );
+        let inject_control = toggle_control(
+            None,
+            self.config.auto_inject.unwrap_or(true),
+            Message::ToggleAutoInject,
+            c,
+            ty,
+        );
         col = col.push(section_block(
             "Al terminar el dictado",
             design_card(vec![
@@ -499,400 +579,383 @@ impl WhisprApp {
     }
 
     /// ── Sección «Apariencia» ────────────────────────────────────────────
-    /// Tema (global) y todo lo relativo a la burbuja flotante: estilo,
-    /// tamaño, esquina, opacidad y auto-ocultar. La fuente va aquí porque
-    /// es un ajuste visual y la regla de producto dice que cada opción
-    /// técnica necesita label claro + ayuda corta, y la fuente es el
-    /// ajuste visual más impactante de la app.
+    /// Tema, burbuja flotante, imágenes propias y paleta editable, con la MISMA
+    /// rejilla que General (columna de control de 250 px, filas de 68 px,
+    /// tarjetas con el mismo radio, borde e inset). Es la pestaña que se había
+    /// quedado con las medidas viejas: controles a lo ancho de la fila y
+    /// ayudas sueltas fuera de la columna del rótulo.
     pub(crate) fn settings_section_appearance(
         &self,
-        _c: Chrome,
-        _ty: DesignType,
+        c: Chrome,
+        ty: DesignType,
         t: &UiPalette,
     ) -> Element<'_, Message> {
         let fs = theme::font_sizes(self.config.font_size().factor());
         let mut col = Column::new()
-            .spacing(theme::SPACE_2)
+            .spacing(theme::GRID_SECTION_GAP)
             .width(Length::Fill);
-        col = col.push(
-            text("Tema")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        col = col.push(
-            row![
-                text("Tema")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [ThemeMode::Auto, ThemeMode::Claro, ThemeMode::Oscuro].to_vec(),
-                    Some(self.config.theme_mode()),
-                    Message::ThemeModeChanged,
-                )
-                .placeholder("Tema")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-                if self.config.theme_mode() == ThemeMode::Auto {
-                    text("sigue a Windows").size(fs.xxs).color(t.dim)
-                } else {
-                    text("").size(fs.xxs).color(t.dim)
-                },
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            row![
-                text("Fuente")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        FontSize::Small,
-                        FontSize::Normal,
-                        FontSize::Large,
-                        FontSize::XLarge,
-                    ]
-                    .to_vec(),
-                    Some(self.config.font_size()),
-                    Message::FontSizeChanged,
-                )
-                .placeholder("Tamaño de fuente")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-                text(format!("{}×", self.config.font_size().factor()))
-                    .size(fs.xxs)
-                    .color(t.dim),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text("Burbuja flotante")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        col = col.push(
-            row![
-                text("Estilo")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [BubbleStyle::Solid, BubbleStyle::Ring, BubbleStyle::Minimal].to_vec(),
-                    Some(self.config.bubble_style()),
-                    Message::BubbleStyleChanged,
-                )
-                .placeholder("Estilo")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            row![
-                text("Tamaño")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [BubbleSize::Small, BubbleSize::Mid, BubbleSize::Large].to_vec(),
-                    Some(self.config.bubble_size()),
-                    Message::BubbleSizeChanged,
-                )
-                .placeholder("Tamaño")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            row![
-                text("Esquina")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        BubbleCorner::TopRight,
-                        BubbleCorner::TopLeft,
-                        BubbleCorner::BottomRight,
-                        BubbleCorner::BottomLeft,
-                    ]
-                    .to_vec(),
-                    Some(self.config.bubble_corner()),
-                    Message::BubbleCornerChanged,
-                )
-                .placeholder("Esquina")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        // Opacidad: slider 20–100 %; el getter clampea aunque el slider
-        // nunca emita fuera de rango.
+
+        // ── Tema ────────────────────────────────────────────────────────
+        // El aviso «sigue a Windows» y el factor de fuente eran textos sueltos
+        // tras el select: pasan a la ayuda de su fila (nodo `3:659`), que es
+        // donde el diseño pone la descripción.
+        let theme_help = if self.config.theme_mode() == ThemeMode::Auto {
+            Some("sigue a Windows")
+        } else {
+            None
+        };
+        let font_help = format!("{}×", self.config.font_size().factor());
+        col = col.push(section_block(
+            "Tema",
+            design_card(vec![
+                preference_row(
+                    "Tema",
+                    theme_help,
+                    pick_list(
+                        [ThemeMode::Auto, ThemeMode::Claro, ThemeMode::Oscuro].to_vec(),
+                        Some(self.config.theme_mode()),
+                        Message::ThemeModeChanged,
+                    )
+                    .placeholder("Tema")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Fuente",
+                    Some(&font_help),
+                    pick_list(
+                        [
+                            FontSize::Small,
+                            FontSize::Normal,
+                            FontSize::Large,
+                            FontSize::XLarge,
+                        ]
+                        .to_vec(),
+                        Some(self.config.font_size()),
+                        Message::FontSizeChanged,
+                    )
+                    .placeholder("Tamaño de fuente")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
+                    c,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
+
+        // ── Burbuja flotante ────────────────────────────────────────────
+        // Los controles ya no ocupan la fila entera: van en la columna de
+        // control (los selects) o dentro de ella (los sliders), con el valor
+        // en el rótulo.
         let op = u32::from(self.config.bubble_opacity());
-        col = col.push(
-            row![
-                text(format!("Opacidad: {op}%"))
-                    .size(fs.sm)
-                    .color(t.text)
-                    .width(Length::Fixed(120.0)),
-                slider(20..=100, op, Message::BubbleOpacityChanged)
-                    .step(1u32)
-                    .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            row![
-                text("Auto-ocultar")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        BubbleHideTimeout::Never,
-                        BubbleHideTimeout::S5,
-                        BubbleHideTimeout::S10,
-                        BubbleHideTimeout::S30,
-                        BubbleHideTimeout::S60,
-                    ]
-                    .to_vec(),
-                    Some(self.config.bubble_hide_timeout()),
-                    Message::BubbleHideTimeoutChanged,
-                )
-                .placeholder("Auto-ocultar")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        // ── Personalización III: imágenes del usuario ──────────────────────
-        col = col.push(self.settings_section_images(t, fs));
-        // ── Personalización II: paleta editable ─────────────────────────────
-        col = col.push(self.settings_section_palette(t, fs));
-        // El diseño del frame Ajustes no define esta pestaña: se le da la
-        // misma tarjeta que a las secciones del frame y su contenido se queda
-        // como estaba.
-        design_card(vec![wide_row(col.into())])
+        col = col.push(section_block(
+            "Burbuja flotante",
+            design_card(vec![
+                preference_row(
+                    "Estilo",
+                    None,
+                    pick_list(
+                        [BubbleStyle::Solid, BubbleStyle::Ring, BubbleStyle::Minimal].to_vec(),
+                        Some(self.config.bubble_style()),
+                        Message::BubbleStyleChanged,
+                    )
+                    .placeholder("Estilo")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Tamaño",
+                    None,
+                    pick_list(
+                        [BubbleSize::Small, BubbleSize::Mid, BubbleSize::Large].to_vec(),
+                        Some(self.config.bubble_size()),
+                        Message::BubbleSizeChanged,
+                    )
+                    .placeholder("Tamaño")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Esquina",
+                    None,
+                    pick_list(
+                        [
+                            BubbleCorner::TopRight,
+                            BubbleCorner::TopLeft,
+                            BubbleCorner::BottomRight,
+                            BubbleCorner::BottomLeft,
+                        ]
+                        .to_vec(),
+                        Some(self.config.bubble_corner()),
+                        Message::BubbleCornerChanged,
+                    )
+                    .placeholder("Esquina")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
+                    c,
+                    ty,
+                ),
+                // Opacidad: slider 20–100 %; el getter clampea aunque el slider
+                // nunca emita fuera de rango.
+                preference_row(
+                    &format!("Opacidad: {op}%"),
+                    None,
+                    slider(20..=100, op, Message::BubbleOpacityChanged)
+                        .step(1u32)
+                        .width(Length::Fixed(CONTROL_WIDTH))
+                        .into(),
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Auto-ocultar",
+                    None,
+                    pick_list(
+                        [
+                            BubbleHideTimeout::Never,
+                            BubbleHideTimeout::S5,
+                            BubbleHideTimeout::S10,
+                            BubbleHideTimeout::S30,
+                            BubbleHideTimeout::S60,
+                        ]
+                        .to_vec(),
+                        Some(self.config.bubble_hide_timeout()),
+                        Message::BubbleHideTimeoutChanged,
+                    )
+                    .placeholder("Auto-ocultar")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
+                    c,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
+
+        // ── Imágenes (Personalización III) ──────────────────────────────
+        col = col.push(section_block(
+            "Imágenes",
+            design_card(self.settings_section_images(c, ty, t)),
+            c,
+            ty,
+        ));
+        // ── Paleta (Personalización II) ─────────────────────────────────
+        col = col.push(section_block(
+            "Paleta",
+            self.settings_palette_card(c, ty, t, fs),
+            c,
+            ty,
+        ));
+        col.into()
     }
 
-    /// Bloque «Imágenes» dentro de Apariencia (Personalización III): el
-    /// usuario puede elegir su propia imagen de fondo de la ventana y un
-    /// sprite (estático o animado por frames) para la burbuja. Las rutas
-    /// se persisten como dato (nunca hardcoded); si fallan al renderizar,
-    /// el getter correspondiente devuelve `None` y la app pinta el
-    /// render por defecto (sin ventana negra ni crash). El botón
-    /// «Quitar» de cada control limpia la ruta en `config.json` y deja
-    /// el aspecto original.
+    /// Filas de la tarjeta «Imágenes» dentro de Apariencia (Personalización
+    /// III): el usuario puede elegir su propia imagen de fondo de la ventana y
+    /// un sprite (estático o animado por frames) para la burbuja. Las rutas se
+    /// persisten como dato (nunca hardcoded); si fallan al renderizar, el
+    /// getter correspondiente devuelve `None` y la app pinta el render por
+    /// defecto (sin ventana negra ni crash). El botón «Quitar» de cada control
+    /// limpia la ruta en `config.json` y deja el aspecto original.
+    ///
+    /// Devuelve FILAS de tarjeta (no un `Element`): la rejilla de las 5
+    /// pestañas las coloca con el mismo inset que todas las demás, y las rutas
+    /// y explicaciones largas van en `note_row` (una fila de 68 px solo aguanta
+    /// una línea de ayuda).
     pub(crate) fn settings_section_images(
         &self,
+        c: Chrome,
+        ty: DesignType,
         t: &UiPalette,
-        fs: theme::FontSizes,
-    ) -> Element<'_, Message> {
-        let mut col = Column::new()
-            .spacing(theme::SPACE_2)
-            .width(Length::Fill);
+    ) -> Vec<Element<'_, Message>> {
+        let fs = theme::font_sizes(self.config.font_size().factor());
+        let mut rows: Vec<Element<'_, Message>> = vec![note_row(
+            "Tu propia imagen de fondo y un sprite (estático o animado por \
+             frames) para la burbuja. Si el archivo no existe o no es una \
+             imagen soportada, la app vuelve al aspecto original.",
+            c.faint,
+            ty,
+        )];
 
-        // Título.
-        col = col.push(
-            text("Imágenes")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        // Subtítulo: la regla del producto «toda opción técnica necesita
-        // label claro + ayuda corta». Lo técnico vive detrás de
-        // «Ajustes avanzados», pero aquí la regla también aplica
-        // (el formato de frames es una decisión de producto, no de
-        // motor).
-        col = col.push(
-            text("Tu propia imagen de fondo y un sprite (estático o \
-                  animado por frames) para la burbuja. Si el archivo \
-                  no existe o no es una imagen soportada, la app \
-                  vuelve al aspecto original.")
-                .size(fs.xxs)
-                .color(t.dim),
-        );
-
-        // ── Imagen de fondo ──────────────────────────────────────────────
+        // ── Imagen de fondo de la ventana ────────────────────────────────
         let bg_label = match self.config.bg_image_path() {
             Some(p) => p,
             None => "(sin imagen; usando el fondo del tema)",
         };
-        col = col.push(
-            row![
-                text("Fondo de la ventana")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(160.0)),
-                button(text("Elegir…").size(fs.xxs))
-                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
-                    .on_press(Message::BgImageBrowse)
-                    .style(theme::secondary),
-                button(text("Quitar").size(fs.xxs))
-                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
-                    .on_press(Message::BgImageClear)
-                    .style(theme::secondary),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(format!("Ruta actual: {}", bg_label))
-                .size(fs.xxs)
-                .color(t.dim),
-        );
+        rows.push(preference_row(
+            "Fondo de la ventana",
+            None,
+            self.image_controls("Elegir…", Message::BgImageBrowse, Message::BgImageClear, fs),
+            c,
+            ty,
+        ));
+        rows.push(note_row(&format!("Ruta actual: {bg_label}"), t.dim, ty));
 
-        // ── Sprite estático de la burbuja ─────────────────────────────────
+        // ── Sprite estático de la burbuja ────────────────────────────────
         let bubble_img_label = match self.config.bubble_image_path() {
             Some(p) => p,
             None => "(sin sprite; usando el render vectorial)",
         };
-        col = col.push(
-            row![
-                text("Sprite de la burbuja")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(160.0)),
-                button(text("Elegir…").size(fs.xxs))
-                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
-                    .on_press(Message::BubbleImageBrowse)
-                    .style(theme::secondary),
-                button(text("Quitar").size(fs.xxs))
-                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
-                    .on_press(Message::BubbleImageClear)
-                    .style(theme::secondary),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(format!("Ruta actual: {}", bubble_img_label))
-                .size(fs.xxs)
-                .color(t.dim),
-        );
+        rows.push(preference_row(
+            "Sprite de la burbuja",
+            None,
+            self.image_controls(
+                "Elegir…",
+                Message::BubbleImageBrowse,
+                Message::BubbleImageClear,
+                fs,
+            ),
+            c,
+            ty,
+        ));
+        rows.push(note_row(
+            &format!("Ruta actual: {bubble_img_label}"),
+            t.dim,
+            ty,
+        ));
 
-        // ── Carpeta de frames (animación) ─────────────────────────────────
+        // ── Carpeta de frames (animación) ────────────────────────────────
         let frames_label = match self.config.bubble_frames_path() {
             Some(p) => p,
             None => "(sin carpeta; solo sprite estático)",
         };
-        col = col.push(
-            row![
-                text("Frames de animación")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(160.0)),
-                button(text("Elegir carpeta…").size(fs.xxs))
-                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
-                    .on_press(Message::BubbleFramesBrowse)
-                    .style(theme::secondary),
-                button(text("Quitar").size(fs.xxs))
-                    .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
-                    .on_press(Message::BubbleFramesClear)
-                    .style(theme::secondary),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(format!("Ruta actual: {}", frames_label))
-                .size(fs.xxs)
-                .color(t.dim),
-        );
+        rows.push(preference_row(
+            "Frames de animación",
+            None,
+            self.image_controls(
+                "Elegir carpeta…",
+                Message::BubbleFramesBrowse,
+                Message::BubbleFramesClear,
+                fs,
+            ),
+            c,
+            ty,
+        ));
+        rows.push(note_row(&format!("Ruta actual: {frames_label}"), t.dim, ty));
 
-        // ── FPS de la animación ───────────────────────────────────────────
+        // ── FPS de la animación ──────────────────────────────────────────
         let fps = self.config.bubble_animation_fps();
-        col = col.push(
-            row![
-                text(format!("Velocidad (FPS): {fps}"))
-                    .size(fs.sm)
-                    .color(t.text)
-                    .width(Length::Fixed(180.0)),
-                slider(
-                    u32::from(crate::custom_image::MIN_BUBBLE_FPS)
-                        ..=u32::from(crate::custom_image::MAX_BUBBLE_FPS),
-                    u32::from(fps),
-                    Message::BubbleFpsChanged,
-                )
-                .step(1u32)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text("Frames por segundo de la animación de la burbuja \
-                  (rango 1–30; el default es 12). Cambiar la ruta o \
-                  pulsar «Quitar» detiene la animación sin coste extra.")
-                .size(fs.xxs)
-                .color(t.dim),
-        );
-
-        col.into()
+        rows.push(preference_row(
+            &format!("Velocidad (FPS): {fps}"),
+            None,
+            slider(
+                u32::from(crate::custom_image::MIN_BUBBLE_FPS)
+                    ..=u32::from(crate::custom_image::MAX_BUBBLE_FPS),
+                u32::from(fps),
+                Message::BubbleFpsChanged,
+            )
+            .step(1u32)
+            .width(Length::Fixed(CONTROL_WIDTH))
+            .into(),
+            c,
+            ty,
+        ));
+        rows.push(note_row(
+            "Frames por segundo de la animación de la burbuja (rango 1–30; el \
+             default es 12). Cambiar la ruta o pulsar «Quitar» detiene la \
+             animación sin coste extra.",
+            c.faint,
+            ty,
+        ));
+        rows
     }
 
-    /// Bloque «Paleta» dentro de la sección Apariencia (R7-II). Muestra
-    /// presets de un clic, una fila por campo editable (hex input + swatch
-    /// de previsualización + botón «Restaurar»), y botones de Importar /
-    /// Exportar a JSON. El aviso de contraste WCAG aparece bajo el campo
-    /// correspondiente cuando texto/principal baja de 3:1 sobre el fondo
-    /// activo (no bloquea: solo avisa).
-    pub(crate) fn settings_section_palette(
+    /// Control de una fila de imagen: «Elegir…» + «Quitar», pegados al borde
+    /// derecho de la columna de control (el mismo borde que los selects y los
+    /// interruptores).
+    fn image_controls<'a>(
         &self,
+        abrir_label: &str,
+        abrir: Message,
+        quitar: Message,
+        fs: theme::FontSizes,
+    ) -> Element<'a, Message> {
+        row![
+            button(text(abrir_label.to_string()).size(fs.xxs))
+                .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                .on_press(abrir)
+                .style(theme::secondary),
+            button(text("Quitar").size(fs.xxs))
+                .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
+                .on_press(quitar)
+                .style(theme::secondary),
+        ]
+        .spacing(theme::SPACE_2)
+        .align_y(Alignment::Center)
+        .into()
+    }
+
+    /// Tarjeta «Paleta» de Apariencia (R7-II). Muestra presets de un clic, una
+    /// fila por campo editable (hex + swatch + «Aplicar»/«Restaurar») y las
+    /// acciones de Importar/Exportar/Restaurar todo. El aviso de contraste WCAG
+    /// sale como nota bajo el campo cuando texto/principal baja de 3:1 sobre el
+    /// fondo activo (no bloquea: solo avisa).
+    ///
+    /// Es la única sub-tabla de la app (el frame Ajustes no trae paleta): sus
+    /// filas alinean el compuesto de controles al MISMO borde derecho que la
+    /// columna de control de la rejilla, y el rótulo va a la izquierda.
+    pub(crate) fn settings_palette_card(
+        &self,
+        c: Chrome,
+        ty: DesignType,
         t: &UiPalette,
         fs: theme::FontSizes,
     ) -> Element<'_, Message> {
-        let mut col = Column::new()
-            .spacing(theme::SPACE_2)
-            .width(Length::Fill);
-
-        // Título de la sub-sección.
-        col = col.push(
-            text("Paleta")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-
-        // Subtítulo explicativo.
-        col = col.push(
-            text("Cambia cada color por separado o usa un preset. Hex \
-                  «#RRGGBB» o «#RGB»; los valores no válidos se ignoran.")
-                .size(fs.xxs)
-                .color(t.dim),
-        );
-
-        // Presets (un clic = aplica la paleta entera al modo activo).
-        col = col.push(self.palette_preset_buttons(fs, t));
-
-        // Cabecera de la tabla de campos.
-        col = col.push(
-            text("Campos")
-                .size(fs.md)
-                .color(t.text),
-        );
-
+        let mut rows: Vec<Element<'_, Message>> = vec![
+            note_row(
+                "Cambia cada color por separado o usa un preset. Hex «#RRGGBB» o \
+                 «#RGB»; los valores no válidos se ignoran.",
+                c.faint,
+                ty,
+            ),
+            wide_row(self.palette_preset_buttons(fs, t)),
+            wide_row(
+                text("Campos")
+                    .size(ty.body)
+                    .font(medium())
+                    .color(c.secondary)
+                    .into(),
+            ),
+        ];
         // 12 filas: una por PaletteField.
         for field in theme::PaletteField::ALL {
-            col = col.push(self.palette_field_row(*field, t, fs));
+            rows.extend(self.palette_field_rows(*field, c, ty, t, fs));
         }
-
-        // Acciones globales: Importar / Restaurar todo.
-        col = col.push(self.palette_actions_row(t, fs));
-
-        col.into()
+        rows.push(wide_row(self.palette_actions_row(t, fs)));
+        rows.push(note_row(
+            "Importar funde los campos presentes del JSON con tu paleta actual \
+             (los ausentes se mantienen). Exportar guarda la paleta RESUELTA \
+             (con defaults ya aplicados) para que sea directamente compartible.",
+            c.faint,
+            ty,
+        ));
+        design_card(rows)
     }
 
     /// Botonera horizontal con los 5 presets. Cada botón aplica la paleta
@@ -918,8 +981,8 @@ impl WhisprApp {
         }
         // Swatch预览: muestra el accent del modo activo como
         // recordatorio visual («el preset tocará esto»).
-        let swatch = container(Space::new(Length::Fixed(16.0), Length::Fixed(16.0)))
-            .style(move |_th| {
+        let swatch =
+            container(Space::new(Length::Fixed(16.0), Length::Fixed(16.0))).style(move |_th| {
                 let p = self.resolved_palette();
                 container::Style {
                     background: Some(Background::Color(p.accent)),
@@ -944,14 +1007,19 @@ impl WhisprApp {
             .into()
     }
 
-    /// Una fila de la tabla de campos: label + input hex + swatch + botón
-    /// restaurar + (si aplica) aviso de contraste WCAG.
-    pub(crate) fn palette_field_row(
+    /// Filas de la tabla de campos de la paleta para un color: el rótulo a la
+    /// izquierda y, pegados al BORDE DERECHO de la tarjeta (el mismo borde que
+    /// la columna de control de la rejilla), el hex + «Aplicar» + «Restaurar» +
+    /// el swatch de previsualización. El aviso de contraste, cuando toca, sale
+    /// como nota bajo la fila (no estira la fila ni le cambia el borde).
+    pub(crate) fn palette_field_rows(
         &self,
         field: theme::PaletteField,
+        c: Chrome,
+        ty: DesignType,
         t: &UiPalette,
         fs: theme::FontSizes,
-    ) -> Element<'_, Message> {
+    ) -> Vec<Element<'_, Message>> {
         // Texto actual del input: lo que el usuario está tecleando, o el
         // hex persistido si no hay buffer, o vacío (= default).
         let current_text = self
@@ -964,26 +1032,23 @@ impl WhisprApp {
         // Color que se previsualiza en el swatch:
         //   - si el input tiene un hex parseable, ese color;
         //   - si no, el color resuelto (override o default).
-        let swatch_color = theme::parse_hex(&current_text)
-            .unwrap_or_else(|| self.resolved_color_for_field(field));
+        let swatch_color =
+            theme::parse_hex(&current_text).unwrap_or_else(|| self.resolved_color_for_field(field));
 
         let contrast_warn = self.contrast_warning_for(field, swatch_color);
 
         let label_text = text(field.label())
-            .size(fs.sm)
-            .color(t.text)
-            .width(Length::Fixed(150.0));
+            .size(ty.nav)
+            .font(medium())
+            .color(c.text);
 
-        let input_box: Element<'_, Message> = text_input(
-            field.help(),
-            &current_text,
-        )
-        .on_input(move |v| Message::PaletteFieldChanged(field, v))
-        .on_submit(Message::PaletteFieldApply(field))
-        .padding(theme::SPACE_2 as f32)
-        .width(Length::Fixed(120.0))
-        .style(theme::text_input)
-        .into();
+        let input_box: Element<'_, Message> = text_input(field.help(), &current_text)
+            .on_input(move |v| Message::PaletteFieldChanged(field, v))
+            .on_submit(Message::PaletteFieldApply(field))
+            .padding(theme::FIELD_PADDING)
+            .width(Length::Fixed(120.0))
+            .style(theme::text_input)
+            .into();
 
         let apply_btn = button(text("Aplicar").size(fs.xxs))
             .padding([theme::SPACE_1 as f32, theme::SPACE_2 as f32])
@@ -998,54 +1063,39 @@ impl WhisprApp {
         // Swatch: muestra el color actual (resolved o en-vuelo).
         let border_color = t.border;
         let swatch_color_for_closure = swatch_color;
-        let swatch = container(
-            Space::new(
-                Length::Fixed(20.0),
-                Length::Fixed(20.0),
-            ),
-        )
-        .style(move |_th| container::Style {
-            background: Some(Background::Color(swatch_color_for_closure)),
-            border: Border {
-                color: border_color,
-                width: 1.0,
-                radius: Radius::from(4.0),
-            },
-            ..Default::default()
-        });
+        let swatch =
+            container(Space::new(Length::Fixed(20.0), Length::Fixed(20.0))).style(move |_th| {
+                container::Style {
+                    background: Some(Background::Color(swatch_color_for_closure)),
+                    border: Border {
+                        color: border_color,
+                        width: 1.0,
+                        radius: Radius::from(4.0),
+                    },
+                    ..Default::default()
+                }
+            });
 
-        let mut row = Row::new()
-            .push(label_text)
-            .push(input_box)
-            .push(Space::new(
-                Length::Fixed(theme::SPACE_2 as f32),
-                Length::Fixed(0.0),
-            ))
-            .push(apply_btn)
-            .push(reset_btn)
-            .push(Space::new(
-                Length::Fixed(theme::SPACE_2 as f32),
-                Length::Fixed(0.0),
-            ))
-            .push(swatch)
+        let row = wide_row(
+            row![
+                label_text,
+                Space::new(Length::Fill, Length::Fixed(0.0)),
+                input_box,
+                apply_btn,
+                reset_btn,
+                Space::new(Length::Fixed(theme::SPACE_2 as f32), Length::Fixed(0.0)),
+                swatch,
+            ]
             .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center);
+            .align_y(Alignment::Center)
+            .into(),
+        );
 
-        row = if let Some(warn) = contrast_warn {
-            row.push(
-                text(warn)
-                    .size(fs.xxs)
-                    .color(t.warn)
-                    .width(Length::Fill),
-            )
-        } else {
-            row.push(Space::new(Length::Fill, Length::Fixed(0.0)))
-        };
-
-        Column::new()
-            .push(row)
-            .spacing(theme::SPACE_1 as f32)
-            .into()
+        let mut rows = vec![row];
+        if let Some(warn) = contrast_warn {
+            rows.push(note_row(&warn, t.warn, ty));
+        }
+        rows
     }
 
     /// Devuelve el hex persistido del campo (o None si está en default).
@@ -1097,10 +1147,8 @@ impl WhisprApp {
     ) -> Option<String> {
         let bg = self.resolved_palette().bg;
         let ratio = theme::contrast_ratio(candidate, bg);
-        let must_warn = matches!(
-            field,
-            theme::PaletteField::Text | theme::PaletteField::Dim
-        ) && ratio < 3.0;
+        let must_warn =
+            matches!(field, theme::PaletteField::Text | theme::PaletteField::Dim) && ratio < 3.0;
         if must_warn {
             Some(format!(
                 "⚠ Contraste {ratio:.2}:1 (texto sobre fondo, mínimo WCAG 3:1). \
@@ -1111,7 +1159,8 @@ impl WhisprApp {
         }
     }
 
-    /// Botones «Importar…» / «Exportar…» / «Restaurar todo».
+    /// Botones «Importar…» / «Exportar…» / «Restaurar todo» (la explicación de
+    /// qué hace cada uno va como nota de la tarjeta, no aquí).
     pub(crate) fn palette_actions_row(
         &self,
         t: &UiPalette,
@@ -1129,68 +1178,34 @@ impl WhisprApp {
             .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
             .on_press(Message::PaletteResetAll)
             .style(theme::secondary);
-        Column::new()
-            .push(
-                Row::new()
-                    .push(import_btn)
-                    .push(Space::new(
-                        Length::Fixed(theme::SPACE_2 as f32),
-                        Length::Fixed(0.0),
-                    ))
-                    .push(export_btn)
-                    .push(Space::new(Length::Fill, Length::Fixed(0.0)))
-                    .push(reset_all_btn)
-                    .spacing(theme::SPACE_2)
-                    .align_y(iced::Alignment::Center),
-            )
-            .push(
-                text("Importar funde los campos presentes del JSON con tu paleta \
-                      actual (los ausentes se mantienen). Exportar guarda la la palette \
-                      RESUELTA (con defaults ya aplicados) para que sea \
-                      directamente compartible.")
-                    .size(fs.xxs)
-                    .color(t.dim),
-            )
+        let _ = t;
+        Row::new()
+            .push(import_btn)
+            .push(Space::new(
+                Length::Fixed(theme::SPACE_2 as f32),
+                Length::Fixed(0.0),
+            ))
+            .push(export_btn)
+            .push(Space::new(Length::Fill, Length::Fixed(0.0)))
+            .push(reset_all_btn)
             .spacing(theme::SPACE_2)
+            .align_y(Alignment::Center)
             .into()
     }
 
     /// ── Sección «Dictado» ────────────────────────────────────────────────
-    /// Calidad (beam size), hilos de CPU y resumen informativo de la
-    /// inyección (formato, retardo y filtro de ventana). Lo técnico del
-    /// motor de transcripción vive aquí: si el usuario nunca toca la IA,
-    /// no lo verá al pasar por Corrección IA.
+    /// Calidad (beam size), hilos de CPU y el resumen de la inyección, con la
+    /// rejilla de las 5 pestañas: los dos sliders en la columna de control, su
+    /// explicación como nota bajo cada fila y la inyección (que no tiene
+    /// controles, los fija el producto) como nota informativa.
     pub(crate) fn settings_section_dictation(
         &self,
-        _c: Chrome,
-        _ty: DesignType,
-        t: &UiPalette,
+        c: Chrome,
+        ty: DesignType,
+        _t: &UiPalette,
     ) -> Element<'_, Message> {
-        let fs = theme::font_sizes(self.config.font_size().factor());
         let beam = self.config.beam_size();
         let threads = self.config.n_threads();
-        let beam_row = row![
-            text(format!("Calidad: {beam}"))
-                .size(fs.sm)
-                .color(t.text)
-                .width(Length::Fixed(120.0)),
-            slider(1..=8, beam, Message::BeamSizeChanged)
-                .step(1u32)
-                .width(Length::Fill),
-        ]
-        .spacing(theme::SPACE_2)
-        .align_y(iced::Alignment::Center);
-        let threads_row = row![
-            text(format!("Hilos de CPU: {threads}"))
-                .size(fs.sm)
-                .color(t.text)
-                .width(Length::Fixed(120.0)),
-            slider(1..=16, threads, Message::ThreadsChanged)
-                .step(1u32)
-                .width(Length::Fill),
-        ]
-        .spacing(theme::SPACE_2)
-        .align_y(iced::Alignment::Center);
 
         // Resumen informativo de la inyección (formato / retardo / filtro
         // de ventana activa): sigue siendo informativo aquí, igual que en
@@ -1212,62 +1227,73 @@ impl WhisprApp {
         };
 
         let mut col = Column::new()
-            .spacing(theme::SPACE_2)
+            .spacing(theme::GRID_SECTION_GAP)
             .width(Length::Fill);
-        col = col.push(
-            text("Calidad y rendimiento")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        col = col.push(beam_row);
-        col = col.push(
-            text(
-                "Calidad de transcripción (beam size) vs velocidad: \
-                 1 = la más rápida, 8 = la más fiel. Rango 1–8, \
-                 recomendado: 5."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(threads_row);
-        col = col.push(
-            text(
-                "Núcleos de CPU que usa Whisper al transcribir. \
-                 Sube si el equipo va justo de velocidad; baja para \
-                 dejar recursos al resto. Rango 1–16, recomendado: 4."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(horizontal_rule(1).style(theme::rule));
-        col = col.push(
-            text("Inyección en la app activa")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
-        col = col.push(text(injection_label).size(fs.xxs).color(t.dim));
-        design_card(vec![wide_row(col.into())])
+        col = col.push(section_block(
+            "Calidad y rendimiento",
+            design_card(vec![
+                preference_row(
+                    &format!("Calidad: {beam}"),
+                    None,
+                    slider(1..=8, beam, Message::BeamSizeChanged)
+                        .step(1u32)
+                        .width(Length::Fixed(CONTROL_WIDTH))
+                        .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Calidad de transcripción (beam size) vs velocidad: 1 = la \
+                     más rápida, 8 = la más fiel. Rango 1–8, recomendado: 5.",
+                    c.faint,
+                    ty,
+                ),
+                preference_row(
+                    &format!("Hilos de CPU: {threads}"),
+                    None,
+                    slider(1..=16, threads, Message::ThreadsChanged)
+                        .step(1u32)
+                        .width(Length::Fixed(CONTROL_WIDTH))
+                        .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Núcleos de CPU que usa Whisper al transcribir. Sube si el \
+                     equipo va justo de velocidad; baja para dejar recursos al \
+                     resto. Rango 1–16, recomendado: 4.",
+                    c.faint,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
+        // La inyección no expone controles (los fija el producto): su resumen
+        // va como nota de la sección, con el mismo inset que las filas.
+        col = col.push(section_block(
+            "Inyección en la app activa",
+            design_card(vec![note_row(&injection_label, c.faint, ty)]),
+            c,
+            ty,
+        ));
+        col.into()
     }
 
     /// ── Sección «Corrección IA» ─────────────────────────────────────────
-    /// Todo el corrector LLM en un único sitio: estado en vivo, toggle,
-    /// proveedor, endpoint, modelo, API key, ruta del server local y los
-    /// detalles técnicos (timeout, sensibilidad, confirmar). Es la
-    /// pestaña más densa porque el corrector tiene muchas opciones, pero
-    /// ahora están agrupadas y no se mezclan con el motor de voz ni con
-    /// la apariencia.
+    /// Todo el corrector LLM con la rejilla de las 5 pestañas: cada opción es
+    /// una fila (rótulo + control en la columna fija) y las explicaciones largas
+    /// van como notas bajo su fila. El estado en vivo va arriba, como nota con
+    /// el color del estado.
     pub(crate) fn settings_section_correction(
         &self,
-        _c: Chrome,
-        _ty: DesignType,
+        c: Chrome,
+        ty: DesignType,
         t: &UiPalette,
     ) -> Element<'_, Message> {
-        let fs = theme::font_sizes(self.config.font_size().factor());
         // Estado en vivo (misma lógica pura que el chip del header):
         // «Corrección IA: activa · <modelo>» o «inactiva — <motivo>».
-        let status_label = {
+        let (status_text, status_color) = {
             let ui = llm_status_ui(
                 self.config.ai_correction_enabled(),
                 &self.llm_status,
@@ -1278,258 +1304,270 @@ impl WhisprApp {
                 "warn" => t.warn,
                 _ => t.dim,
             };
-            text(ui.label).size(fs.sm).color(color)
+            (ui.label, color)
         };
 
         let mut col = Column::new()
-            .spacing(theme::SPACE_2)
+            .spacing(theme::GRID_SECTION_GAP)
             .width(Length::Fill);
-        col = col.push(status_label);
-        col = col.push(
-            checkbox(
-                "Corrección IA: una IA revisa y corrige lo que dictas",
-                self.config.ai_correction_enabled(),
-            )
-            .on_toggle(Message::ToggleAiCorrection)
-            .style(theme::checkbox),
-        );
-        col = col.push(
-            text(
-                "Al terminar un turno, la IA lo revisa y corrige («digo X», «no, \
-                 era Y»…). Si el servidor de IA no está disponible, el dictado \
-                 se inserta entero, sin corregir."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(
-            row![
-                text("Proveedor")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                pick_list(
-                    [
-                        CorrectionProvider::Default,
-                        CorrectionProvider::Cloud,
-                        CorrectionProvider::Custom,
-                    ]
-                    .to_vec(),
-                    Some(self.config.correction_provider()),
-                    Message::CorrectionProviderChanged,
-                )
-                .placeholder("Proveedor")
-                .width(Length::Fill)
-                .style(theme::pick_list),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(
-                "Quién corrige lo que dictas: Local — llama.cpp, el que viene \
-                 con la app (sin internet, recomendado) · Custom LLM — tu \
-                 propio endpoint OpenAI-compatible · Cloud — OpenAI. \
-                 Por defecto: Local."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(
-            row![
-                text("Endpoint LLM")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                text_input(
-                    "http://127.0.0.1:8081/v1",
-                    self.config.llm_base_url.as_deref().unwrap_or(""),
-                )
-                .on_input(Message::LlmEndpointChanged)
-                .style(theme::text_input)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(
-                "Dirección del servidor de IA (API compatible con OpenAI). \
-                 Local: http://127.0.0.1:8081/v1."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(
-            row![
-                text("Modelo IA")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                text_input(
-                    "ornith-1.0-9b / gpt-4o-mini",
-                    self.config.llm_model.as_deref().unwrap_or(""),
-                )
-                .on_input(Message::LlmModelChanged)
-                .style(theme::text_input)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(
-                "El modelo que corrige. Debe estar en tu servidor local o ser \
-                 uno de los que ofrece la nube."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        // API key: solo con proveedor que la exija (Custom — opcional si
-        // el server no la pide — y Cloud, obligatoria). Con Local el
-        // server local no la usa. Persistencia en Credential Manager de
-        // Windows, NUNCA en config.json.
-        if self.config.correction_provider() != CorrectionProvider::Default {
-            col = col.push(
-                row![
-                    text("API key")
-                        .size(fs.sm)
-                        .color(t.dim)
-                        .width(Length::Fixed(96.0)),
-                    text_input(
-                        "opcional (Custom) · obligatoria (Cloud)",
-                        self.config.llm_api_key.as_deref().unwrap_or("")
-                    )
-                    .on_input(Message::LlmApiKeyChanged)
-                    .secure(true)
-                    .style(theme::text_input)
-                    .width(Length::Fill),
+        col = col.push(section_block(
+            "Corrección IA",
+            design_card(
+                vec![
+                    note_row(&status_text, status_color, ty),
+                    // El interruptor va a la columna de control (el mismo sitio que
+                    // en General: los toggles de todas las secciones comparten
+                    // columna, nodo `3:692`).
+                    preference_row(
+                        "Corrección IA: una IA revisa y corrige lo que dictas",
+                        None,
+                        toggle_control(
+                            None,
+                            self.config.ai_correction_enabled(),
+                            Message::ToggleAiCorrection,
+                            c,
+                            ty,
+                        ),
+                        c,
+                        ty,
+                    ),
+                    note_row(
+                        "Al terminar un turno, la IA lo revisa y corrige («digo X», \
+                     «no, era Y»…). Si el servidor de IA no está disponible, el \
+                     dictado se inserta entero, sin corregir.",
+                        c.faint,
+                        ty,
+                    ),
+                    preference_row(
+                        "Proveedor",
+                        None,
+                        pick_list(
+                            [
+                                CorrectionProvider::Default,
+                                CorrectionProvider::Cloud,
+                                CorrectionProvider::Custom,
+                            ]
+                            .to_vec(),
+                            Some(self.config.correction_provider()),
+                            Message::CorrectionProviderChanged,
+                        )
+                        .placeholder("Proveedor")
+                        .width(Length::Fill)
+                        .text_size(ty.control)
+                        .padding(theme::FIELD_PADDING)
+                        .style(theme::pick_list)
+                        .into(),
+                        c,
+                        ty,
+                    ),
+                    note_row(
+                        "Quién corrige lo que dictas: Local — llama.cpp, el que viene \
+                     con la app (sin internet, recomendado) · Custom LLM — tu \
+                     propio endpoint OpenAI-compatible · Cloud — OpenAI. Por \
+                     defecto: Local.",
+                        c.faint,
+                        ty,
+                    ),
+                    preference_row(
+                        "Endpoint LLM",
+                        None,
+                        text_input(
+                            "http://127.0.0.1:8081/v1",
+                            self.config.llm_base_url.as_deref().unwrap_or(""),
+                        )
+                        .on_input(Message::LlmEndpointChanged)
+                        .padding(theme::FIELD_PADDING)
+                        .size(ty.control)
+                        .style(theme::text_input)
+                        .width(Length::Fill)
+                        .into(),
+                        c,
+                        ty,
+                    ),
+                    note_row(
+                        "Dirección del servidor de IA (API compatible con OpenAI). \
+                     Local: http://127.0.0.1:8081/v1.",
+                        c.faint,
+                        ty,
+                    ),
+                    preference_row(
+                        "Modelo IA",
+                        None,
+                        text_input(
+                            "ornith-1.0-9b / gpt-4o-mini",
+                            self.config.llm_model.as_deref().unwrap_or(""),
+                        )
+                        .on_input(Message::LlmModelChanged)
+                        .padding(theme::FIELD_PADDING)
+                        .size(ty.control)
+                        .style(theme::text_input)
+                        .width(Length::Fill)
+                        .into(),
+                        c,
+                        ty,
+                    ),
+                    note_row(
+                        "El modelo que corrige. Debe estar en tu servidor local o ser \
+                     uno de los que ofrece la nube.",
+                        c.faint,
+                        ty,
+                    ),
+                    // El resto de la tarjeta: la API key (que solo existe con
+                    // proveedor que la exija) y el compuesto del server local, que
+                    // es más ancho que la columna de control (lleva «Examinar…» y
+                    // «✕») y por eso va en una fila ancha con el borde derecho
+                    // compartido: el «✕» acaba en la misma x que los selects.
                 ]
-                .spacing(theme::SPACE_2)
-                .align_y(iced::Alignment::Center),
-            );
-            col = col.push(
-                text(
-                    "Clave del endpoint si la exige (Custom: opcional · \
-                     Cloud: obligatoria). Se guarda en el Administrador \
-                     de credenciales de Windows, nunca en la config."
-                )
-                .size(fs.xxs)
-                .color(t.dim),
-            );
-        }
-        col = col.push(
-            row![
-                text("Server LLM")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                text_input(
-                    &auto_server_placeholder(&self.config),
-                    self.config.llama_server_path.as_deref().unwrap_or(""),
-                )
-                .on_input(Message::LlmServerPathChanged)
-                .style(theme::text_input)
-                .width(Length::Fill),
-                button("Examinar…")
-                    .on_press(Message::LlmServerPathBrowse)
-                    .style(theme::secondary),
-                button(ui_text("✕"))
-                    .on_press(Message::LlmServerPathReset),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(
-                "Ejecutable llama-server.exe que la app lanza al arrancar. \
-                 Vacío = autodetección (D:\\LlamaCPP, junto a la app…). Solo \
-                 indícalo aquí si la app no lo encuentra sola."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(horizontal_rule(1).style(theme::rule));
-        col = col.push(
-            text("Detalles técnicos")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-        );
+                .into_iter()
+                .chain(self.api_key_rows(c, ty))
+                .chain(vec![
+                    wide_row(
+                        row![
+                            text("Server LLM").size(ty.nav).font(medium()).color(c.text),
+                            text_input(
+                                &auto_server_placeholder(&self.config),
+                                self.config.llama_server_path.as_deref().unwrap_or(""),
+                            )
+                            .on_input(Message::LlmServerPathChanged)
+                            .padding(theme::FIELD_PADDING)
+                            .size(ty.control)
+                            .style(theme::text_input)
+                            .width(Length::Fill),
+                            button("Examinar…")
+                                .padding(theme::SECONDARY_BUTTON_PADDING)
+                                .on_press(Message::LlmServerPathBrowse)
+                                .style(theme::secondary),
+                            button(ui_text("✕")).on_press(Message::LlmServerPathReset),
+                        ]
+                        .spacing(theme::SPACE_2)
+                        .align_y(Alignment::Center)
+                        .into(),
+                    ),
+                    note_row(
+                        "Ejecutable llama-server.exe que la app lanza al arrancar. \
+                     Vacío = autodetección (D:\\LlamaCPP, junto a la app…). Solo \
+                     indícalo aquí si la app no lo encuentra sola.",
+                        c.faint,
+                        ty,
+                    ),
+                ])
+                .collect(),
+            ),
+            c,
+            ty,
+        ));
+
+        // ── Detalles técnicos ───────────────────────────────────────────
         // Timeout: slider 1..=120 s (25 por defecto). El getter clampea.
-        col = col.push(
-            row![
-                text("Espera máx. (s)")
-                    .size(fs.sm)
-                    .color(t.dim)
-                    .width(Length::Fixed(96.0)),
-                slider(
-                    1..=120,
-                    self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
-                    Message::LlmTimeoutChanged,
+        col = col.push(section_block(
+            "Detalles técnicos",
+            design_card(vec![
+                preference_row(
+                    "Espera máx. (s)",
+                    None,
+                    slider(
+                        1..=120,
+                        self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
+                        Message::LlmTimeoutChanged,
+                    )
+                    .step(1u32)
+                    .width(Length::Fixed(CONTROL_WIDTH))
+                    .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Espera máxima de la IA antes de dar el turno por \
+                     definitivo: si lo supera, se inserta sin corregir. \
+                     Rango 1–120 s, recomendado: 25 s.",
+                    c.faint,
+                    ty,
+                ),
+                // Umbral del clasificador: 0..=100. Default 50. Etiqueta llana
+                // «sensibilidad» (requisito UX 10/09/2026: «umbral clasif.» no
+                // dice nada).
+                preference_row(
+                    &format!("Sensibilidad: {}", self.config.llm_classifier_threshold()),
+                    None,
+                    slider(
+                        0..=100,
+                        u32::from(self.config.llm_classifier_threshold()),
+                        Message::LlmThresholdChanged,
+                    )
+                    .step(1u32)
+                    .width(Length::Fixed(CONTROL_WIDTH))
+                    .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Con qué frecuencia se envía un turno a la IA: 50 = \
+                     casi siempre que hay una señal de corrección, 100 = \
+                     casi nunca. Rango 0–100, recomendado: 50.",
+                    c.faint,
+                    ty,
+                ),
+                preference_row(
+                    "Confirmar antes de aplicar",
+                    None,
+                    toggle_control(
+                        None,
+                        self.config.ai_correction_confirm(),
+                        Message::LlmConfirmToggled,
+                        c,
+                        ty,
+                    ),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Pide tu visto bueno (Aplicar/Descartar) antes de \
+                     modificar el texto. Recomendado si prefieres revisar \
+                     lo que corrige la IA.",
+                    c.faint,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
+        col.into()
+    }
+
+    /// Filas de la API key: solo con proveedor que la exija (Custom — opcional
+    /// si el server no la pide — y Cloud, obligatoria). Con Local el server no
+    /// la usa, así que no se pinta nada. Persistencia en el Credential Manager
+    /// de Windows, NUNCA en `config.json`.
+    fn api_key_rows(&self, c: Chrome, ty: DesignType) -> Vec<Element<'_, Message>> {
+        if self.config.correction_provider() == CorrectionProvider::Default {
+            return Vec::new();
+        }
+        vec![
+            preference_row(
+                "API key",
+                None,
+                text_input(
+                    "opcional (Custom) · obligatoria (Cloud)",
+                    self.config.llm_api_key.as_deref().unwrap_or(""),
                 )
-                .step(1u32)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(
-                "Espera máxima de la IA antes de dar el turno por \
-                 definitivo: si lo supera, se inserta sin corregir. \
-                 Rango 1–120 s, recomendado: 25 s."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        // Umbral del clasificador: 0..=100. Default 50. Etiqueta llana
-        // «sensibilidad» (requisito UX 10/09/2026: «umbral clasif.» no
-        // dice nada).
-        col = col.push(
-            row![
-                text(format!("Sensibilidad: {}", self.config.llm_classifier_threshold()))
-                    .size(fs.sm)
-                    .color(t.text)
-                    .width(Length::Fixed(120.0)),
-                slider(
-                    0..=100,
-                    u32::from(self.config.llm_classifier_threshold()),
-                    Message::LlmThresholdChanged,
-                )
-                .step(1u32)
-                .width(Length::Fill),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(iced::Alignment::Center),
-        );
-        col = col.push(
-            text(
-                "Con qué frecuencia se envía un turno a la IA: 50 = \
-                 casi siempre que hay una señal de corrección, 100 = \
-                 casi nunca. Rango 0–100, recomendado: 50."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        col = col.push(
-            checkbox(
-                "Confirmar antes de aplicar",
-                self.config.ai_correction_confirm(),
-            )
-            .on_toggle(Message::LlmConfirmToggled)
-            .style(theme::checkbox),
-        );
-        col = col.push(
-            text(
-                "Pide tu visto bueno (Aplicar/Descartar) antes de \
-                 modificar el texto. Recomendado si prefieres revisar \
-                 lo que corrige la IA."
-            )
-            .size(fs.xxs)
-            .color(t.dim),
-        );
-        design_card(vec![wide_row(col.into())])
+                .on_input(Message::LlmApiKeyChanged)
+                .secure(true)
+                .padding(theme::FIELD_PADDING)
+                .size(ty.control)
+                .style(theme::text_input)
+                .width(Length::Fill)
+                .into(),
+                c,
+                ty,
+            ),
+            note_row(
+                "Clave del endpoint si la exige (Custom: opcional · \
+                 Cloud: obligatoria). Se guarda en el Administrador \
+                 de credenciales de Windows, nunca en la config.",
+                c.faint,
+                ty,
+            ),
+        ]
     }
 
     /// ── Sección «Avanzado» ──────────────────────────────────────────────
@@ -1542,60 +1580,55 @@ impl WhisprApp {
     /// diagnóstico del server LLM). En fases siguientes puede poblarse.
     pub(crate) fn settings_section_advanced(
         &self,
-        _c: Chrome,
-        _ty: DesignType,
-        t: &UiPalette,
+        c: Chrome,
+        ty: DesignType,
+        _t: &UiPalette,
     ) -> Element<'_, Message> {
-        let fs = theme::font_sizes(self.config.font_size().factor());
         // H2 (QA 24/09/2026): el usuario no encontraba el log. Su ruta se
-        // muestra aquí y hay un botón que abre la carpeta en el Explorador
-        // (también viven ahí config.json y assets/).
-        let log_path = crate::log::log_path();
+        // muestra aquí (como ayuda de su fila) y hay un botón que abre la
+        // carpeta en el Explorador (también viven ahí config.json y assets/).
+        let log_path = crate::log::log_path().to_string_lossy().into_owned();
         let debug_on = crate::log::debug_enabled();
-        let registro = column![
-            text("Dónde queda todo")
-                .size(fs.lg)
-                .font(Font::MONOSPACE)
-                .color(t.text),
-            text("Registro de la app")
-                .size(fs.sm)
-                .color(t.dim),
-            text(log_path.to_string_lossy().into_owned()).size(fs.sm),
-            text(
-                "Rota solo: al pasar de 1 MB el fichero pasa a .1 y el .1 a \
-                 .2, así que nunca crece sin límite. Las trazas de alta \
-                 frecuencia (cada movimiento al arrastrar la burbuja) solo se \
-                 escriben con la variable de entorno WHISPR_DEBUG=1."
-            )
-            .size(fs.sm),
-            row![
-                button(ui_text("Abrir carpeta del registro"))
-                    .on_press(Message::OpenLogFolder)
-                    .padding(theme::SECONDARY_BUTTON_PADDING)
-                    .style(theme::primary),
-                text(if debug_on {
-                    "WHISPR_DEBUG activado: el registro es detallado"
-                } else {
-                    "WHISPR_DEBUG desactivado"
-                })
-                .size(fs.xxs)
-                .color(if debug_on { t.accent_text } else { t.dim }),
-            ]
-            .spacing(theme::SPACE_3)
-            .align_y(iced::Alignment::Center),
-            text("Imágenes y animación propias").size(fs.sm).color(t.dim),
-            text(
-                "Al elegir una imagen o una carpeta de frames en Apariencia, \
-                 la app guarda una COPIA en la carpeta de arriba (assets/): \
-                 puedes vaciar Descargas sin perder tu personalización."
-            )
-            .size(fs.sm),
-        ]
-        .spacing(theme::SPACE_3);
-
-        design_card(vec![wide_row(
-            container(registro).width(Length::Fill).into(),
-        )])
+        let debug_state = if debug_on {
+            "WHISPR_DEBUG activado: el registro es detallado"
+        } else {
+            "WHISPR_DEBUG desactivado"
+        };
+        section_block(
+            "Dónde queda todo",
+            design_card(vec![
+                preference_row(
+                    "Registro de la app",
+                    Some(&log_path),
+                    button(ui_text("Abrir carpeta del registro"))
+                        .on_press(Message::OpenLogFolder)
+                        .padding(theme::SECONDARY_BUTTON_PADDING)
+                        .style(theme::primary)
+                        .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Rota solo: al pasar de 1 MB el fichero pasa a .1 y el .1 a \
+                     .2, así que nunca crece sin límite. Las trazas de alta \
+                     frecuencia (cada movimiento al arrastrar la burbuja) solo se \
+                     escriben con la variable de entorno WHISPR_DEBUG=1.",
+                    c.faint,
+                    ty,
+                ),
+                preference_row("Registro detallado", Some(debug_state), no_control(), c, ty),
+                preference_row("Imágenes y animación propias", None, no_control(), c, ty),
+                note_row(
+                    "Al elegir una imagen o una carpeta de frames en Apariencia, \
+                     la app guarda una COPIA en la carpeta de arriba (assets/): \
+                     puedes vaciar Descargas sin perder tu personalización.",
+                    c.faint,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        )
     }
 }
 
@@ -1604,7 +1637,10 @@ impl WhisprApp {
 /// subrayado de 2 px del acento colgando del borde inferior de la activa.
 /// Debajo va el hairline que cierra la fila, como en el frame.
 fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'static, Message> {
-    let mut tabs = row![].spacing(28.0).align_y(Alignment::End).height(TAB_BOX_HEIGHT);
+    let mut tabs = row![]
+        .spacing(theme::GRID_TAB_GAP)
+        .align_y(Alignment::End)
+        .height(theme::GRID_TAB_HEIGHT);
     for section in SettingsSection::ALL {
         let is_active = section == active;
         // La caja de la pestaña ES la etiqueta (+ el subrayado de 2 px en su
@@ -1616,16 +1652,12 @@ fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'
             text(section.label())
                 .size(ty.control)
                 .font(if is_active { medium() } else { Font::DEFAULT })
-                .color(if is_active {
-                    c.text
-                } else {
-                    c.secondary
-                }),
+                .color(if is_active { c.text } else { c.secondary }),
         )
-        .height(Length::Fixed(TAB_BOX_HEIGHT))
+        .height(Length::Fixed(theme::GRID_TAB_HEIGHT))
         .align_y(Alignment::Center)
         .style(move |th| container::Style {
-            background: Some(theme::tab_underline(th, is_active, TAB_BOX_HEIGHT)),
+            background: Some(theme::tab_underline(th, is_active, theme::GRID_TAB_HEIGHT)),
             ..container::Style::default()
         });
         tabs = tabs.push(
@@ -1636,7 +1668,7 @@ fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'
         );
     }
     column![
-        row![tabs, Space::with_width(Length::Fill)].height(TAB_BOX_HEIGHT),
+        row![tabs, Space::with_width(Length::Fill)].height(theme::GRID_TAB_HEIGHT),
         horizontal_rule(1).style(theme::rule),
     ]
     .into()
