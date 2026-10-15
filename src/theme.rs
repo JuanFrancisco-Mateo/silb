@@ -117,7 +117,7 @@ pub const WINDOW_BAR_LIGHT: Color = rgb!(0xF3, 0xF3, 0xF7);
 pub const KEYCAP_LIGHT: Color = rgb!(0xE8, 0xE8, 0xEE);
 pub const NAV_ACTIVE_LIGHT: Color = rgb!(0xE7, 0xE3, 0xFF);
 pub const DIVIDER_LIGHT: Color = rgb!(0xE3, 0xE3, 0xEA);
-pub const FAINT_LIGHT: Color = rgb!(0x8A, 0x8A, 0x95);
+pub const FAINT_LIGHT: Color = rgb!(0x5F, 0x5F, 0x6A);
 
 // ─────────────────────── Contraste WCAG (medido, no estimado) ────────────────
 // Fórmulas de WCAG 2.1: luminancia relativa + ratio (1..21). Públicas porque
@@ -938,17 +938,18 @@ fn is_palette_dark(p: &UiPalette) -> bool {
     lum(p.bg) < 0.5
 }
 
-/// `true` si el tema activo es el oscuro. Compara el `background` del
-/// `Theme` contra el de la paleta activa del override (si lo hay) o contra
-/// `DARK.bg` (sin override). Esto deja `is_dark(theme)` coherente con el
-/// override del usuario: si el bg custom sigue siendo oscuro por luminancia,
-/// devuelve `true` y el ciclo de tokens sigue funcionando.
+/// `true` si el tema activo es el oscuro. Con override activo se decide por
+/// luminancia de la paleta resuelta (antes se comparaba `bg == arc.bg`, que
+/// siempre era `true` con override y rompía el modo claro + la paleta
+/// personalizada). Sin override se usa la luminancia del fondo del `Theme`.
 pub fn is_dark(theme: &Theme) -> bool {
-    let bg = theme.palette().background;
     if let Some(arc) = override_active() {
-        return bg == arc.bg;
+        return is_palette_dark(&arc);
     }
-    bg == DARK.bg
+    is_palette_dark(&UiPalette {
+        bg: theme.palette().background,
+        ..DARK
+    })
 }
 
 /// Paleta semántica del tema activo. Si hay un override activo

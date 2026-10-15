@@ -12,9 +12,9 @@ use crate::domain::dictionary::DictionaryEntry;
 use crate::theme::PaletteConfig;
 use crate::transcribe::Model;
 
-/// Proveedor de corrección IA. Permite elegir entre el LLM local por
-/// defecto (llama.cpp, el que trae la app), un proveedor cloud
-/// (OpenAI) o un endpoint propio OpenAI-compatible (Custom).
+/// Proveedor de corrección IA: Local (llama.cpp descargado bajo demanda,
+/// sprint final) o Remoto (API OpenAI u endpoint propio). `Default` es el
+/// alias histórico de Local; `Cloud`/`Custom` son las dos variantes remotas.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CorrectionProvider {
@@ -24,15 +24,18 @@ pub enum CorrectionProvider {
 }
 
 impl CorrectionProvider {
-    /// Etiqueta del selector de Ajustes. Los nombres son los del
-    /// requisito UX 10/09/2026: dejar claro que Local es el que viene
-    /// con la app, y que Custom es cualquier endpoint OpenAI-compatible.
+    /// Etiqueta del selector de Ajustes (sprint final: solo Local/Remoto).
     pub fn label(self) -> &'static str {
         match self {
-            CorrectionProvider::Default => "Local (llama.cpp, el que viene con la app)",
-            CorrectionProvider::Cloud => "Cloud (OpenAI)",
-            CorrectionProvider::Custom => "Custom LLM (endpoint OpenAI-compatible)",
+            CorrectionProvider::Default => "Local (en este equipo)",
+            CorrectionProvider::Cloud => "Remoto (OpenAI)",
+            CorrectionProvider::Custom => "Remoto (endpoint propio)",
         }
+    }
+
+    /// ¿Es corrección local? Solo `Default`.
+    pub fn is_local(self) -> bool {
+        matches!(self, CorrectionProvider::Default)
     }
 }
 

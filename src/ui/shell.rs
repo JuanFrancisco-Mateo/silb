@@ -145,8 +145,9 @@ impl WhisprApp {
             ));
         }
 
-        // Ayuda: abre Ajustes → Avanzado, que es donde vive lo técnico
-        // (ruta del registro, carpeta de la app) que un usuario busca aquí.
+        // Ayuda: abre Ajustes en General (la entrada segura). Antes apuntaba
+        // a Avanzado sin motivo y confundía (sprint final). Lo técnico sigue
+        // en Avanzado, pero la ayuda no debe llevar allí por defecto.
         let version = row![
             text(format!("v{}", env!("CARGO_PKG_VERSION")))
                 .size(ty.chrome)
@@ -154,7 +155,7 @@ impl WhisprApp {
             Space::with_width(Length::Fill),
             button(icons::icon(icons::CIRCLE_HELP, 15.0))
                 .padding(2.0)
-                .on_press(Message::OpenSettingsSection(SettingsSection::Avanzado))
+                .on_press(Message::OpenSettingsSection(SettingsSection::General))
                 .style(theme::icon_button),
         ]
         .align_y(Alignment::Center)
@@ -189,14 +190,9 @@ impl WhisprApp {
         ty: DesignType,
         t: &theme::UiPalette,
     ) -> Element<'_, Message> {
-        let heading = column![
-            text("Dictado").size(ty.title).color(c.text),
-            text("Tu voz, convertida en texto.")
-                .size(ty.control)
-                .color(c.secondary),
-        ]
-        .spacing(6.0)
-        .width(Length::Fill);
+        let heading = column![text("Dictado").size(ty.title).color(c.text),]
+            .spacing(6.0)
+            .width(Length::Fill);
 
         let mut workspace = column![
             heading,
@@ -535,7 +531,7 @@ impl WhisprApp {
     /// destructivo y explícito: primer clic arma, segundo borra). Con la nota
     /// vacía no hay nada que borrar: el botón sale DESHABILITADO (iced pinta
     /// `Status::Disabled`, que ahora se ve apagado) en vez de activo.
-    fn clear_control(&self, _ty: DesignType) -> Element<'_, Message> {
+    fn clear_control(&self, ty: DesignType) -> Element<'_, Message> {
         if self.clear_armed {
             return row![
                 text("¿Borrar la nota?")
@@ -554,16 +550,16 @@ impl WhisprApp {
         let limpiar = button(
             row![
                 icons::icon(icons::TRASH, 15.0),
-                ui_text("Limpiar").size(theme::FONT_SM),
+                ui_text("Limpiar").size(ty.control),
             ]
-            .spacing(7.0)
+            .spacing(8.0)
             .align_y(Alignment::Center),
         )
         .padding(Padding {
-            top: 8.0,
-            right: 12.0,
-            bottom: 8.0,
-            left: 12.0,
+            top: theme::ACTION_BUTTON_PADDING[0],
+            right: theme::ACTION_BUTTON_PADDING[1],
+            bottom: theme::ACTION_BUTTON_PADDING[0],
+            left: theme::ACTION_BUTTON_PADDING[1],
         })
         .style(theme::secondary);
         if word_count(&self.transcript) > 0 {
@@ -574,16 +570,26 @@ impl WhisprApp {
     }
 
     /// «Otra vez» / «Escribir en app»: reinserción del último turno.
-    fn inject_control(&self, _ty: DesignType) -> Element<'_, Message> {
+    /// Usa el mismo padding que «Copiar texto» para que la fila quede a la
+    /// misma altura (sprint final: la mezcla de paddings la dejaba desplazada).
+    fn inject_control(&self, ty: DesignType) -> Element<'_, Message> {
         let label = if self.config.auto_inject.unwrap_or(true) {
             "Otra vez"
         } else {
             "Escribir en app"
         };
+        let btn = button(ui_text(label).size(ty.control))
+            .padding(Padding {
+                top: theme::ACTION_BUTTON_PADDING[0],
+                right: theme::ACTION_BUTTON_PADDING[1],
+                bottom: theme::ACTION_BUTTON_PADDING[0],
+                left: theme::ACTION_BUTTON_PADDING[1],
+            })
+            .style(theme::secondary);
         if self.last_turn.is_empty() {
-            secondary_button(label).into()
+            btn.into()
         } else {
-            secondary_button(label).on_press(Message::InjectLast).into()
+            btn.on_press(Message::InjectLast).into()
         }
     }
 

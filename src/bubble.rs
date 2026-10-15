@@ -377,8 +377,29 @@ impl WhisprApp {
             container(text("")).into()
         };
 
-        // Imagen de la burbuja: prioridad frames animados > sprite
+        // Imagen de la burbuja: GIF en memoria > frames legacy > sprite
         // estático > render vectorial (el que define `fill` arriba).
+        // El GIF es UN solo archivo (sprint final): se decodifica una vez en
+        // `ensure_gif_loaded` y aquí solo se clona el Handle (barato, Arc).
+        if !self.gif_frames.is_empty() {
+            let idx = self
+                .bubble_frame_index
+                .min(self.gif_frames.len().saturating_sub(1));
+            let handle = self.gif_frames[idx].clone();
+            let bg: Element<'static, Message> = container(
+                iced::widget::image(handle)
+                    .content_fit(iced::ContentFit::Cover)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .opacity(opacity),
+            )
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
+            let center_container: Element<'static, Message> =
+                container(center).width(Length::Fill).height(Length::Fill).into();
+            return iced::widget::stack![bg, center_container].into();
+        }
         let bubble_image: Option<std::path::PathBuf> = self
             .bubble_current_frame()
             .or_else(|| self.bubble_static_image());

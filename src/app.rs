@@ -32,7 +32,7 @@ use std::time::Duration;
 use global_hotkey::GlobalHotKeyEvent;
 use iced::widget::text::Shaping;
 use iced::widget::{
-    button, column, container, horizontal_rule, row, text, text_editor, vertical_rule,
+    button, column, container, horizontal_rule, pick_list, row, text, text_editor, vertical_rule,
     Button, Column, Space, Text,
 };
 use iced::{window, Background, Color, Element, Length, Padding, Point, Subscription, Task, Theme};
@@ -210,6 +210,9 @@ pub enum Message {
     /// Modelo del corrector. Vacío en la UI cae al default
     /// `ornith-1.0-9b`.
     LlmModelChanged(String),
+    /// Ruta explícita del server LLM local (vacío = autodetección).
+    /// Vive en Avanzado → Corrección IA (sprint final).
+    LlmServerPathChanged(String),
     LlmApiKeyChanged(String),
     /// Timeout HTTP en segundos (1..=120). Sale del slider; el getter
     /// lo pasa a `LlmConfig::timeout_secs` y `ureq::timeout`.
@@ -282,6 +285,13 @@ pub enum Message {
     /// Importa el diccionario desde ese fichero (reemplaza la lista actual).
     ImportDictionary,
     InputDeviceSelected(String),
+    /// Texto del campo de atajo global (sprint final: el atajo se cambia
+    /// desde Ajustes → General, no solo en config.json).
+    ShortcutInputChanged(String),
+    /// Aplica el atajo del campo (re-registra el hotkey global).
+    ShortcutApply,
+    /// Vuelve al atajo por defecto (`Ctrl+Shift+D`).
+    ShortcutReset,
     /// Idioma de transcripción seleccionado en Ajustes. Valor crudo:
     /// `"auto"` → autodetección; cualquier otro → BCP-47 (`"es"`, `"en"`,
     /// …). Se persiste tal cual en `config.language`; el getter decide
@@ -460,6 +470,10 @@ pub struct WhisprApp {
     /// Etiqueta canónica del atajo global registrado («Ctrl+Shift+D» o el
     /// `shortcut` de config.json) para los textos de la UI.
     pub(crate) hotkey_label: String,
+    /// Borrador del campo de atajo (None = sin edición en curso).
+    pub(crate) shortcut_input: Option<String>,
+    /// Error de la última aplicación de atajo (formato inválido u ocupado).
+    pub(crate) shortcut_error: Option<String>,
     /// Placeholder del editor de la nota (vive como campo porque la API
     /// del editor pide un `&str` prestado por frame).
     pub(crate) placeholder_text: String,
@@ -525,6 +539,11 @@ pub struct WhisprApp {
     /// `0` por defecto; se reinicia al elegir una nueva carpeta de
     /// frames (ver `Message::BubbleFramesPicked`).
     pub(crate) bubble_frame_index: usize,
+    /// Frames GIF decodificados en memoria (un solo archivo, sprint final).
+    /// Se cargan de forma perezosa cuando `bubble_image_path` es un `.gif`;
+    /// vacíos = sin GIF activo. `gif_loaded_for` evita re-decodificar a 60 Hz.
+    pub(crate) gif_frames: Vec<iced::widget::image::Handle>,
+    pub(crate) gif_loaded_for: Option<std::path::PathBuf>,
     // ── Corrección IA (LLM) ────────────────────────────────────────────────
     pub(crate) llm_rx: Option<Receiver<Result<LlmResult, String>>>,
     /// Instrucción en ruta al LLM (con el target capturado): si la llamada
@@ -674,6 +693,8 @@ impl WhisprApp {
             hotkey_rx,
             hotkey,
             hotkey_label,
+            shortcut_input: None,
+            shortcut_error: None,
             placeholder_text,
             transcript_editor: text_editor::Content::new(),
             copied_at: None,
@@ -697,6 +718,8 @@ impl WhisprApp {
             bubble_drag: None,
             pending_inject: false,
             bubble_frame_index: 0,
+            gif_frames: Vec::new(),
+            gif_loaded_for: None,
             llm_rx: None,
             llm_pending: None,
             pending_diff: None,
@@ -1591,6 +1614,45 @@ impl WhisprApp {
         )
     }
 
+    /// ¿Hay animación GIF activa? (imagen configurada + es `.gif`).
+    pub(crate) fn gif_animation_active(&self) -> bool {
+        self.bubble_static_image()
+            .map(|p| crate::custom_image::is_gif_path(&p))
+            .unwrap_or(false)
+    }
+
+    /// Carga perezosa de los frames GIF en memoria (idempotente por ruta).
+    /// Se llama desde `AnimationTick` y al elegir imagen: decodifica una sola
+    /// vez por archivo; un GIF corrupto deja `gif_frames` vacío (fallback).
+    pub(crate) fn ensure_gif_loaded(&mut self) {
+        let current = self.bubble_static_image();
+        let Some(path) = current else {
+            self.gif_frames.clear();
+            self.gif_loaded_for = None;
+            return;
+        };
+        if self.gif_loaded_for.as_ref() == Some(&path) {
+            return;
+        }
+        self.gif_loaded_for = Some(path.clone());
+        self.bubble_frame_index = 0;
+        if !crate::custom_image::is_gif_path(&path) {
+            self.gif_frames.clear();
+            return;
+        }
+        match crate::custom_image::decode_gif_frames(&path) {
+            Some(frames) if frames.len() > 1 => {
+                self.gif_frames = frames
+                    .into_iter()
+                    .map(|f| {
+                        iced::widget::image::Handle::from_rgba(f.width, f.height, f.rgba)
+                    })
+                    .collect();
+            }
+            _ => self.gif_frames.clear(),
+        }
+    }
+
     /// Frame actual del sprite animado (la ruta del fichero a mostrar).
     /// Si la animación está parada o el índice quedó fuera de rango,
     /// devuelve el primer frame (determinista). Es el método que usa
@@ -1776,6 +1838,7 @@ impl WhisprApp {
                 | Message::LlmApiKeyChanged(..)
                 | Message::LlmTimeoutChanged(..)
                 | Message::LlmThresholdChanged(..)
+                | Message::LlmServerPathChanged(..)
                 | Message::LlmConfirmToggled(..)
                 | Message::ApplyPendingDiff
                 | Message::DiscardPendingDiff
@@ -1802,7 +1865,10 @@ impl WhisprApp {
             m @ (Message::InputDeviceSelected(..)
                 | Message::LanguageSelected(..)
                 | Message::BeamSizeChanged(..)
-                | Message::ThreadsChanged(..)) => self.handle_dictation_engine(m),
+                | Message::ThreadsChanged(..)
+                | Message::ShortcutInputChanged(..)
+                | Message::ShortcutApply
+                | Message::ShortcutReset) => self.handle_dictation_engine(m),
             m @ (Message::ToggleTheme
                 | Message::ThemeModeChanged(..)
                 | Message::FontSizeChanged(..)
@@ -2056,7 +2122,9 @@ impl WhisprApp {
         // vacía y no la crea): cero coste extra. El `interval_from_fps`
         // cae al default si el FPS es inválido (defensa redundante: el
         // getter ya clampea).
-        let animation = if self.bubble_frames_resolved().is_some() {
+        let animation = if self.bubble_frames_resolved().is_some()
+            || self.gif_animation_active()
+        {
             let fps = self.config.bubble_animation_fps();
             let interval = crate::custom_image::interval_from_fps(fps);
             iced::time::every(interval).map(|_| Message::AnimationTick)
@@ -2206,20 +2274,63 @@ impl WhisprApp {
         .width(Length::Fill);
 
         if let StartupPhase::Failed { error } = &self.startup {
-            content = content.push(
-                text(format!(
-                    "{error} — si falta el modelo de voz, «Reintentar» lo descarga \
-                     automáticamente en %APPDATA%\\whispr-open\\models."
-                ))
-                .size(fs.sm)
-                .color(t.err)
-                .shaping(Shaping::Advanced),
-            );
-            content = content.push(
+            // Configuración inicial (sprint final): la app abre VACÍA y lo
+            // primero es descargar un modelo de transcripción. La corrección
+            // IA es opcional y se descarga después, solo si se activa.
+            content = column![
+                ui_text("Te damos la bienvenida a Silb").size(fs.hero).color(t.text),
+                text(error.clone()).size(fs.sm).color(t.err).shaping(Shaping::Advanced),
+                text("Para empezar, descarga un modelo de transcripción (Tiny es \
+                     rápido y ocupa ~75 MB; Small es más fiel). La corrección IA \
+                     es opcional: se descarga después, solo si la activas en \
+                     Corrección IA.")
+                    .size(fs.sm)
+                    .color(t.dim)
+                    .shaping(Shaping::Advanced),
+                row![
+                    text("Modelo de voz").size(fs.md).color(t.text),
+                    pick_list(
+                        Model::all().to_vec(),
+                        Some(self.config.selected_model()),
+                        Message::ModelSelected,
+                    )
+                    .placeholder("Modelo")
+                    .text_size(fs.md)
+                    .padding(8.0)
+                    .style(theme::pick_list),
+                ]
+                .spacing(12.0)
+                .align_y(iced::Alignment::Center),
+                {
+                    let progress: Element<'_, Message> = match &self.status {
+                        Status::Downloading { downloaded, total, .. } => {
+                            let label = if *total > 0 {
+                                format!(
+                                    "Descargando… {} / {} MB",
+                                    downloaded / 1_048_576,
+                                    total / 1_048_576
+                                )
+                            } else {
+                                format!("Descargando… {} MB", downloaded / 1_048_576)
+                            };
+                            text(label).size(fs.sm).color(t.accent_text).shaping(Shaping::Advanced).into()
+                        }
+                        _ => text("Al elegir el modelo empieza la descarga; al terminar \
+                             la app continúa sola.")
+                            .size(fs.sm)
+                            .color(t.dim)
+                            .shaping(Shaping::Advanced)
+                            .into(),
+                    };
+                    progress
+                },
                 button(ui_text("Reintentar"))
                     .on_press(Message::RetryStartup)
-                    .style(theme::primary),
-            );
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_3)
+            .align_x(iced::Alignment::Center)
+            .width(Length::Fill);
         }
 
         container(content)
@@ -2551,7 +2662,7 @@ fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
     /// Placeholder del editor cuando la nota está vacía: cómo empezar. Se
     /// guarda como campo (la API del editor pide un préstamo por el frame,
     /// no un owned).
-    fn transcript_placeholder(hotkey_label: &str) -> String {
+    pub(crate) fn transcript_placeholder(hotkey_label: &str) -> String {
         format!(
             "Pulsa {hotkey_label} o el botón del micrófono y empieza a hablar.\n\
              La nota se puede corregir a mano aquí."
@@ -3249,23 +3360,22 @@ mod tests {
         assert!(!aviso.contains("nada sale"), "{aviso}");
     }
 
-    /// Los nombres del selector de proveedor (requisito 10/09/2026) son
-    /// autoexplicativos: Local = llama.cpp que viene con la app (default),
-    /// Custom = endpoint OpenAI-compatible, Cloud = OpenAI.
+    /// Los nombres del selector de proveedor (sprint final) son
+    /// autoexplicativos: solo dos modos, Local (en este equipo, nada viene
+    /// de serie) o Remoto (con API key). `Default` es el alias de Local.
     #[test]
     fn etiquetas_de_proveedor_dicen_exactamente_lo_que_hacen() {
         let local = CorrectionProvider::Default.label();
         assert!(local.contains("Local"));
-        assert!(local.contains("llama.cpp"));
-        assert!(local.contains("viene con la app"));
+        assert!(CorrectionProvider::Default.is_local());
 
         let custom = CorrectionProvider::Custom.label();
-        assert!(custom.contains("Custom LLM"));
-        assert!(custom.contains("OpenAI-compatible"));
+        assert!(custom.contains("Remoto"));
+        assert!(!CorrectionProvider::Custom.is_local());
 
         let cloud = CorrectionProvider::Cloud.label();
-        assert!(cloud.contains("Cloud"));
-        assert!(cloud.contains("OpenAI"));
+        assert!(cloud.contains("Remoto"));
+        assert!(!CorrectionProvider::Cloud.is_local());
     }
     // ── UI 24/09/2026: secciones de la ventana y aviso del medidor ──────────
 

@@ -58,6 +58,10 @@ ureq = { version = "2.12", features = ["tls"] }
 # Selector de archivos nativo (Ajustes → ruta del server LLM «Examinar…»):
 # diálogo de Windows sin webview. Solo se toca desde el UI thread.
 rfd = "0.15"
+# Decodificación de GIF animado para la burbuja (un solo archivo, sprint
+# final). Solo el codec gif, sin default-features: evita arrastrar rav1e/
+# avif al árbol y al binario (iced ya trae lo suyo por separado).
+image = { version = "0.25", default-features = false, features = ["gif"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 dirs = "6"
