@@ -219,14 +219,9 @@ impl WhisprApp {
         ty: DesignType,
         t: &UiPalette,
     ) -> Element<'_, Message> {
-        let heading = column![
-            text("Ajustes").size(ty.title).color(c.text),
-            text("Tu forma de dictar, a tu medida.")
-                .size(ty.control)
-                .color(c.secondary),
-        ]
-        .spacing(6.0)
-        .width(Length::Fill);
+        let heading = column![text("Ajustes").size(ty.title).color(c.text),]
+            .spacing(6.0)
+            .width(Length::Fill);
 
         // Solo el contenido de la pestaña activa hace scroll: la cabecera, la
         // navegación y el pie del diseño quedan siempre a la vista.
@@ -489,6 +484,54 @@ impl WhisprApp {
                     ty,
                 ),
             ]),
+            c,
+            ty,
+        ));
+
+        // ── Atajo de dictado (sprint final: editable, antes solo config.json)
+        let shortcut_value = self
+            .shortcut_input
+            .clone()
+            .unwrap_or_else(|| self.config.shortcut());
+        let mut shortcut_rows: Vec<Element<'_, Message>> = vec![preference_row(
+            "Atajo global",
+            Some("P. ej. Ctrl+Shift+D, Alt+Space, Ctrl+Alt+F12."),
+            row![
+                text_input("Ctrl+Shift+D", &shortcut_value)
+                    .on_input(Message::ShortcutInputChanged)
+                    .on_submit(Message::ShortcutApply)
+                    .padding(theme::FIELD_PADDING)
+                    .size(ty.control)
+                    .style(theme::text_input)
+                    .width(Length::Fill),
+                button(text("Aplicar").size(fs.sm))
+                    .on_press(Message::ShortcutApply)
+                    .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
+                    .style(theme::primary),
+                button(text("Restablecer").size(fs.sm))
+                    .on_press(Message::ShortcutReset)
+                    .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
+                    .style(theme::secondary),
+            ]
+            .spacing(theme::SPACE_2)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .into(),
+            c,
+            ty,
+        )];
+        if let Some(err) = &self.shortcut_error {
+            shortcut_rows.push(note_row(err, t.err, ty));
+        } else {
+            shortcut_rows.push(note_row(
+                &format!("Atajo activo: {}", self.hotkey_label),
+                c.faint,
+                ty,
+            ));
+        }
+        col = col.push(section_block(
+            "Atajo de dictado",
+            design_card(shortcut_rows),
             c,
             ty,
         ));
@@ -817,13 +860,16 @@ impl WhisprApp {
         ));
         rows.push(note_row(&format!("Ruta actual: {bg_label}"), t.dim, ty));
 
-        // ── Sprite estático de la burbuja ────────────────────────────────
+        // ── Imagen de la burbuja: UN solo archivo (sprint final) ─────────
+        // PNG/JPG/WebP = estática; GIF = animada (se decodifica en memoria).
+        // Las carpetas de frames legacy siguen funcionando si ya estaban
+        // configuradas, pero la UI ya no ofrece elegirlas (muy lioso).
         let bubble_img_label = match self.config.bubble_image_path() {
             Some(p) => p,
-            None => "(sin sprite; usando el render vectorial)",
+            None => "(sin imagen; usando el render vectorial)",
         };
         rows.push(preference_row(
-            "Sprite de la burbuja",
+            "Imagen de la burbuja",
             None,
             self.image_controls(
                 "Elegir…",
@@ -839,25 +885,12 @@ impl WhisprApp {
             t.dim,
             ty,
         ));
-
-        // ── Carpeta de frames (animación) ────────────────────────────────
-        let frames_label = match self.config.bubble_frames_path() {
-            Some(p) => p,
-            None => "(sin carpeta; solo sprite estático)",
-        };
-        rows.push(preference_row(
-            "Frames de animación",
-            None,
-            self.image_controls(
-                "Elegir carpeta…",
-                Message::BubbleFramesBrowse,
-                Message::BubbleFramesClear,
-                fs,
-            ),
-            c,
+        rows.push(note_row(
+            "Un solo archivo: PNG/JPG/WebP para imagen fija, GIF para \
+             animación. Los vídeos (WebM/MP4) no están soportados.",
+            c.faint,
             ty,
         ));
-        rows.push(note_row(&format!("Ruta actual: {frames_label}"), t.dim, ty));
 
         // ── FPS de la animación ──────────────────────────────────────────
         let fps = self.config.bubble_animation_fps();
@@ -877,9 +910,8 @@ impl WhisprApp {
             ty,
         ));
         rows.push(note_row(
-            "Frames por segundo de la animación de la burbuja (rango 1–30; el \
-             default es 12). Cambiar la ruta o pulsar «Quitar» detiene la \
-             animación sin coste extra.",
+            "Tope de frames por segundo del GIF (rango 1–30; default 12). \
+             Quitar la imagen detiene la animación sin coste extra.",
             c.faint,
             ty,
         ));
@@ -1207,24 +1239,8 @@ impl WhisprApp {
         let beam = self.config.beam_size();
         let threads = self.config.n_threads();
 
-        // Resumen informativo de la inyección (formato / retardo / filtro
-        // de ventana activa): sigue siendo informativo aquí, igual que en
-        // el antiguo panel. La edición de estos parámetros es interna a
-        // `config.inject_settings()`; no se exponen controles en la UI
-        // porque están fijados por el producto (requisito UX 10/09/2026).
-        let injection_label = {
-            let inj = self.config.inject_settings();
-            let destino = match inj.window_filter.as_deref() {
-                Some(f) => format!("solo «{f}»"),
-                None => "cualquier app".to_string(),
-            };
-            format!(
-                "Inyección: {} · retardo {} ms · {}",
-                inj.format.label(),
-                inj.delay.as_millis(),
-                destino,
-            )
-        };
+        // Inyección: sin fila informativa en Ajustes (requisito sprint final:
+        // el resumen redundante se elimina; los parámetros los fija el producto).
 
         let mut col = Column::new()
             .spacing(theme::GRID_SECTION_GAP)
@@ -1269,14 +1285,7 @@ impl WhisprApp {
             c,
             ty,
         ));
-        // La inyección no expone controles (los fija el producto): su resumen
-        // va como nota de la sección, con el mismo inset que las filas.
-        col = col.push(section_block(
-            "Inyección en la app activa",
-            design_card(vec![note_row(&injection_label, c.faint, ty)]),
-            c,
-            ty,
-        ));
+        // (Sin bloque de inyección: eliminado por redundante.)
         col.into()
     }
 
@@ -1310,10 +1319,10 @@ impl WhisprApp {
         let mut col = Column::new()
             .spacing(theme::GRID_SECTION_GAP)
             .width(Length::Fill);
-        col = col.push(section_block(
-            "Corrección IA",
-            design_card(
-                vec![
+        // Sprint final: solo dos modos. Local = llama.cpp descargado bajo
+        // demanda (nada viene de serie); Remoto = solo API key + proveedor.
+        let is_local = self.config.correction_provider().is_local();
+        let mut main_rows: Vec<Element<'_, Message>> = vec![
                     note_row(&status_text, status_color, ty),
                     // El interruptor va a la columna de control (el mismo sitio que
                     // en General: los toggles de todas las secciones comparten
@@ -1361,143 +1370,98 @@ impl WhisprApp {
                         ty,
                     ),
                     note_row(
-                        "Quién corrige lo que dictas: Local — llama.cpp, el que viene \
-                     con la app (sin internet, recomendado) · Custom LLM — tu \
-                     propio endpoint OpenAI-compatible · Cloud — OpenAI. Por \
-                     defecto: Local.",
+                        "Quién corrige lo que dictas: Local — en este equipo, sin \
+                     internet (se descarga solo si lo activas) · Remoto — con \
+                     tu API key (OpenAI o endpoint propio).",
                         c.faint,
                         ty,
                     ),
-                    preference_row(
-                        "Endpoint LLM",
-                        None,
-                        text_input(
-                            "http://127.0.0.1:8081/v1",
-                            self.config.llm_base_url.as_deref().unwrap_or(""),
-                        )
-                        .on_input(Message::LlmEndpointChanged)
-                        .padding(theme::FIELD_PADDING)
-                        .size(ty.control)
-                        .style(theme::text_input)
-                        .width(Length::Fill)
-                        .into(),
-                        c,
-                        ty,
-                    ),
-                    note_row(
-                        "Dirección del servidor de IA (API compatible con OpenAI). \
-                     Local: http://127.0.0.1:8081/v1.",
-                        c.faint,
-                        ty,
-                    ),
-                    preference_row(
-                        "Modelo IA",
-                        None,
-                        text_input(
-                            "ornith-1.0-9b / gpt-4o-mini",
-                            self.config.llm_model.as_deref().unwrap_or(""),
-                        )
-                        .on_input(Message::LlmModelChanged)
-                        .padding(theme::FIELD_PADDING)
-                        .size(ty.control)
-                        .style(theme::text_input)
-                        .width(Length::Fill)
-                        .into(),
-                        c,
-                        ty,
-                    ),
-                    note_row(
-                        "El modelo que corrige. Debe estar en tu servidor local o ser \
-                     uno de los que ofrece la nube.",
-                        c.faint,
-                        ty,
-                    ),
-                    // El resto de la tarjeta: la API key (que solo existe con
-                    // proveedor que la exija). El server LLM ya no tiene fila:
-                    // viaja en el paquete (`vendor/llama/`) y no se configura.
-                ]
-                .into_iter()
-                .chain(self.api_key_rows(c, ty))
-                .collect(),
-            ),
+        ];
+        if is_local {
+            main_rows.push(note_row(
+                "Modelos rápidos para corrección (<1,2 GB, se descargan bajo \
+                 demanda a models-llm/): Qwen2.5-0.5B recomendado (~491 MB) · \
+                 Llama 3.2 1B (~808 MB) · Qwen2.5-1.5B (~1,1 GB). Nada se \
+                 descarga sin tu clic. El server (llama-server.exe) también se \
+                 descarga a bin/ la primera vez.",
+                c.faint,
+                ty,
+            ));
+            main_rows.push(preference_row(
+                "Modelo IA local",
+                None,
+                text_input(
+                    "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+                    self.config.llm_model.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmModelChanged)
+                .padding(theme::FIELD_PADDING)
+                .size(ty.control)
+                .style(theme::text_input)
+                .width(Length::Fill)
+                .into(),
+                c,
+                ty,
+            ));
+            main_rows.push(note_row(
+                "Nombre del GGUF en models-llm/. Vacío = Qwen2.5-0.5B por defecto.",
+                c.faint,
+                ty,
+            ));
+        } else {
+            main_rows.push(preference_row(
+                "Endpoint LLM",
+                None,
+                text_input(
+                    "https://api.openai.com/v1",
+                    self.config.llm_base_url.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmEndpointChanged)
+                .padding(theme::FIELD_PADDING)
+                .size(ty.control)
+                .style(theme::text_input)
+                .width(Length::Fill)
+                .into(),
+                c,
+                ty,
+            ));
+            main_rows.push(note_row(
+                "Dirección del servidor de IA (API compatible con OpenAI).",
+                c.faint,
+                ty,
+            ));
+            main_rows.push(preference_row(
+                "Modelo IA",
+                None,
+                text_input(
+                    "gpt-4o-mini",
+                    self.config.llm_model.as_deref().unwrap_or(""),
+                )
+                .on_input(Message::LlmModelChanged)
+                .padding(theme::FIELD_PADDING)
+                .size(ty.control)
+                .style(theme::text_input)
+                .width(Length::Fill)
+                .into(),
+                c,
+                ty,
+            ));
+            main_rows.push(note_row(
+                "El modelo que corrige en la nube.",
+                c.faint,
+                ty,
+            ));
+            main_rows.extend(self.api_key_rows(c, ty));
+        }
+        col = col.push(section_block(
+            "Corrección IA",
+            design_card(main_rows),
             c,
             ty,
         ));
 
-        // ── Detalles técnicos ───────────────────────────────────────────
-        // Timeout: slider 1..=120 s (25 por defecto). El getter clampea.
-        col = col.push(section_block(
-            "Detalles técnicos",
-            design_card(vec![
-                preference_row(
-                    "Espera máx. (s)",
-                    None,
-                    slider(
-                        1..=120,
-                        self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
-                        Message::LlmTimeoutChanged,
-                    )
-                    .step(1u32)
-                    .width(Length::Fixed(CONTROL_WIDTH))
-                    .into(),
-                    c,
-                    ty,
-                ),
-                note_row(
-                    "Espera máxima de la IA antes de dar el turno por \
-                     definitivo: si lo supera, se inserta sin corregir. \
-                     Rango 1–120 s, recomendado: 25 s.",
-                    c.faint,
-                    ty,
-                ),
-                // Umbral del clasificador: 0..=100. Default 50. Etiqueta llana
-                // «sensibilidad» (requisito UX 10/09/2026: «umbral clasif.» no
-                // dice nada).
-                preference_row(
-                    &format!("Sensibilidad: {}", self.config.llm_classifier_threshold()),
-                    None,
-                    slider(
-                        0..=100,
-                        u32::from(self.config.llm_classifier_threshold()),
-                        Message::LlmThresholdChanged,
-                    )
-                    .step(1u32)
-                    .width(Length::Fixed(CONTROL_WIDTH))
-                    .into(),
-                    c,
-                    ty,
-                ),
-                note_row(
-                    "Con qué frecuencia se envía un turno a la IA: 50 = \
-                     casi siempre que hay una señal de corrección, 100 = \
-                     casi nunca. Rango 0–100, recomendado: 50.",
-                    c.faint,
-                    ty,
-                ),
-                preference_row(
-                    "Confirmar antes de aplicar",
-                    None,
-                    toggle_control(
-                        None,
-                        self.config.ai_correction_confirm(),
-                        Message::LlmConfirmToggled,
-                        c,
-                        ty,
-                    ),
-                    c,
-                    ty,
-                ),
-                note_row(
-                    "Pide tu visto bueno (Aplicar/Descartar) antes de \
-                     modificar el texto. Recomendado si prefieres revisar \
-                     lo que corrige la IA.",
-                    c.faint,
-                    ty,
-                ),
-            ]),
-            c,
-            ty,
-        ));
+        // (Los detalles técnicos —timeout, sensibilidad, confirmación— viven
+        // ahora en Avanzado → Corrección IA, sprint final.)
         col.into()
     }
 
@@ -1538,22 +1502,15 @@ impl WhisprApp {
     }
 
     /// ── Sección «Avanzado» ──────────────────────────────────────────────
-    /// Reservada para opciones transversales que no encajan en las
-    /// secciones anteriores. Tras el refactor por pestañas queda vacía;
-    /// se mantiene visible (en vez de oculta) porque la regla de
-    /// producto dice que toda opción técnica necesita label claro, y
-    /// este lands de aterrizaje es la casa natural de futuras opciones
-    /// avanzadas (p. ej. reset completo, importación/export global,
-    /// diagnóstico del server LLM). En fases siguientes puede poblarse.
+    /// Sprint final: mismas secciones que las pestañas principales, con las
+    /// opciones técnicas movidas aquí (timeout/sensibilidad/confirmación de
+    /// IA, server LLM, registro). Las pestañas principales quedan limpias.
     pub(crate) fn settings_section_advanced(
         &self,
         c: Chrome,
         ty: DesignType,
         _t: &UiPalette,
     ) -> Element<'_, Message> {
-        // H2 (QA 24/09/2026): el usuario no encontraba el log. Su ruta se
-        // muestra aquí (como ayuda de su fila) y hay un botón que abre la
-        // carpeta en el Explorador (también viven ahí config.json y assets/).
         let log_path = crate::log::log_path().to_string_lossy().into_owned();
         let debug_on = crate::log::debug_enabled();
         let debug_state = if debug_on {
@@ -1561,7 +1518,112 @@ impl WhisprApp {
         } else {
             "WHISPR_DEBUG desactivado"
         };
-        section_block(
+        let mut col = Column::new()
+            .spacing(theme::GRID_SECTION_GAP)
+            .width(Length::Fill);
+        col = col.push(section_block(
+            "Corrección IA (avanzado)",
+            design_card(vec![
+                preference_row(
+                    "Espera máx. (s)",
+                    None,
+                    slider(
+                        1..=120,
+                        self.config.llm_timeout_secs().unwrap_or(25).clamp(1, 120) as u32,
+                        Message::LlmTimeoutChanged,
+                    )
+                    .step(1u32)
+                    .width(Length::Fixed(CONTROL_WIDTH))
+                    .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Espera máxima de la IA antes de dar el turno por definitivo: \
+                     si lo supera, se inserta sin corregir. Rango 1–120 s.",
+                    c.faint,
+                    ty,
+                ),
+                preference_row(
+                    &format!("Sensibilidad: {}", self.config.llm_classifier_threshold()),
+                    None,
+                    slider(
+                        0..=100,
+                        u32::from(self.config.llm_classifier_threshold()),
+                        Message::LlmThresholdChanged,
+                    )
+                    .step(1u32)
+                    .width(Length::Fixed(CONTROL_WIDTH))
+                    .into(),
+                    c,
+                    ty,
+                ),
+                note_row(
+                    "Con qué frecuencia se envía un turno a la IA. Rango 0–100.",
+                    c.faint,
+                    ty,
+                ),
+                preference_row(
+                    "Confirmar antes de aplicar",
+                    None,
+                    toggle_control(
+                        None,
+                        self.config.ai_correction_confirm(),
+                        Message::LlmConfirmToggled,
+                        c,
+                        ty,
+                    ),
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    "Server LLM local",
+                    Some("Ruta explícita; vacío = autodetección (bin/ → D:/LlamaCPP → PATH)."),
+                    text_input(
+                        "(autodetección)",
+                        self.config.llama_server_path().unwrap_or(""),
+                    )
+                    .on_input(Message::LlmServerPathChanged)
+                    .padding(theme::FIELD_PADDING)
+                    .size(ty.control)
+                    .style(theme::text_input)
+                    .width(Length::Fill)
+                    .into(),
+                    c,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
+        col = col.push(section_block(
+            "Dictado (avanzado)",
+            design_card(vec![
+                preference_row(
+                    &format!("Calidad (beam): {}", self.config.beam_size()),
+                    Some("Mismo ajuste que en Dictado, aquí sin explicaciones."),
+                    slider(1..=8, self.config.beam_size(), Message::BeamSizeChanged)
+                        .step(1u32)
+                        .width(Length::Fixed(CONTROL_WIDTH))
+                        .into(),
+                    c,
+                    ty,
+                ),
+                preference_row(
+                    &format!("Hilos CPU: {}", self.config.n_threads()),
+                    None,
+                    slider(1..=16, self.config.n_threads(), Message::ThreadsChanged)
+                        .step(1u32)
+                        .width(Length::Fixed(CONTROL_WIDTH))
+                        .into(),
+                    c,
+                    ty,
+                ),
+            ]),
+            c,
+            ty,
+        ));
+        col = col.push(section_block(
             "Dónde queda todo",
             design_card(vec![
                 preference_row(
@@ -1576,26 +1638,24 @@ impl WhisprApp {
                     ty,
                 ),
                 note_row(
-                    "Rota solo: al pasar de 1 MB el fichero pasa a .1 y el .1 a \
-                     .2, así que nunca crece sin límite. Las trazas de alta \
-                     frecuencia (cada movimiento al arrastrar la burbuja) solo se \
-                     escriben con la variable de entorno WHISPR_DEBUG=1.",
+                    "Rota al pasar de 1 MB (.1/.2). Trazas de arrastre solo con \
+                     WHISPR_DEBUG=1.",
                     c.faint,
                     ty,
                 ),
                 preference_row("Registro detallado", Some(debug_state), no_control(), c, ty),
-                preference_row("Imágenes y animación propias", None, no_control(), c, ty),
+                preference_row("Assets propios", None, no_control(), c, ty),
                 note_row(
-                    "Al elegir una imagen o una carpeta de frames en Apariencia, \
-                     la app guarda una COPIA en la carpeta de arriba (assets/): \
-                     puedes vaciar Descargas sin perder tu personalización.",
+                    "Fondo y GIF de la burbuja se copian a assets/: puedes vaciar \
+                     Descargas sin perderlos.",
                     c.faint,
                     ty,
                 ),
             ]),
             c,
             ty,
-        )
+        ));
+        col.into()
     }
 }
 

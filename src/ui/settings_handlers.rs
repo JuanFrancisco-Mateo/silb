@@ -129,6 +129,17 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            Message::LlmServerPathChanged(s) => {
+                let trimmed = s.trim();
+                self.config.llama_server_path = if trimmed.is_empty() {
+                    None
+                } else {
+                    Some(trimmed.to_string())
+                };
+                let _ = self.config.heal_llama_server_path();
+                self.save_config();
+                Task::none()
+            }
             Message::LlmConfirmToggled(on) => {
                 self.config.ai_correction_confirm = Some(on);
                 // Si se apaga el modo confirmar y hay un diff pendiente,
@@ -402,6 +413,55 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            // ── Atajo global (sprint final: editable en General) ──────────
+            Message::ShortcutInputChanged(s) => {
+                self.shortcut_input = Some(s);
+                Task::none()
+            }
+            Message::ShortcutApply => {
+                let raw = self
+                    .shortcut_input
+                    .clone()
+                    .unwrap_or_else(|| self.config.shortcut());
+                match crate::hotkey::HotkeyManager::register(raw.trim()) {
+                    Ok(manager) => {
+                        self.hotkey_label = manager.label();
+                        self.hotkey_rx = manager.listen();
+                        self.hotkey = manager;
+                        self.config.shortcut =
+                            if raw.trim().is_empty() { None } else { Some(raw.trim().to_string()) };
+                        self.shortcut_error = None;
+                        self.shortcut_input = None;
+                        self.placeholder_text =
+                            crate::app::transcript_placeholder(&self.hotkey_label);
+                        self.save_config();
+                    }
+                    Err(e) => {
+                        self.shortcut_error = Some(e);
+                    }
+                }
+                Task::none()
+            }
+            Message::ShortcutReset => {
+                let def = crate::hotkey::DEFAULT_SHORTCUT.to_string();
+                match crate::hotkey::HotkeyManager::register(&def) {
+                    Ok(manager) => {
+                        self.hotkey_label = manager.label();
+                        self.hotkey_rx = manager.listen();
+                        self.hotkey = manager;
+                        self.config.shortcut = None;
+                        self.shortcut_error = None;
+                        self.shortcut_input = None;
+                        self.placeholder_text =
+                            crate::app::transcript_placeholder(&self.hotkey_label);
+                        self.save_config();
+                    }
+                    Err(e) => {
+                        self.shortcut_error = Some(e);
+                    }
+                }
+                Task::none()
+            }
             _ => Task::none(),
         }
     }
@@ -542,7 +602,7 @@ impl WhisprApp {
             Message::BubbleImageBrowse => Task::perform(
                 async {
                     rfd::FileDialog::new()
-                        .set_title("Elegir sprite estático de la burbuja")
+                        .set_title("Elegir imagen de la burbuja (PNG o GIF animado)")
                         .add_filter("Imagen", &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff"])
                         .pick_file()
                         .map(|p| p.to_string_lossy().into_owned())
@@ -568,6 +628,13 @@ impl WhisprApp {
                             );
                             self.config.bubble_image_path =
                                 Some(dest.to_string_lossy().into_owned());
+                            // El GIF se decodifica en el próximo AnimationTick
+                            // (ensure_gif_loaded es por ruta: al cambiar el
+                            // path se recarga solo). Limpiamos la caché aquí
+                            // para que el cambio sea inmediato.
+                            self.gif_frames.clear();
+                            self.gif_loaded_for = None;
+                            self.bubble_frame_index = 0;
                             self.save_config();
                         } else {
                             crate::log!(
@@ -590,6 +657,9 @@ impl WhisprApp {
             }
             Message::BubbleImageClear => {
                 self.config.bubble_image_path = None;
+                self.gif_frames.clear();
+                self.gif_loaded_for = None;
+                self.bubble_frame_index = 0;
                 self.save_config();
                 Task::none()
             }
@@ -655,12 +725,16 @@ impl WhisprApp {
                 Task::none()
             }
             Message::AnimationTick => {
-                // Avanza el frame actual SOLO si la animación por frames
-                // está activa. Si el usuario la desactivó mientras el
-                // Poll seguía vivo, el índice se queda en 0 (la
-                // suscripción se desactiva en `subscription()` cuando no
-                // hay frames resueltos, pero por defensa también
-                // guardamos aquí).
+                // GIF de un solo archivo primero (sprint final); carpetas
+                // legacy después. Sin animación activa el índice queda en 0.
+                self.ensure_gif_loaded();
+                if !self.gif_frames.is_empty() {
+                    self.bubble_frame_index = crate::custom_image::next_frame_index(
+                        self.bubble_frame_index,
+                        self.gif_frames.len(),
+                    );
+                    return Task::none();
+                }
                 if let Some(frames) = self.bubble_frames_resolved() {
                     if !frames.is_empty() {
                         self.bubble_frame_index =

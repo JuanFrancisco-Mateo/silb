@@ -186,6 +186,68 @@ pub fn interval_from_fps(fps: u8) -> std::time::Duration {
     std::time::Duration::from_millis(1_000_u64 / u64::from(fps))
 }
 
+/// ── GIF animado de un solo archivo (sprint final) ─────────────────────────
+///
+/// La burbuja acepta UN archivo: PNG/JPG/WebP estático o GIF animado.
+/// iced 0.13 solo pinta el primer frame del GIF, así que los frames se
+/// decodifican aquí con el crate `image` y se sirven como RGBA en memoria
+/// (la animación avanza con el mismo `AnimationTick` que las carpetas
+/// legacy). Un GIF corrupto o de un solo frame → `None`/fallback estático.
+
+/// ¿Es ruta a un `.gif`? Solo extensión (sin I/O).
+pub fn is_gif_path(path: &std::path::Path) -> bool {
+    path.extension()
+        .and_then(|s| s.to_str())
+        .map(|s| s.eq_ignore_ascii_case("gif"))
+        .unwrap_or(false)
+}
+
+/// Un frame GIF decodificado: dimensiones + píxeles RGBA + retardo en ms.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GifFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba: Vec<u8>,
+    pub delay_ms: u64,
+}
+
+/// Decodifica TODOS los frames de un GIF a RGBA en memoria.
+/// `None` si el fichero no existe, no es GIF o está corrupto.
+/// Capado a 256 frames / 512×512 por frame para no reventar la RAM con
+/// un GIF patológico (un sprite de burbuja no necesita más).
+pub fn decode_gif_frames(path: &std::path::Path) -> Option<Vec<GifFrame>> {
+    use image::AnimationDecoder;
+    if !path.is_file() || !is_gif_path(path) {
+        return None;
+    }
+    let bytes = std::fs::read(path).ok()?;
+    if bytes.is_empty() {
+        return None;
+    }
+    let cursor = std::io::Cursor::new(bytes);
+    let decoder = image::codecs::gif::GifDecoder::new(cursor).ok()?;
+    let mut out = Vec::new();
+    for frame in decoder.into_frames().take(256) {
+        let frame = frame.ok()?;
+        let (w, h) = (frame.buffer().width(), frame.buffer().height());
+        if w == 0 || h == 0 || w > 512 || h > 512 {
+            return None;
+        }
+        let delay = frame.delay();
+        let delay_ms = u64::from(delay.numer_denom_ms().0).max(20);
+        out.push(GifFrame {
+            width: w,
+            height: h,
+            rgba: frame.into_buffer().into_raw(),
+            delay_ms,
+        });
+    }
+    if out.is_empty() {
+        return None;
+    }
+    Some(out)
+}
+
 /// Mensaje del Poll que se traduce a `Message::AnimationTick` (en
 /// `app.rs`) cuando hay animación activa. Existe como `pub` para que
 /// el módulo que arma la subscription (`app::WhisprApp::subscription`)
@@ -485,6 +547,20 @@ mod tests {
         // ruta de fallback está cubierta por separado.
         f.write_all(b"\x89PNG\r\n\x1a\n").ok()?;
         Some(TempPath(p))
+    }
+
+    #[test]
+    fn gif_de_un_solo_archivo_se_detecta_por_extension() {
+        assert!(is_gif_path(Path::new("burbuja.GIF")));
+        assert!(is_gif_path(Path::new("burbuja.gif")));
+        assert!(!is_gif_path(Path::new("burbuja.png")));
+        assert!(!is_gif_path(Path::new("burbuja")));
+    }
+
+    #[test]
+    fn gif_inexistente_o_no_gif_no_decodifica() {
+        assert!(decode_gif_frames(Path::new(r"C:\no-existe\x.gif")).is_none());
+        assert!(decode_gif_frames(Path::new("foto.png")).is_none());
     }
 
     #[test]

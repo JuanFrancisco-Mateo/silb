@@ -220,6 +220,13 @@ impl WhisprApp {
                         Ok(Ok(msg)) if msg == "__DOWNLOAD_OK__" => {
                             self.transcribe_rx = None;
                             self.status = Status::Idle;
+                            // Onboarding (sprint final): si la descarga terminó
+                            // mientras el arranque estaba en Failed (primera
+                            // configuración inicial), relanzar el arranque solo
+                            // en vez de dejar la pantalla de error colgada.
+                            if matches!(self.startup, StartupPhase::Failed { .. }) {
+                                return self.update(Message::RetryStartup);
+                            }
                             Task::none()
                         }
                         Ok(Err(e)) => {

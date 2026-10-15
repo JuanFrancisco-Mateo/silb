@@ -80,6 +80,70 @@ pub fn api_url(base_url: &str, path: &str) -> String {
 /// Nombre del ÚNICO ejecutable que la app acepta como server LLM.
 pub const SERVER_EXE_NAME: &str = "llama-server.exe";
 
+/// Release de llama.cpp del que la app descarga el server bajo demanda
+/// (sprint final: nada viene de serie). Se fija aquí para que la UI y los
+/// tests compartan la misma fuente (la descarga usa ureq como Whisper).
+pub const LLAMA_RELEASE_URL: &str =
+    "https://github.com/ggml-org/llama.cpp/releases/latest/download/llama-server.exe";
+
+/// Modelo IA pequeño para corrección local (rápido, <1 GB).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalLlmModel {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub file_name: &'static str,
+    pub approx_mb: u32,
+    pub url: &'static str,
+}
+
+/// Catálogo de modelos de corrección (GGUF Q4_K_M, ultra-rápidos).
+/// Default: Qwen2.5-0.5B (491 MB). Nada se descarga sin clic explícito.
+pub const SMALL_LLM_MODELS: &[LocalLlmModel] = &[
+    LocalLlmModel {
+        id: "qwen2.5-0.5b",
+        label: "Qwen2.5-0.5B (recomendado, ~491 MB)",
+        file_name: "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+        approx_mb: 491,
+        url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf",
+    },
+    LocalLlmModel {
+        id: "llama-3.2-1b",
+        label: "Llama 3.2 1B (~808 MB)",
+        file_name: "Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+        approx_mb: 808,
+        url: "https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF/resolve/main/Llama-3.2-1B-Instruct-Q4_K_M.gguf",
+    },
+    LocalLlmModel {
+        id: "qwen2.5-1.5b",
+        label: "Qwen2.5-1.5B (más fiel, ~1,1 GB)",
+        file_name: "qwen2.5-1.5b-instruct-q4_k_m.gguf",
+        approx_mb: 1120,
+        url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
+    },
+];
+
+/// Carpeta de modelos LLM descargados bajo demanda
+/// (`%APPDATA%/whispr-open/models-llm/`).
+pub fn llm_models_dir() -> std::path::PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("whispr-open")
+        .join("models-llm")
+}
+
+/// Carpeta del server descargado bajo demanda (`%APPDATA%/whispr-open/bin/`).
+pub fn llama_bin_dir() -> std::path::PathBuf {
+    dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("whispr-open")
+        .join("bin")
+}
+
+/// Ruta del server descargado por la app (si existe).
+pub fn downloaded_server_path() -> std::path::PathBuf {
+    llama_bin_dir().join(SERVER_EXE_NAME)
+}
+
 /// ¿`path` es un `llama-server.exe`? La app SOLO arranca ese binario
 /// (regla de producto t_75732630): el server LLM es un proceso NATIVO de
 /// Windows —nunca `wsl.exe`— y con el nombre exacto para que
@@ -1722,6 +1786,22 @@ pub fn wait_for_server(base_url: &str, timeout: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn catalogo_local_son_modelos_pequenos_y_descargables() {
+        assert!(!SMALL_LLM_MODELS.is_empty());
+        assert_eq!(SMALL_LLM_MODELS[0].id, "qwen2.5-0.5b");
+        for m in SMALL_LLM_MODELS {
+            assert!(m.approx_mb <= 1200, "{} pesa {} MB", m.id, m.approx_mb);
+            assert!(m.url.starts_with("https://huggingface.co/"), "{}", m.id);
+            assert!(m.file_name.ends_with(".gguf"), "{}", m.id);
+        }
+        assert!(llm_models_dir().ends_with("models-llm"));
+        assert_eq!(
+            downloaded_server_path().file_name().and_then(|n| n.to_str()),
+            Some(SERVER_EXE_NAME)
+        );
+    }
 
     #[test]
     fn parse_diff_plano() {
