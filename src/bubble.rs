@@ -24,7 +24,9 @@ use std::time::Duration;
 
 use iced::widget::{container, text};
 use iced::window;
-use iced::{Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme};
+use iced::{
+    Alignment, Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme,
+};
 
 #[cfg(target_os = "windows")]
 use winapi::shared::windef::{HWND, POINT, RECT};
@@ -397,7 +399,12 @@ impl WhisprApp {
             .height(Length::Fill)
             .into();
             let center_container: Element<'static, Message> =
-                container(center).width(Length::Fill).height(Length::Fill).into();
+                container(center)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into();
             return iced::widget::stack![bg, center_container].into();
         }
         let bubble_image: Option<std::path::PathBuf> = self
@@ -423,12 +430,19 @@ impl WhisprApp {
             .height(Length::Fill)
             .into();
             let center_container: Element<'static, Message> =
-                container(center).width(Length::Fill).height(Length::Fill).into();
+                container(center)
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .align_x(Alignment::Center)
+                    .align_y(Alignment::Center)
+                    .into();
             iced::widget::stack![bg, center_container].into()
         } else {
             container(center)
                 .width(Length::Fill)
                 .height(Length::Fill)
+                .align_x(Alignment::Center)
+                .align_y(Alignment::Center)
                 .style(move |_| container::Style {
                     background: Some(Background::Color(fill)),
                     border: Border {

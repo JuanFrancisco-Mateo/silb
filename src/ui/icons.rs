@@ -12,6 +12,7 @@
 //! un mismo icono sirve a 12, 15, 18 o 30 px sin pixelarse.
 
 use iced::widget::{svg, Svg};
+use iced::Color;
 
 // ── Barra de ventana ────────────────────────────────────────────────────────
 pub const MINUS: &[u8] = include_bytes!("../../assets/icons/minus-98f6e.svg");
@@ -51,4 +52,20 @@ pub fn icon(bytes: &'static [u8], size: f32) -> Svg<'static, iced::Theme> {
         .width(size)
         .height(size)
         .content_fit(iced::ContentFit::Contain)
+}
+
+/// Icono vectorial teñido con `color`: el filtro de color de iced sustituye el
+/// RGB de los píxeles opacos del SVG, así un mismo trazo sirve para el icono
+/// activo (acento), el inactivo (texto secundario) o el deshabilitado (tenue).
+///
+/// Es lo que exige el diseño: el icono de «Dictado» va en acento cuando la
+/// sección está activa y en secundario cuando no, y los iconos de acciones
+/// (`Limpiar`, `Copiar texto`) heredan el tono del texto de su botón en vez de
+/// quedarse blancos sobre un botón deshabilitado.
+pub fn icon_colored(bytes: &'static [u8], size: f32, color: Color) -> Svg<'static, iced::Theme> {
+    svg(svg::Handle::from_memory(bytes))
+        .width(size)
+        .height(size)
+        .content_fit(iced::ContentFit::Contain)
+        .style(move |_theme, _status| svg::Style { color: Some(color) })
 }

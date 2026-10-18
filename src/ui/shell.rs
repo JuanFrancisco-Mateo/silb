@@ -29,6 +29,7 @@ use crate::app::{
     feedback_is_warning, language_label, secondary_button, ui_text, Message, SettingsSection,
     Status, WhisprApp, WindowSection, LANGUAGE_OPTIONS,
 };
+use crate::fonts;
 use crate::theme::{self, Chrome, DesignType};
 use crate::ui::icons;
 
@@ -91,7 +92,18 @@ impl WhisprApp {
         container(
             row![
                 drag_zone,
-                secondary_button(theme_toggle).on_press(Message::ToggleTheme),
+                // El conmutador de tema vive en una barra de 40 px donde todo
+                // el chrome es de 11 px: se le da ese tamaño y un padding
+                // compacto en vez del táctil de los botones de contenido.
+                button(ui_text(theme_toggle).size(ty.chrome))
+                    .on_press(Message::ToggleTheme)
+                    .padding(Padding {
+                        top: 4.0,
+                        right: 10.0,
+                        bottom: 4.0,
+                        left: 10.0,
+                    })
+                    .style(theme::secondary),
                 controls,
             ]
             .spacing(16.0)
@@ -117,7 +129,10 @@ impl WhisprApp {
         let brand = row![
             icons::icon(icons::WHISPR_SYMBOL, 32.0),
             // Marca: solo el texto, el logo (el cuadrado con la onda) se queda.
-            text("Silb").size(ty.brand).color(c.text),
+            text("Silb")
+                .size(ty.brand)
+                .font(fonts::semibold())
+                .color(c.text),
         ]
         .spacing(10.0)
         .align_y(Alignment::Center)
@@ -190,9 +205,17 @@ impl WhisprApp {
         ty: DesignType,
         t: &theme::UiPalette,
     ) -> Element<'_, Message> {
-        let heading = column![text("Dictado").size(ty.title).color(c.text),]
-            .spacing(6.0)
-            .width(Length::Fill);
+        let heading = column![
+            text("Dictado")
+                .size(ty.title)
+                .font(fonts::semibold())
+                .color(c.text),
+            text("Tu voz, convertida en texto.")
+                .size(ty.control)
+                .color(c.secondary),
+        ]
+        .spacing(6.0)
+        .width(Length::Fill);
 
         let mut workspace = column![
             heading,
@@ -282,6 +305,7 @@ impl WhisprApp {
             .align_y(Alignment::Center),
             text(record_headline(&self.status))
                 .size(ty.hero)
+                .font(fonts::medium())
                 .color(c.text),
             text(mic.hint)
                 .size(ty.body)
@@ -407,6 +431,7 @@ impl WhisprApp {
         )
         .width(Length::Fill)
         .height(62.0)
+        .align_y(Alignment::Center)
         .padding(Padding {
             top: 0.0,
             right: 24.0,
@@ -451,12 +476,18 @@ impl WhisprApp {
     /// `Transcript editor`: cabecera con acciones, texto editable y pie con el
     /// contador de palabras.
     fn transcript_card(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
+        // Cabecera de 64 px: el contenido se centra VERTICALMENTE (el nodo
+        // `3:574` del diseño pone «Transcripción» a y=22 dentro de 64 px).
+        // Sin `align_y` el título y los botones se pegaban al borde superior.
         let toolbar = container(
             row![
-                text("Transcripción").size(ty.nav).color(c.text),
+                text("Transcripción")
+                    .size(ty.nav)
+                    .font(fonts::medium())
+                    .color(c.text),
                 Space::with_width(Length::Fill),
-                self.clear_control(ty),
-                self.inject_control(ty),
+                self.clear_control(c, ty),
+                self.inject_control(c, ty),
                 self.copy_control(c, ty),
             ]
             .spacing(10.0)
@@ -464,6 +495,7 @@ impl WhisprApp {
         )
         .width(Length::Fill)
         .height(64.0)
+        .align_y(Alignment::Center)
         .padding(Padding {
             top: 0.0,
             right: 24.0,
@@ -490,10 +522,12 @@ impl WhisprApp {
             left: 28.0,
         });
 
+        // Pie de 42 px: el contenido se centra VERTICALMENTE sobre la línea
+        // divisoria (nodo `3:589`: «Texto editable» a y=13.5 dentro de 42).
         let status = container(
             row![
                 row![
-                    icons::icon(icons::PENCIL, 13.0),
+                    icons::icon_colored(icons::PENCIL, 13.0, c.faint),
                     text("Texto editable").size(ty.chrome).color(c.faint),
                 ]
                 .spacing(7.0)
@@ -507,6 +541,7 @@ impl WhisprApp {
         )
         .width(Length::Fill)
         .height(42.0)
+        .align_y(Alignment::Center)
         .padding(Padding {
             top: 0.0,
             right: 24.0,
@@ -531,13 +566,17 @@ impl WhisprApp {
     /// destructivo y explícito: primer clic arma, segundo borra). Con la nota
     /// vacía no hay nada que borrar: el botón sale DESHABILITADO (iced pinta
     /// `Status::Disabled`, que ahora se ve apagado) en vez de activo.
-    fn clear_control(&self, ty: DesignType) -> Element<'_, Message> {
+    ///
+    /// El icono de la papelera se tiñe con el MISMO tono que el texto del
+    /// botón (secundario activo / tenue deshabilitado): el SVG traía un color
+    /// fijo y sobre el estado apagado se quedaba más claro que su rótulo.
+    fn clear_control(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         if self.clear_armed {
             return row![
                 text("¿Borrar la nota?")
                     .size(theme::FONT_XS)
                     .color(theme::WARN),
-                button(ui_text("Sí, borrar"))
+                button(ui_text("Sí, borrar").size(ty.control))
                     .on_press(Message::ClearTranscript)
                     .padding(theme::SECONDARY_BUTTON_PADDING)
                     .style(theme::primary),
@@ -547,9 +586,11 @@ impl WhisprApp {
             .align_y(Alignment::Center)
             .into();
         }
+        let has_text = word_count(&self.transcript) > 0;
+        let icon_color = if has_text { c.secondary } else { c.faint };
         let limpiar = button(
             row![
-                icons::icon(icons::TRASH, 15.0),
+                icons::icon_colored(icons::TRASH, 15.0, icon_color),
                 ui_text("Limpiar").size(ty.control),
             ]
             .spacing(8.0)
@@ -562,7 +603,7 @@ impl WhisprApp {
             left: theme::ACTION_BUTTON_PADDING[1],
         })
         .style(theme::secondary);
-        if word_count(&self.transcript) > 0 {
+        if has_text {
             limpiar.on_press(Message::ClearPressed).into()
         } else {
             limpiar.into()
@@ -572,7 +613,7 @@ impl WhisprApp {
     /// «Otra vez» / «Escribir en app»: reinserción del último turno.
     /// Usa el mismo padding que «Copiar texto» para que la fila quede a la
     /// misma altura (sprint final: la mezcla de paddings la dejaba desplazada).
-    fn inject_control(&self, ty: DesignType) -> Element<'_, Message> {
+    fn inject_control(&self, _c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let label = if self.config.auto_inject.unwrap_or(true) {
             "Otra vez"
         } else {
@@ -595,16 +636,27 @@ impl WhisprApp {
 
     /// «Copiar texto» (acción principal de la tarjeta). Sin texto no hay nada
     /// que copiar: sale DESHABILITADO (no activo).
-    fn copy_control(&self, _c: Chrome, ty: DesignType) -> Element<'_, Message> {
+    ///
+    /// El icono se tiñe con la tinta del botón en cada estado (oscura sobre el
+    /// relleno de acento, tenue cuando está deshabilitado): el SVG traía
+    /// `stroke="white"` fijo y sobre el botón apagado quedaba blanco puro,
+    /// más brillante que su propio texto.
+    fn copy_control(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let label = if self.copied_at.is_some() {
             "✓ Copiado"
         } else {
             "Copiar texto"
         };
+        let has_text = word_count(&self.transcript) > 0;
+        let icon_color = if has_text {
+            theme::INK_ON_ACCENT
+        } else {
+            c.faint
+        };
         let copiar = button(
             row![
-                icons::icon(icons::COPY, 16.0),
-                ui_text(label).size(ty.control),
+                icons::icon_colored(icons::COPY, 16.0, icon_color),
+                ui_text(label).size(ty.control).font(fonts::medium()),
             ]
             .spacing(8.0)
             .align_y(Alignment::Center),
@@ -616,7 +668,7 @@ impl WhisprApp {
             left: theme::ACTION_BUTTON_PADDING[1],
         })
         .style(theme::primary);
-        if word_count(&self.transcript) > 0 {
+        if has_text {
             copiar.on_press(Message::CopyTranscript).into()
         } else {
             copiar.into()
@@ -745,6 +797,12 @@ impl WhisprApp {
 }
 
 /// Un elemento de navegación de la barra lateral (40 px de alto).
+///
+/// El contenido se centra VERTICALMENTE dentro de los 40 px (el `button` con
+/// altura fija no centra a su hijo: sin el `container` de `Fill`, el icono y
+/// el texto quedaban pegados al borde superior de la pastilla). El icono va
+/// teñido según el estado —acento en la sección activa, secundario en la otra—
+/// y el rótulo activo usa Inter Medium, como el diseño.
 fn nav_item<'a>(
     bytes: &'static [u8],
     label: &'static str,
@@ -753,24 +811,36 @@ fn nav_item<'a>(
     c: Chrome,
     ty: DesignType,
 ) -> Element<'a, Message> {
+    let icon_color = if active { c.accent_active } else { c.secondary };
+    let content = row![
+        icons::icon_colored(bytes, 18.0, icon_color),
+        text(label)
+            .size(ty.nav)
+            .font(if active {
+                fonts::medium()
+            } else {
+                fonts::regular()
+            })
+            .color(if active { c.text } else { c.secondary }),
+    ]
+    .spacing(11.0)
+    .align_y(Alignment::Center);
+
     button(
-        row![
-            icons::icon(bytes, 18.0),
-            text(label)
-                .size(ty.nav)
-                .color(if active { c.text } else { c.secondary }),
-        ]
-        .spacing(11.0)
-        .align_y(Alignment::Center),
+        container(content)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_y(Alignment::Center)
+            .padding(Padding {
+                top: 0.0,
+                right: 0.0,
+                bottom: 0.0,
+                left: SIDEBAR_CONTENT_PAD,
+            }),
     )
     .height(40.0)
     .width(Length::Fill)
-    .padding(Padding {
-        top: 0.0,
-        right: 0.0,
-        bottom: 0.0,
-        left: SIDEBAR_CONTENT_PAD,
-    })
+    .padding(0)
     .on_press(message)
     .style(move |th, status| theme::nav_item(th, status, active))
     .into()
