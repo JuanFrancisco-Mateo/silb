@@ -61,7 +61,7 @@ resultado de cada clasificador, los gates que cortan y la decisión de enrutar
 
 ---
 
-## 2. Proveedores: Local / Custom / Cloud
+## 2. Proveedores: Local / Remoto (OpenAI) / Remoto (endpoint propio)
 
 Selector `pick_list` en el primer nivel de Ajustes → Corrección IA
 (`Message::CorrectionProviderChanged`). Enum en `src/config.rs`:
@@ -71,17 +71,17 @@ pub enum CorrectionProvider { Default, Cloud, Custom }
 // serde rename_all = "lowercase"  →  "default" | "cloud" | "custom" en config.json
 ```
 
-Etiquetas del selector (`CorrectionProvider::label()`, idénticas a las del
-requisito UX 10/09/2026):
+Etiquetas del selector (`CorrectionProvider::label()`, sprint final): el
+usuario solo ve dos modos, Local o Remoto.
 
 | Proveedor | Etiqueta en la UI | API key |
 |---|---|---|
-| `Default` | Local (llama.cpp, el que viene con la app) | nunca se muestra |
-| `Cloud` | Cloud (OpenAI) | obligatoria |
-| `Custom` | Custom LLM (endpoint OpenAI-compatible) | opcional |
+| `Default` | Local (en este equipo) | nunca se muestra |
+| `Cloud` | Remoto (OpenAI) | obligatoria |
+| `Custom` | Remoto (endpoint propio) | opcional |
 
-**Default = Local**: `correction_provider()` devuelve `Default` ante `None`
-(configs antiguas sin el campo no cambian de comportamiento).
+**Default = Local** (`is_local()`): `correction_provider()` devuelve `Default`
+ante `None` (configs antiguas sin el campo no cambian de comportamiento).
 
 `Config::llm_settings()` monta la configuración efectiva del corrector
 (`llm::LlmConfig`) con defaults por proveedor, todos overridables por campos

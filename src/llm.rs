@@ -1558,19 +1558,27 @@ pub fn kill_launched_server() -> bool {
 
 /// Ruta del ejecutable `llama-server.exe` a usar. Orden (14/10/2026, «cero
 /// rutas que teclear»): el server EMBARCADO en el paquete
-/// (`vendor/llama/llama-server.exe` junto al exe de la app) → la ruta del
-/// config (override manual histórico, validado) → autodetección (rutas
-/// comunes y PATH). El vendado GANA al config: una ruta vieja en config.json
-/// (de una instalación anterior) no puede romper una instalación nueva.
+/// (`vendor/llama/llama-server.exe` junto al exe de la app) → el descargado
+/// por la app a `%APPDATA%/whispr-open/bin/` → la ruta del config (override
+/// manual histórico, validado) → autodetección (rutas comunes y PATH). El
+/// vendado GANA al config: una ruta vieja en config.json (de una instalación
+/// anterior) no puede romper una instalación nueva.
 /// `None` si no hay ningún candidato → el arranque lo reporta como
 /// `LlmDisabled` con aviso (el endpoint OpenAI-compatible editable sigue
 /// disponible como alternativa).
 pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::PathBuf> {
-    resolve_server_path_in(
-        exe_dir().as_deref(),
-        cfg.llama_server_path(),
-        &default_server_roots(),
-    )
+    // Candidatos de autodetección: primero el server descargado por la app a
+    // `%APPDATA%/whispr-open/bin/` (la carpeta que documenta la UI de
+    // Corrección IA), después las rutas comunes/PATH. Se pasa como lista para
+    // que `resolve_server_path_in` siga siendo hermético en los tests (no lee
+    // el %APPDATA% real).
+    let mut common: Vec<std::path::PathBuf> = Vec::new();
+    let downloaded = downloaded_server_path();
+    if downloaded.is_file() {
+        common.push(downloaded);
+    }
+    common.extend(default_server_roots());
+    resolve_server_path_in(exe_dir().as_deref(), cfg.llama_server_path(), &common)
 }
 
 /// Núcleo del orden de resolución, parametrizable para tests con directorios
@@ -1700,6 +1708,10 @@ fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> 
         roots.push(dir.join("vendor").join("models"));
     }
     roots.push(crate::transcribe::models_dir());
+    // Carpeta específica del corrector (`%APPDATA%/whispr-open/models-llm/`):
+    // es la que documenta la UI de Corrección IA, así que un GGUF dejado ahí
+    // se encuentra solo.
+    roots.push(llm_models_dir());
     // LM Studio: la carpeta por defecto de modelos del usuario.
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join(".lmstudio").join("models"));

@@ -52,12 +52,14 @@ las URLs. Los SVG de `icons/` ya están en disco.
 ### Tipografía
 
 Inter (`Regular`, `Medium`, `Semi_Bold`). Tamaños medidos: 9, 10, 11, 12, 13, 14, 18, 19, 22, 28 px —
-los más usados 11 px (20 usos) y 12 px (15). Hoy la app no bundlea Inter y resuelve los glifos con la fuente
-de sistema + `Segoe UI Emoji` (`src/fonts.rs`).
+los más usados 11 px (20 usos) y 12 px (15). La app **embebe** Inter (Regular/Medium/SemiBold,
+`assets/fonts/`, licencia OFL) y la fija como `default_font`; los símbolos que Inter no trae se
+resuelven por fallback a `Segoe UI Emoji` con `Shaping::Advanced` (`src/fonts.rs`).
 
 ### Iconografía
 
-31 SVG en `raw/icons/`. Hoy la UI dibuja símbolos con glifos emoji (✓ ☀ ☾ ▾ ● ✕) desde `src/fonts.rs`.
+31 SVG en `raw/icons/`. La app los incrusta (`assets/icons/`) y los pinta vectoriales; el color de
+cada icono se tiñe por estado con `icons::icon_colored` (activo en acento, inactivo en secundario).
 
 ## Regenerar / actualizar la extracción
 
