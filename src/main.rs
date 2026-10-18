@@ -40,10 +40,13 @@ fn main() -> iced::Result {
     // burbuja flotante (whispr_open::bubble) se abre al iniciar.
     let mut main_window = iced::window::Settings::default();
     // Ventana del diseño (frame «Dictado» de Figma, 1200×820): barra lateral de
-    // 204 px + espacio de trabajo. El mínimo permite encogerla sin que la
-    // tarjeta de transcripción quede inservible.
+    // 204 px + espacio de trabajo. El mínimo NO baja de 1200 de ancho: la
+    // rejilla de Ajustes mide 916 px de contenido (rótulo 606 + hueco 20 +
+    // control 250 + insets 20/20), así que por debajo de ese ancho las filas
+    // se solaparían. En alto sí se puede encoger: el contenido de Ajustes
+    // hace scroll y el transcript se comprime.
     main_window.size = iced::Size::new(1200.0, 820.0);
-    main_window.min_size = Some(iced::Size::new(940.0, 640.0));
+    main_window.min_size = Some(iced::Size::new(1200.0, 700.0));
     // El marco lo dibuja la app (barra de ventana propia de 40 px con
     // controles de minimizar/maximizar/cerrar): sin decoración nativa. El
     // arrastre llega por `window::drag` desde `Message::DragMainWindow` y el
@@ -56,9 +59,24 @@ fn main() -> iced::Result {
     type App = WhisprApp;
     type Compositor = <iced::Renderer as iced_winit::graphics::compositor::Default>::Compositor;
 
+    // Tipografía del diseño: Inter se EMBEBE en el binario (Regular/Medium/
+    // SemiBold, licencia OFL) y se carga al arranque. `default_font` = Inter
+    // Regular hace que TODO texto sin `.font()` explícito (y los pick_list,
+    // text_input, text_editor y menús) salga ya en Inter: sin esto, los pesos
+    // Medium/SemiBold caían a una fuente arbitraria del sistema y aparecían
+    // cajas `□` en las tildes (ver src/fonts.rs).
+    let winit_settings = iced_winit::Settings {
+        fonts: whispr_open::fonts::inter_font_sources(),
+        ..iced_winit::Settings::default()
+    };
+    let graphics_settings = iced_winit::graphics::Settings {
+        default_font: whispr_open::fonts::regular(),
+        ..iced_winit::graphics::Settings::default()
+    };
+
     iced_winit::program::run::<App, Compositor>(
-        iced_winit::Settings::default(),
-        iced_winit::graphics::Settings::default(),
+        winit_settings,
+        graphics_settings,
         Some(main_window),
         (),
     )

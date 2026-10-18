@@ -7,8 +7,9 @@
 //! - `inject`: escritura en la app activa (arboard + enigo).
 //! - `hotkey`: atajo global (global-hotkey).
 //! - `theme`: tokens de diseño 2026 + estilos de widgets (única fuente de color).
-//! - `fonts`: carga de la fuente emoji (Segoe UI Emoji) para que los símbolos
-//!   de la UI (✓ ☀ ☾ ▾ ▸ ● → ✕) no se vean como cajas vacías.
+//! - `fonts`: fuente de marca Inter embebida (Regular/Medium/SemiBold) y carga
+//!   de la fuente emoji (Segoe UI Emoji) para que los símbolos de la UI
+//!   (✓ ☀ ☾ ▾ ▸ ● → ✕ ⚠ ↩) no se vean como cajas vacías.
 //! - `tray`: bandeja del sistema (icono + menú Mostrar/Ocultar/Salir).
 //! - `app`: UI Iced (estado + `update` + `view`; los manejadores y las vistas
 //!   grandes viven en `ui`).
