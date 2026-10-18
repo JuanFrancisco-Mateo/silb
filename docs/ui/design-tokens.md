@@ -20,6 +20,7 @@ Penpot (archivo *Open Whisper*, `http://localhost:9001`).
 | Opacidad de burbuja | 20–100 % (default 100) | `src/config.rs` (`bubble_opacity`) |
 | Estilos de burbuja | Solid / Ring / Minimal | `src/config.rs` (`BubbleStyle`) |
 | Tipografía base | 11 / 12 / 14 / 16 / 20 / 24 px | `src/theme.rs` (`FONT_XS..FONT_HERO`) |
+| Fuente de marca | Inter Regular/Medium/SemiBold (embebida en el binario) | `assets/fonts/` + `src/fonts.rs` |
 | Factores de tamaño de fuente | 0.85 / 1.0 / 1.15 / 1.3 (clamp 8–64 px) | `src/config.rs` (`FontSize`) |
 | Espaciado (grid de 8 px) | 4 / 8 / 16 / 24 / 32 / 48 px | `src/theme.rs` (`SPACE_1..SPACE_6`) |
 | Radios | 8 px (sm) / 10 px (md) | `src/theme.rs` (`RADIUS_SM/MD`) |
