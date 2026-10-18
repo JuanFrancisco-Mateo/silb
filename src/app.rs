@@ -2336,6 +2336,8 @@ impl WhisprApp {
         container(content)
             .width(Length::Fill)
             .height(Length::Fill)
+            .align_x(iced::Alignment::Center)
+            .align_y(iced::Alignment::Center)
             .style(|th| container::Style {
                 background: Some(Background::Color(theme::tokens(&th).bg)),
                 ..Default::default()
@@ -2731,7 +2733,9 @@ pub(crate) fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes)
     let mut col = Column::new().spacing(theme::SPACE_1);
     for (idx, entry) in entries.iter().enumerate() {
         col = col.push(list_row(
-            text(format!("{} → {}", entry.from, entry.to))
+            // `ui_text`: la flecha «→» necesita el fallback por codepoint
+            // (con el shaping básico salía como caja vacía).
+            ui_text(format!("{} → {}", entry.from, entry.to))
                 .size(fs.md)
                 .into(),
             Message::RemoveEntry(idx),

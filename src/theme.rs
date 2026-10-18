@@ -1263,11 +1263,16 @@ pub const SECONDARY_BUTTON_PADDING: [f32; 2] = [SPACE_2 as f32, SPACE_3 as f32];
 /// `pick_list`): los dos comparten inset para que el texto arranque en la
 /// misma x (iced trae 10 px a la izquierda en el `pick_list` y 5 en el
 /// `text_input`, y la diferencia se veía como desalineación).
+///
+/// Valores del diseño (nodos `3:560`/`3:660`): selects de **36 px de alto**
+/// con **12 px** de inset horizontal. Con texto de 13 px, 10 px arriba/abajo
+/// dan esos 36 px; con el padding viejo (5/10) los campos de Ajustes se veían
+/// aplastados (~27 px) y con el texto pegado al borde izquierdo.
 pub const FIELD_PADDING: Padding = Padding {
-    top: 5.0,
-    right: 10.0,
-    bottom: 5.0,
-    left: 5.0,
+    top: 10.0,
+    right: 12.0,
+    bottom: 10.0,
+    left: 12.0,
 };
 
 /// Ancho reservado a la derecha de cada fila de Ajustes para el texto auxiliar

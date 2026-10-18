@@ -22,12 +22,11 @@
 //! y los estados (ver el cierre de la tarjeta).
 
 use iced::border::Radius;
-use iced::font::Weight;
 use iced::widget::{
     button, column, container, horizontal_rule, pick_list, row, scrollable, slider, text,
     text_input, toggler, Column, Row, Space,
 };
-use iced::{Alignment, Background, Border, Color, Element, Font, Length, Padding};
+use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::{
     dictionary_list, filler_lists, language_hint, language_label, llm_status_ui, ui_text,
@@ -37,6 +36,7 @@ use crate::config::{
     BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, CorrectionProvider, FontSize,
     ThemeMode,
 };
+use crate::fonts;
 use crate::theme::{self, Chrome, DesignType, UiPalette};
 use crate::transcribe::Model;
 use crate::ui::icons;
@@ -45,15 +45,6 @@ use crate::ui::icons;
 /// frame Ajustes). Sale de [`theme::GRID_CONTROL_WIDTH`]: en esta vista no se
 /// escribe ni una medida a mano.
 const CONTROL_WIDTH: f32 = theme::GRID_CONTROL_WIDTH;
-
-/// Peso `Medium` para los rótulos del diseño (la app no bundlea Inter: se le
-/// pide el peso al family por defecto del sistema, ver `fonts.rs`).
-fn medium() -> Font {
-    Font {
-        weight: Weight::Medium,
-        ..Font::DEFAULT
-    }
-}
 
 /// Rótulo de sección del diseño (12 px, secundario) + su tarjeta, separados
 /// por los 10 px que mide el frame (nodo `3:654`).
@@ -66,7 +57,7 @@ fn section_block<'a>(
     column![
         text(label.to_string())
             .size(ty.body)
-            .font(medium())
+            .font(fonts::medium())
             .color(c.secondary),
         card,
     ]
@@ -100,7 +91,9 @@ fn design_card<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
 fn control_slot<'a>(control: Element<'a, Message>) -> Element<'a, Message> {
     container(control)
         .width(Length::Fixed(CONTROL_WIDTH))
+        .height(Length::Fill)
         .align_x(Alignment::End)
+        .align_y(Alignment::Center)
         .into()
 }
 
@@ -145,10 +138,35 @@ fn no_control<'a>() -> Element<'a, Message> {
     Space::new(0.0, 0.0).into()
 }
 
+/// Alto de una fila de preferencia: 68 px del diseño con el factor 1.0, pero
+/// escalado con la tipografía. La app permite subir el tamaño de fuente
+/// (Ajustes → Apariencia → Fuente) y una fila de 68 px FIJA recortaba la ayuda
+/// de 12 px: con factor 1.15 solo se veía el rótulo. Se calcula con las líneas
+/// reales (line-height 1.3 de iced) más los 15 px de inset de arriba y abajo.
+fn preference_row_height(ty: DesignType, has_help: bool) -> f32 {
+    let line = |size: u16| size as f32 * 1.3;
+    let content = if has_help {
+        line(ty.nav) + 4.0 + line(ty.body)
+    } else {
+        line(ty.nav)
+    };
+    (content + 2.0 * theme::GRID_ROW_PAD_V).max(theme::GRID_ROW_HEIGHT)
+}
+
+/// Alto de la fila del modelo instalado: 82 px del diseño (82 = icono de 42 +
+/// 20 arriba y abajo), ampliado si el bloque de texto (nombre + tamaño) crece
+/// con el factor de fuente.
+fn model_row_height(ty: DesignType) -> f32 {
+    let line = |size: u16| size as f32 * 1.3;
+    let text = line(ty.nav) + 5.0 + line(ty.body);
+    (text + 40.0).max(theme::GRID_MODEL_ROW_HEIGHT)
+}
+
 /// Fila de preferencia de la rejilla (nodo `3:656`, 68 px): rótulo de 14 px
 /// medium con su ayuda de 12 px tenue a la izquierda y el control en la columna
-/// fija de la derecha, centrado verticalmente. Alto FIJO: la ayuda es de UNA
-/// línea; las explicaciones largas van en [`note_row`].
+/// fija de la derecha, centrado verticalmente. Alto DERIVADO del tamaño de
+/// fuente (ver [`preference_row_height`]): la ayuda es de UNA línea; las
+/// explicaciones largas van en [`note_row`].
 fn preference_row<'a>(
     label: &str,
     help: Option<&str>,
@@ -158,7 +176,7 @@ fn preference_row<'a>(
 ) -> Element<'a, Message> {
     let mut left = column![text(label.to_string())
         .size(ty.nav)
-        .font(medium())
+        .font(fonts::medium())
         .color(c.text)]
     .spacing(4.0)
     .width(Length::Fixed(theme::GRID_LABEL_WIDTH));
@@ -172,7 +190,8 @@ fn preference_row<'a>(
             .width(Length::Fill),
     )
     .width(Length::Fill)
-    .height(Length::Fixed(theme::GRID_ROW_HEIGHT))
+    .height(Length::Fixed(preference_row_height(ty, help.is_some())))
+    .align_y(Alignment::Center)
     .padding(row_padding())
     .into()
 }
@@ -181,7 +200,10 @@ fn preference_row<'a>(
 /// que las filas (nodo `3:656`, x=20) y alto del contenido, para que el texto
 /// pueda ocupar las líneas que necesite sin recortarse en una fila de 68 px.
 fn note_row<'a>(content: &str, color: Color, ty: DesignType) -> Element<'a, Message> {
-    container(text(content.to_string()).size(ty.body).color(color))
+    // `ui_text` (Shaping::Advanced): las notas llevan símbolos («⚠», «·»,
+    // «→») que necesitan el fallback por codepoint; con el shaping básico
+    // salían como cajas.
+    container(ui_text(content.to_string()).size(ty.body).color(color))
         .width(Length::Fill)
         .padding(row_padding())
         .into()
@@ -219,9 +241,17 @@ impl WhisprApp {
         ty: DesignType,
         t: &UiPalette,
     ) -> Element<'_, Message> {
-        let heading = column![text("Ajustes").size(ty.title).color(c.text),]
-            .spacing(6.0)
-            .width(Length::Fill);
+        let heading = column![
+            text("Ajustes")
+                .size(ty.title)
+                .font(fonts::semibold())
+                .color(c.text),
+            text("Tu forma de dictar, a tu medida.")
+                .size(ty.control)
+                .color(c.secondary),
+        ]
+        .spacing(6.0)
+        .width(Length::Fill);
 
         // Solo el contenido de la pestaña activa hace scroll: la cabecera, la
         // navegación y el pie del diseño quedan siempre a la vista.
@@ -393,6 +423,25 @@ impl WhisprApp {
                 },
                 ..container::Style::default()
             });
+        // Nombre del modelo + badge «Instalado» (nodo `3:676`/`3:678`): solo
+        // si el GGML ya está en disco. Es información que el diseño muestra y
+        // que aquí además evita que el usuario se pregunte si está descargado.
+        let mut name_row = row![text(model_label)
+            .size(ty.nav)
+            .font(fonts::medium())
+            .color(c.text)]
+        .spacing(12.0)
+        .align_y(Alignment::Center);
+        if crate::transcribe::model_exists(model) {
+            name_row = name_row.push(
+                row![
+                    icons::icon_colored(icons::CHECK, 12.0, c.accent_active),
+                    text("Instalado").size(ty.chrome).color(c.accent_active),
+                ]
+                .spacing(4.0)
+                .align_y(Alignment::Center),
+            );
+        }
         // Fila del modelo instalado (nodo `3:672`): 82 px = icono de 42 px + 20
         // arriba y abajo; el botón/selector de la derecha acaba en el mismo
         // borde que la columna de control de la rejilla (`3:682` x=770 → 896).
@@ -400,7 +449,7 @@ impl WhisprApp {
             row![
                 model_tile,
                 column![
-                    text(model_label).size(ty.nav).font(medium()).color(c.text),
+                    name_row,
                     text(format!("{model_size} MB"))
                         .size(ty.body)
                         .color(c.faint),
@@ -414,7 +463,7 @@ impl WhisprApp {
             .width(Length::Fill),
         )
         .width(Length::Fill)
-        .height(Length::Fixed(theme::GRID_MODEL_ROW_HEIGHT))
+        .height(Length::Fixed(model_row_height(ty)))
         .align_y(Alignment::Center)
         .padding(Padding {
             top: 0.0,
@@ -489,37 +538,45 @@ impl WhisprApp {
         ));
 
         // ── Atajo de dictado (sprint final: editable, antes solo config.json)
+        // El campo va en la columna de control (250 px) y los botones en una
+        // fila propia alineada a la derecha: meter input + 2 botones en 250 px
+        // aplastaba el campo («Ctrl+S…» no se leía).
         let shortcut_value = self
             .shortcut_input
             .clone()
             .unwrap_or_else(|| self.config.shortcut());
-        let mut shortcut_rows: Vec<Element<'_, Message>> = vec![preference_row(
-            "Atajo global",
-            Some("P. ej. Ctrl+Shift+D, Alt+Space, Ctrl+Alt+F12."),
-            row![
+        let mut shortcut_rows: Vec<Element<'_, Message>> = vec![
+            preference_row(
+                "Atajo global",
+                Some("P. ej. Ctrl+Shift+D, Alt+Space, Ctrl+Alt+F12."),
                 text_input("Ctrl+Shift+D", &shortcut_value)
                     .on_input(Message::ShortcutInputChanged)
                     .on_submit(Message::ShortcutApply)
                     .padding(theme::FIELD_PADDING)
                     .size(ty.control)
                     .style(theme::text_input)
-                    .width(Length::Fill),
-                button(text("Aplicar").size(fs.sm))
-                    .on_press(Message::ShortcutApply)
-                    .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
-                    .style(theme::primary),
-                button(text("Restablecer").size(fs.sm))
-                    .on_press(Message::ShortcutReset)
-                    .padding([theme::SPACE_2 as f32, theme::SPACE_3 as f32])
-                    .style(theme::secondary),
-            ]
-            .spacing(theme::SPACE_2)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .into(),
-            c,
-            ty,
-        )];
+                    .width(Length::Fixed(CONTROL_WIDTH))
+                    .into(),
+                c,
+                ty,
+            ),
+            wide_row(
+                row![
+                    Space::with_width(Length::Fill),
+                    button(text("Aplicar").size(ty.control))
+                        .on_press(Message::ShortcutApply)
+                        .padding(theme::ACTION_BUTTON_PADDING)
+                        .style(theme::primary),
+                    button(text("Restablecer").size(ty.control))
+                        .on_press(Message::ShortcutReset)
+                        .padding(theme::ACTION_BUTTON_PADDING)
+                        .style(theme::secondary),
+                ]
+                .spacing(theme::SPACE_2)
+                .align_y(Alignment::Center)
+                .into(),
+            ),
+        ];
         if let Some(err) = &self.shortcut_error {
             shortcut_rows.push(note_row(err, t.err, ty));
         } else {
@@ -970,7 +1027,7 @@ impl WhisprApp {
             wide_row(
                 text("Campos")
                     .size(ty.body)
-                    .font(medium())
+                    .font(fonts::medium())
                     .color(c.secondary)
                     .into(),
             ),
@@ -1071,7 +1128,7 @@ impl WhisprApp {
 
         let label_text = text(field.label())
             .size(ty.nav)
-            .font(medium())
+            .font(fonts::medium())
             .color(c.text);
 
         let input_box: Element<'_, Message> = text_input(field.help(), &current_text)
@@ -1379,11 +1436,12 @@ impl WhisprApp {
         ];
         if is_local {
             main_rows.push(note_row(
-                "Modelos rápidos para corrección (<1,2 GB, se descargan bajo \
-                 demanda a models-llm/): Qwen2.5-0.5B recomendado (~491 MB) · \
-                 Llama 3.2 1B (~808 MB) · Qwen2.5-1.5B (~1,1 GB). Nada se \
-                 descarga sin tu clic. El server (llama-server.exe) también se \
-                 descarga a bin/ la primera vez.",
+                "Modelos pequeños recomendados (<1,2 GB): Qwen2.5-0.5B (~491 MB) · \
+                 Llama 3.2 1B (~808 MB) · Qwen2.5-1.5B (~1,1 GB). El server \
+                 (llama-server.exe) viaja con la app; el GGUF se busca solo en \
+                 vendor/models y en %APPDATA%/whispr-open/models (también \
+                 models-llm/). Si no hay modelo, el dictado sigue funcionando \
+                 sin corrección.",
                 c.faint,
                 ty,
             ));
@@ -1578,7 +1636,10 @@ impl WhisprApp {
                 ),
                 preference_row(
                     "Server LLM local",
-                    Some("Ruta explícita; vacío = autodetección (bin/ → D:/LlamaCPP → PATH)."),
+                    Some(
+                        "Ruta explícita (opcional). Vacío = el server que viaja con la \
+                         app (vendor/llama) y, si no, autodetección (D:/LlamaCPP → PATH).",
+                    ),
                     text_input(
                         "(autodetección)",
                         self.config.llama_server_path().unwrap_or(""),
@@ -1596,33 +1657,8 @@ impl WhisprApp {
             c,
             ty,
         ));
-        col = col.push(section_block(
-            "Dictado (avanzado)",
-            design_card(vec![
-                preference_row(
-                    &format!("Calidad (beam): {}", self.config.beam_size()),
-                    Some("Mismo ajuste que en Dictado, aquí sin explicaciones."),
-                    slider(1..=8, self.config.beam_size(), Message::BeamSizeChanged)
-                        .step(1u32)
-                        .width(Length::Fixed(CONTROL_WIDTH))
-                        .into(),
-                    c,
-                    ty,
-                ),
-                preference_row(
-                    &format!("Hilos CPU: {}", self.config.n_threads()),
-                    None,
-                    slider(1..=16, self.config.n_threads(), Message::ThreadsChanged)
-                        .step(1u32)
-                        .width(Length::Fixed(CONTROL_WIDTH))
-                        .into(),
-                    c,
-                    ty,
-                ),
-            ]),
-            c,
-            ty,
-        ));
+        // (Sin bloque «Dictado (avanzado)»: duplicaba los sliders de la
+        // pestaña Dictado — mismo ajuste, dos sitios donde tocarlo.)
         col = col.push(section_block(
             "Dónde queda todo",
             design_card(vec![
@@ -1678,7 +1714,11 @@ fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'
         let tab = container(
             text(section.label())
                 .size(ty.control)
-                .font(if is_active { medium() } else { Font::DEFAULT })
+                .font(if is_active {
+                    fonts::medium()
+                } else {
+                    fonts::regular()
+                })
                 .color(if is_active { c.text } else { c.secondary }),
         )
         .height(Length::Fixed(theme::GRID_TAB_HEIGHT))
