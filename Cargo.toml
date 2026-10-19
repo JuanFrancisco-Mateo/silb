@@ -1,6 +1,6 @@
 [package]
 name = "whispr-open"
-version = "0.3.0"
+version = "0.4.0"
 description = "Local open-source dictation workspace (native desktop)"
 authors = ["Whispr Open contributors"]
 edition = "2021"
@@ -14,6 +14,11 @@ license = "MIT"
 [[bin]]
 name = "silb"
 path = "src/main.rs"
+
+[features]
+default = []
+# Backend GPU de whisper.cpp (exige toolkit CUDA y CUDA_PATH).
+cuda = ["whisper-rs/cuda"]
 
 [dependencies]
 # UI nativa (sin webview). `image` activa el widget `image` de iced y el
@@ -42,7 +47,11 @@ tray-icon = "0.24"
 
 # Audio + transcripción
 cpal = "0.15"
-whisper-rs = { version = "0.16", features = ["cuda"] }
+# CPU por defecto: con MSVC + CMake se compila sin toolkit CUDA. Para GPU:
+#   cargo build --release --features cuda
+# whisper-rs elige backend con cfg!(feature = "_gpu"): sin `cuda` deja
+# use_gpu=false y whisper.cpp corre en CPU sin avisos ni pánicos.
+whisper-rs = { version = "0.16" }
 
 # Inyección de texto en app activa
 arboard = "3.6.1"

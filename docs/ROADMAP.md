@@ -76,6 +76,6 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 
 ## 3. Definición de "done" (heredada de `AGENTS.md`)
 
-1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → tests verdes.
+1. `cmd.exe /c "cd /d whispr-open && cargo test"` → tests verdes.
 2. `... cargo.exe check` → sin errores (warnings tolerados).
 3. Commit por etapa lógica, mensaje en español.

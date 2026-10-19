@@ -9,7 +9,7 @@ import subprocess
 import sys
 from collections import Counter
 
-TOKENS = r"C:/Users/usuario/AppData/Local/hermes/mcp-tokens/figma.json"
+TOKENS = os.environ.get("FIGMA_TOKENS") or os.path.expanduser("~/.config/figma/tokens.json")
 
 
 def main(src, dst):
