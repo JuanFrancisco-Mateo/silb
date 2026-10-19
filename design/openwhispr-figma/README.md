@@ -65,7 +65,7 @@ Requiere el server `figma` en `hermes mcp ls` y su token OAuth cacheado en
 `%LOCALAPPDATA%/hermes/mcp-tokens/figma.json`. El intérprete es el venv de Hermes (trae el SDK `mcp`).
 
 ```bash
-PY="C:/Users/usuario/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe"
+PY="python"
 KEY=zNDTFSrM54LM99t94PjMFP
 
 # listar tools y esquemas

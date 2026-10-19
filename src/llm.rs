@@ -2781,17 +2781,14 @@ mod tests {
     #[test]
     fn args_del_server_llevan_modelo_puerto_y_flags_gpu() {
         // El spawn usa EXACTAMENTE build_server_args: aquí fijamos el
-        // contrato — modelo Windows como ruta nativa (sin traducción WSL),
-        // puerto, loopback y los flags de la RTX 4070 (orchestrator 10/09).
-        let model = std::path::Path::new(
-            r"C:\Users\usuario\.lmstudio\models\lmstudio-community\Qwen3.5-0.8B-GGUF\Qwen3.5-0.8B-Q8_0.gguf",
-        );
+        // contrato — modelo como ruta nativa, puerto, loopback y flags GPU.
+        let model = std::path::Path::new(r"C:\models\qwen3.5-0.8b.gguf");
         let args = build_server_args(model, 8081);
         assert_eq!(
             args,
             vec![
                 "-m",
-                r"C:\Users\usuario\.lmstudio\models\lmstudio-community\Qwen3.5-0.8B-GGUF\Qwen3.5-0.8B-Q8_0.gguf",
+                r"C:\models\qwen3.5-0.8b.gguf",
                 "--host",
                 "127.0.0.1",
                 "--port",

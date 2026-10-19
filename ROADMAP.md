@@ -31,12 +31,12 @@ plan original quedó archivado en
   las funciones públicas en español). **Fase 4 pendiente**: instalador,
   icono `.ico`, variante portable y medidas de ligereza. Fase 5: flujo real
   completo + informe de cierre.
-- Verificación de hoy: `cargo.exe test` → **271 passed, 0 failed, 1 ignored**;
+- Verificación de hoy: `cargo.exe test` → **336 passed, 0 failed, 3 ignored**;
   `cargo.exe check` sin errores. Los números actualizados viven en
   [`README.md`](README.md#tests) y [`docs/ROADMAP.md`](docs/ROADMAP.md).
 
 ## Definición de «done» (heredada de `AGENTS.md`)
 
-1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → todo verde.
+1. `cmd.exe /c "cd /d whispr-open && cargo test"` → todo verde.
 2. `... cargo.exe check` → sin errores (warnings tolerados).
 3. Commit por fase lógica, mensaje en español.
