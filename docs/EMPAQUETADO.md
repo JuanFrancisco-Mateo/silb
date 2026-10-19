@@ -154,12 +154,12 @@ inventado ningún certificado.
 
 ## 4. Versionado (SemVer)
 
-- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.3.0** (`Cargo.toml`).
+- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.4.0** (`Cargo.toml`).
   - `0.x`: API inestable; cada feature nueva sube MINOR, los fixes PATCH.
   - Se pasa a `1.0.0` cuando la app tenga el flujo completo (corrección por
     voz incluida) y una estabilidad de formato demostrada.
 - Fuente de verdad única: `Cargo.toml` `version`. El instalador lee la
-  versión de la variable de entorno `WHISPR_VERSION` (default `0.3.0`).
+  versión de la variable de entorno `WHISPR_VERSION` (default `0.4.0`).
 - Convención de commits (opcional): prefijos `feat:` / `fix:` / `docs:` /
   `chore:` (ya se usan en el repo) para derivar CHANGELOG y el bump.
 
@@ -226,7 +226,7 @@ sobreescribir).
 ::    %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
 ::
 ::    El script lee la versión de la variable de entorno WHISPR_VERSION
-::    (default 0.3.0). Para hacer un release con otra versión:
+::    (default 0.4.0). Para hacer un release con otra versión:
 ::      set WHISPR_VERSION=0.3.1
 ::      ISCC.exe ... whispr-open.iss
 ::
@@ -249,7 +249,7 @@ y muestra la licencia MIT antes de pedir confirmación.
 
 ```cmd
 :: Instalar (silencioso, sin wizard):
-packaging\Output\silb-0.3.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
+packaging\Output\silb-0.4.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
 
 :: Verificar que el icono está incrustado:
 powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; [System.Drawing.Icon]::ExtractAssociatedIcon('%LOCALAPPDATA%\Programs\Silb\silb.exe')"

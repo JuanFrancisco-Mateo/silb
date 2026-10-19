@@ -18,10 +18,10 @@
 ; VARIABLES DE USUARIO (las que se pueden sobreescribir por línea de comandos
 ; con /D="nombre=valor"):
 ;   WHISPR_RELEASE_DIR  directorio con silb.exe (por defecto ..\target\release)
-;   WHISPR_VERSION      versión del paquete (por defecto 0.3.0)
+;   WHISPR_VERSION      versión del paquete (por defecto 0.4.0)
 ;
 ; Ejemplo con override:
-;   ISCC.exe /DWHISPR_VERSION=0.3.1 /DWHISPR_RELEASE_DIR=D:\builds\release packaging\whispr-open.iss
+;   ISCC.exe /DWHISPR_VERSION=0.4.1 /DWHISPR_RELEASE_DIR=D:\builds\release packaging\whispr-open.iss
 
 #define MyReleaseDir GetEnv("WHISPR_RELEASE_DIR") ? GetEnv("WHISPR_RELEASE_DIR") : "..\target\release"
 #define MyAppName "Silb"
@@ -29,7 +29,7 @@
 #define MyAppURL "https://github.com/JuanFrancisco-Mateo/whispr-open"
 #define MyAppExeName "silb.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.3.0"
+  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.4.0"
 #endif
 
 [Setup]
