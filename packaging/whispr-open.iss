@@ -12,7 +12,7 @@
 ;   ~44 MB en CPU o ~700 MB con el pack CUDA de `vendor\llama\cuda\`.
 ;
 ; CÓMO COMPILARLO (Windows):
-;   cmd /c ""C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss"
+;   cmd /c ""%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss"
 ;   Salida: packaging\Output\silb-0.3.0-setup.exe (~20-25 MB, LZMA).
 ;
 ; VARIABLES DE USUARIO (las que se pueden sobreescribir por línea de comandos

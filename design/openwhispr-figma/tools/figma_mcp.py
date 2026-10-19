@@ -11,7 +11,7 @@ import sys
 from mcp import ClientSession
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
-TOKENS = r"C:/Users/usuario/AppData/Local/hermes/mcp-tokens/figma.json"
+TOKENS = os.environ.get("FIGMA_TOKENS") or os.path.expanduser("~/.config/figma/tokens.json")
 URL = "https://mcp.figma.com/mcp"
 
 

@@ -210,8 +210,8 @@ assets del instalador) es el canal natural para v1.
 :: 1) Build release. El build.rs incrusta el icono vía winresource.
 ::    Si el .ico falta, lo regenera con assets/build_icon.py.
 ::    No hace falta llamar a Python a mano.
-cd /d E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe build --release
+cd /d whispr-open
+cargo build --release
 
 :: Salida: target\release\silb.exe (≈42,77 MiB con icono)
 ```
@@ -223,7 +223,7 @@ sobreescribir).
 
 ```cmd
 :: 2) Compilar el .iss. Inno Setup 6.7.3 está instalado por usuario en:
-::    C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe
+::    %LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe
 ::
 ::    El script lee la versión de la variable de entorno WHISPR_VERSION
 ::    (default 0.3.0). Para hacer un release con otra versión:
@@ -236,7 +236,7 @@ sobreescribir).
 ::    El instalador escribe en:
 ::      packaging\Output\whispr-open-{version}-setup.exe
 
-"C:\Users\usuario\AppData\Local\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss
 ```
 
 El instalador **no requiere elevación** (`PrivilegesRequired=lowest`),
