@@ -3,13 +3,13 @@
 Proyecto: **Silb** — dictado por voz local NATIVO de escritorio
 (Iced + whisper.cpp vía whisper-rs). Cero frontend web (sin webview, sin
 React/TS/Vite — eso vive en la rama `main` como versión legada).
-Rama activa: `native-iced`. Ruta: `E:\AI\FREEBUFF` (desde WSL: `/mnt/e/AI/FREEBUFF`).
+Rama activa: `native-iced`. Ruta: `whispr-open` (desde WSL: `whispr-open`).
 Leer este archivo ANTES de tocar nada.
 
 ## Entorno de ejecución (CRÍTICO — verificado el 02/09/2026)
 
 - El proyecto vive en un disco Windows (E:). Rust/cargo es el de Windows:
-  `C:\Users\usuario\.cargo\bin\cargo.exe` (`cmd.exe` NO tiene cargo en PATH).
+  `cargo` (`cmd.exe` NO tiene cargo en PATH).
 - NO compilar apuntando al cargo de WSL (target Linux, faltan deps).
 - La primera compilación completa tarda 5–10 min (iced + whisper.cpp). Es normal.
 - TOOLCHAIN: cmake 4.x y MSVC (VS2019 BuildTools, 14.29) presentes — necesarios
@@ -26,7 +26,7 @@ Leer este archivo ANTES de tocar nada.
 
 ## Definición de "done" (criterios innegociables)
 
-1. `cmd.exe /c "cd /d E:\AI\FREEBUFF && C:\Users\usuario\.cargo\bin\cargo.exe test"` → 295 tests verdes.
+1. `cmd.exe /c "cd /d whispr-open && cargo test"` → 295 tests verdes.
 2. `... cargo.exe check` → sin errores (warnings tolerados).
 3. Commit en git por fase lógica, mensaje en español.
 

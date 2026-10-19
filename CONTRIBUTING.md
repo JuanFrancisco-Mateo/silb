@@ -45,7 +45,7 @@ cargo run --release
 
 ## Antes de enviar la PR
 
-1. `cargo test` → **todo verde** (320 passed; los ignored son intencionales).
+1. `cargo test` → **todo verde** (336 passed; los ignored son intencionales).
 2. `cargo check` → sin errores (los warnings se toleran).
 3. Doc-comments en español en funciones y tipos públicos.
 4. Tests nuevos para lógica de dominio (`src/domain/`) y para cualquier fix

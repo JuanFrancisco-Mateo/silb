@@ -19,7 +19,7 @@ hecho.
 
 ## 2. Verificación del código
 
-- [ ] `cargo test` → todo verde (320 passed; los ignored son intencionales).
+- [ ] `cargo test` → todo verde (336 passed; los ignored son intencionales).
 - [ ] `cargo check` → sin errores.
 - [ ] `cargo build --release` → `target\release\silb.exe` actualizado.
 

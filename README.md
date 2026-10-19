@@ -8,7 +8,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-7C6CFF?style=flat-square)](https://www.rust-lang.org/)
 [![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11-7C6CFF?style=flat-square)](#compilar-desde-el-código)
 [![whisper.cpp](https://img.shields.io/badge/whisper.cpp-local-7C6CFF?style=flat-square)](https://github.com/ggerganov/whisper.cpp)
-[![Tests](https://img.shields.io/badge/tests-320%20passed-3fb950?style=flat-square)](#tests)
+[![Tests](https://img.shields.io/badge/tests-336%20passed-3fb950?style=flat-square)](#tests)
 
 [Instalar](#instalar) · [Compilar](#compilar-desde-el-código) · [Uso](#uso) · [Configuración](#configuración-avanzada-configjson) · [Contribuir](#contribuir)
 
@@ -270,7 +270,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 ## Tests
 
 ```powershell
-cargo test   # 320 passed, 0 failed, 3 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo test   # 336 passed, 0 failed, 3 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 cargo check  # sin errores
 ```
 
