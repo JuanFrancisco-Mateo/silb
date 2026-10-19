@@ -108,6 +108,25 @@ Detalles de empaquetado, tamaños medidos y firma en
 - Visual Studio Build Tools con **MSVC** y **CMake** — whisper-rs compila
   whisper.cpp en C desde el primer build.
 
+Eso es todo para el build **CPU** (el de por defecto): no hace falta toolkit
+CUDA ni GPU.
+
+**Build CUDA (opcional).** Solo si quieres que whisper.cpp transcriba en la
+GPU: instala el toolkit CUDA (con `CUDA_PATH` definido) y compila con la
+feature:
+
+```powershell
+cargo build --release --features cuda
+```
+
+Qué gana y qué pierde:
+
+- **CPU**: compila en cualquier Windows 10/11 con MSVC + CMake; transcripción
+  más lenta (el modelo `small` va por debajo del tiempo real en un Ryzen
+  moderno, pero suficiente para dictar).
+- **CUDA**: transcripción en tiempo real con GPU NVIDIA; exige driver +
+  toolkit en la máquina de compilación y un binario que asume GPU.
+
 ```powershell
 git clone https://github.com/JuanFrancisco-Mateo/whispr-open.git
 cd whispr-open
