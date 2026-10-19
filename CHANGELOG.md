@@ -4,6 +4,51 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.4.0] — 2026-10-19
+
+Primera versión con el producto ya renombrado a **Silb** y el repo listo para
+publicarse. Sin cambios de formato de datos: la config y los modelos siguen en
+`%APPDATA%\whispr-open`.
+
+### Añadido
+
+- **Renombrado a Silb**: binario `silb.exe`, instalador `silb-<ver>-setup.exe`,
+  icono y textos de la app. El paquete y el directorio de datos conservan
+  `whispr-open` para no dejar sin ajustes a quien ya la tiene instalada.
+- **Rediseño de UI desde Figma** (fase 1: tokens y frame Dictado; fase 2:
+  frame Ajustes) y retícula única en las cinco pestañas.
+- **GIF animado en la burbuja flotante** (codec gif, sin arrastrar
+  rav1e/avif al binario).
+- **Catálogo local de modelos LLM** y rename de proveedor en Ajustes.
+- **Server LLM integrado en el paquete** (`vendor/llama`): la app lo lanza y
+  lo cierra sola, sin rutas manuales.
+- **Secciones en la ventana principal**, pestañas compartidas y avisos.
+- **Build CUDA opcional**: `cargo build --release --features cuda`. Por
+  defecto compila en CPU (MSVC + CMake), sin toolkit CUDA ni GPU.
+
+### Cambiado
+
+- `Cargo.lock` trackeado: builds reproducibles.
+- Conteo de tests corregido con medición real sobre el tip: **336 passed,
+  0 failed, 3 ignored**.
+- Documentación sin rutas ni informes internos de sesión.
+
+### Corregido
+
+- El guard numérico caza el numeral viejo en frases naturales, y la
+  reconstrucción es el texto que se inyecta.
+- Los assets de personalización se copian al directorio de datos.
+- El log rota por tamaño y deja de registrar el ruido del arrastre.
+- Fallback al micrófono por defecto si el configurado desaparece.
+- Se conserva el modelo local cuando falla su carga (bucle DNS).
+- Eliminado el `expect` frágil de la imagen de fondo.
+
+### Notas de empaquetado
+
+- El instalador incluye el server LLM (`vendor/llama`, ~44 MB en CPU; el pack
+  CUDA opcional añade ~656 MB). Los binarios no viajan en el repo: se copian
+  con `packaging/vendor-llama.sh`.
+
 ## [0.3.0] — 2026-09-11
 
 Primera release pensada para gente de fuera: instalador, icono de producto y
@@ -57,6 +102,7 @@ Prototipo web (React + Tauri v2 + Whisper WASM): 40 tests. Queda archivado en
 la rama `main` como referencia; su hoja de ruta está en
 [`docs/ROADMAP-LEGADO-WEB.md`](docs/ROADMAP-LEGADO-WEB.md).
 
+[0.4.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/releases/tag/v0.3.0
 [0.2.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/compare/v0.1.0...v0.3.0
 [0.1.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/releases/tag/v0.1.0
