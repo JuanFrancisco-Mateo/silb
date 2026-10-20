@@ -182,8 +182,8 @@ Cada módulo trae sus tests («unit tests»: funciones que comprueban otras
 funciones con ejemplos conocidos):
 
 ```powershell
-cd E:\AI\FREEBUFF
-C:\Users\usuario\.cargo\bin\cargo.exe test    # 271 pasan, 1 se salta
+cd whispr-open
+cargo test    # 336 pasan, 3 se saltan
 ```
 
 El que se salta («ignored») necesita un servidor llama.cpp real encendido:

@@ -11,7 +11,7 @@
 
 cd "$(dirname "$0")/.."
 
-CARGO="/mnt/c/Users/usuario/.cargo/bin/cargo.exe"
+CARGO="${CARGO:-cargo}"
 EXE="target/release/silb.exe"
 
 # Variables de salida.
