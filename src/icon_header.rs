@@ -18,6 +18,8 @@ mod tests {
 
     const SIZES: &[u16] = &[16, 24, 32, 48, 64, 128, 256];
     const ACCENT: (u8, u8, u8) = (0x7C, 0x6C, 0xFF);
+    /// Color de la onda del símbolo (misma tinta que el SVG de Figma).
+    const WAVE: (u8, u8, u8) = (0xF7, 0xF6, 0xF3);
 
     /// Encuentra un Python ejecutable (mismo orden que build.rs).
     fn find_python() -> Option<&'static str> {
@@ -179,12 +181,22 @@ mod tests {
             rgba[center + 2],
             rgba[center + 3],
         );
+        // El centro cae en la onda de la marca (blanco roto), no en la losa:
+        // el símbolo es losa violeta + burbuja oscura + onda clara.
         assert_eq!(
             (r, g, b),
-            ACCENT,
-            "centro {size}x{size} no es violeta: ({r},{g},{b})"
+            WAVE,
+            "centro {size}x{size} no es la onda: ({r},{g},{b})"
         );
         assert!(a >= 200, "centro {size}x{size} no opaco: alpha={a}");
+
+        // Y por encima de la burbuja (10 % del alto) se ve la losa violeta.
+        let top = ((size / 10) * size + cx) * 4;
+        assert_eq!(
+            (rgba[top], rgba[top + 1], rgba[top + 2]),
+            ACCENT,
+            "losa {size}x{size} no violeta arriba"
+        );
 
         let corner = 0;
         let a_corner = rgba[corner + 3];
