@@ -44,29 +44,70 @@ SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)
 ACCENT_RGB: tuple[int, int, int] = (0x7C, 0x6C, 0xFF)
 
 
-def circle_rgba(size: int) -> bytes:
-    """Devuelve un buffer RGBA ``size * size`` con un círculo violeta."""
+def _mark_sample(nx: float, ny: float) -> tuple[bool, bool]:
+    """Punto normalizado (0..1) → (dentro del cuadrado, dentro de la onda).
+
+    La marca es un cuadrado violeta de esquinas redondeadas con una onda de
+    audio blanca de 5 barras. Se evalúa por muestras para poder antialiasear
+    con supersampling sin dependencias.
+    """
+    # Cuadrado redondeado: recorte por esquinas (radio 22 % del lado).
+    r = 0.22
+    cx = min(max(nx, r), 1.0 - r)
+    cy = min(max(ny, r), 1.0 - r)
+    if (nx - cx) ** 2 + (ny - cy) ** 2 >= r * r:
+        return (False, False)
+    # Onda: 5 barras verticales centradas, alturas fijas (silueta reconocible
+    # a 16 px). Zona útil del 20 % al 80 % del lado.
+    heights = (0.34, 0.62, 1.0, 0.62, 0.34)
+    bar_w = 0.088
+    gap = 0.021
+    total = len(heights) * bar_w + (len(heights) - 1) * gap
+    x0 = 0.5 - total / 2.0
+    for i, h in enumerate(heights):
+        bx0 = x0 + i * (bar_w + gap)
+        bx1 = bx0 + bar_w
+        if bx0 <= nx < bx1:
+            half = h * 0.30
+            return (True, abs(ny - 0.5) < half)
+    return (True, False)
+
+
+def mark_rgba(size: int) -> bytes:
+    """Buffer RGBA ``size * size`` con la marca de Silb (cuadrado + onda)."""
     assert size > 0
-    center = (size - 1) / 2.0
-    radius = size / 2.0 - 1.5
     buf = bytearray()
+    # 3x3 de supersampling: suficiente para que a 16 px no salgan bordes
+    # dentados y barato (256²·9 muestras tarda <1 s).
+    offs = (0.1667, 0.5, 0.8333)
+    inv = 1.0 / 9.0
     for y in range(size):
         for x in range(size):
-            dx = x - center
-            dy = y - center
-            d = (dx * dx + dy * dy) ** 0.5
-            if d <= radius - 0.5:
-                a = 255
-            elif d >= radius + 0.5:
-                a = 0
-            else:
-                a = int((radius + 0.5 - d) * 255.0)
-            # Canal alfa premultiplicado NO: PNG no pre-multiplica por defecto
-            # (modo "straight alpha", usado por Iced y por el .from_rgba de
-            # tray-icon). Windows Display dibuja tal cual sobre composición
-            # alfa del shell.
-            buf += bytes((ACCENT_RGB[0], ACCENT_RGB[1], ACCENT_RGB[2], a))
+            in_mark = 0
+            in_wave = 0
+            for oy in offs:
+                for ox in offs:
+                    m, w = _mark_sample((x + ox) / size, (y + oy) / size)
+                    if m:
+                        in_mark += 1
+                        if w:
+                            in_wave += 1
+            if in_mark == 0:
+                buf += b"\x00\x00\x00\x00"
+                continue
+            # Mezcla violeta→blanco según la fracción de la muestra que cae en
+            # la onda (así las barras quedan limpias incluso a 16 px).
+            wfrac = in_wave / in_mark
+            rgb = tuple(
+                int(round(ACCENT_RGB[i] * (1.0 - wfrac) + 255 * wfrac)) for i in range(3)
+            )
+            buf += bytes((rgb[0], rgb[1], rgb[2], int(round(in_mark * inv * 255))))
     return bytes(buf)
+
+
+def circle_rgba(size: int) -> bytes:
+    """Alias histórico (la bandeja usaba un círculo); hoy devuelve la marca."""
+    return mark_rgba(size)
 
 
 def _png_chunk(tag: bytes, data: bytes) -> bytes:
