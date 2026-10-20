@@ -553,7 +553,7 @@ Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
 
 ## 12. Criterios de aceptación (cómo se verifica)
 
-- `cargo test` verde (**304 passed + 1 ignored** a 24/09/2026, incluidos los que
+- `cargo test` verde (**336 passed + 3 ignored** a 24/09/2026, incluidos los que
   añadió t_c2b0a22f sobre el selector de proveedor y la degradación remota).
   Cubren: clasificadores
   cross-turn e in-turn (caso canónico de Juanfri «que calor en murcia digo

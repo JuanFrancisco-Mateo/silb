@@ -8,7 +8,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-7C6CFF?style=flat-square)](https://www.rust-lang.org/)
 [![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11-7C6CFF?style=flat-square)](#compilar-desde-el-código)
 [![whisper.cpp](https://img.shields.io/badge/whisper.cpp-local-7C6CFF?style=flat-square)](https://github.com/ggerganov/whisper.cpp)
-[![Tests](https://img.shields.io/badge/tests-320%20passed-3fb950?style=flat-square)](#tests)
+[![Tests](https://img.shields.io/badge/tests-336%20passed-3fb950?style=flat-square)](#tests)
 
 [Instalar](#instalar) · [Compilar](#compilar-desde-el-código) · [Uso](#uso) · [Configuración](#configuración-avanzada-configjson) · [Contribuir](#contribuir)
 
@@ -107,6 +107,25 @@ Detalles de empaquetado, tamaños medidos y firma en
 - Rust con toolchain MSVC (`rustup default stable-msvc`) en Windows 10/11.
 - Visual Studio Build Tools con **MSVC** y **CMake** — whisper-rs compila
   whisper.cpp en C desde el primer build.
+
+Eso es todo para el build **CPU** (el de por defecto): no hace falta toolkit
+CUDA ni GPU.
+
+**Build CUDA (opcional).** Solo si quieres que whisper.cpp transcriba en la
+GPU: instala el toolkit CUDA (con `CUDA_PATH` definido) y compila con la
+feature:
+
+```powershell
+cargo build --release --features cuda
+```
+
+Qué gana y qué pierde:
+
+- **CPU**: compila en cualquier Windows 10/11 con MSVC + CMake; transcripción
+  más lenta (el modelo `small` va por debajo del tiempo real en un Ryzen
+  moderno, pero suficiente para dictar).
+- **CUDA**: transcripción en tiempo real con GPU NVIDIA; exige driver +
+  toolkit en la máquina de compilación y un binario que asume GPU.
 
 ```powershell
 git clone https://github.com/JuanFrancisco-Mateo/whispr-open.git
@@ -251,7 +270,7 @@ rompe el arranque, y el atajo real registrado se muestra en la UI (Ajustes).
 ## Tests
 
 ```powershell
-cargo test   # 320 passed, 0 failed, 3 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo test   # 336 passed, 0 failed, 3 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 cargo check  # sin errores
 ```
 

@@ -47,7 +47,7 @@ El integrador cablea toda la UI al final (fase 3) y verifica el conjunto.
 - Si no hay repo: `git init -b main` en la raíz + `.gitignore` con
   `node_modules/`, `dist/`, `src-tauri/target/`.
 - Commit inicial "chore: baseline whispr-open (tests 40/40)".
-- Verificar baseline: `cmd.exe /c "cd /d E:\AI\FREEBUFF && npm test"`
+- Verificar baseline: `cmd.exe /c "cd /d whispr-open && npm test"`
   → 40 tests pasando. Registrar el número en el informe final.
 
 ACEPTACIÓN: repo con commit inicial, tests 40/40 desde Windows.
@@ -131,14 +131,14 @@ Implementación (Windows/Tauri; la versión web queda sin esta feature):
 - NO tocar `App.tsx`.
 
 ACEPTACIÓN:
-- `cmd.exe /c "C:\Users\usuario\.cargo\bin\cargo.exe check"` (en `src-tauri/`; compila Windows).
+- `cmd.exe /c "cargo check"` (en `src-tauri/`; compila Windows).
 - `src/services/text-injection.ts` con test que mockea `window.__TAURI_INTERNALS__`
   (invoke capturado) y verifica argumentos + fallback web.
 - README: nueva sección "Escritura en otras apps (Windows)".
 
 > ⚠️ OVERRIDE cargo (CRÍTICO): `cmd.exe` NO tiene cargo en PATH. En TODAS las
 > verificaciones de Rust usar la ruta completa:
-> `cmd.exe /c "C:\Users\usuario\.cargo\bin\cargo.exe check"` (o `build`).
+> `cmd.exe /c "cargo check"` (o `build`).
 > La versión "cargo check" suelta falla en cmd.exe.
 
 ---
@@ -162,7 +162,7 @@ SOLO el integrador toca `src/App.tsx` y `src/styles.css`. Cablear, en orden:
 Verificación final obligatoria (en orden):
 - `cmd.exe /c npm test` → TODOS verdes (baseline + nuevos).
 - `cmd.exe /c npm run build` → sin errores.
-- `cmd.exe /c "cd /d E:\AI\FREEBUFF\src-tauri && C:\Users\usuario\.cargo\bin\cargo.exe check"` → OK (si Fase 3 tocó Rust).
+- `cmd.exe /c "cd /d whispr-open\src-tauri && cargo check"` → OK (si Fase 3 tocó Rust).
 - Commit por cada fase integrada (mensajes en español, p.ej.
   `feat: limpieza de muletillas conectada a la UI`).
 

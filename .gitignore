@@ -3,6 +3,7 @@
 
 # Empaquetado
 /packaging/Output/
+/packaging/build/
 
 # Server LLM embarcado (binarios de llama.cpp: ~44 MB en CPU, ~700 MB con el
 # pack CUDA). Viajan con la app, NO con el repo: los copia
