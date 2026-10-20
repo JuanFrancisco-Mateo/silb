@@ -255,8 +255,18 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
 
     std::fs::create_dir_all(models_dir())
         .map_err(|e| format!("no se pudo crear models dir: {e}"))?;
-    let resp = ureq::get(&model.download_url())
-        .timeout(Duration::from_secs(120))
+    // Sin timeout GLOBAL: en ureq 2.x el `timeout()` de la petición abarca la
+    // lectura del cuerpo, así que en una línea lenta (cientos de MB a pocos
+    // MB/s) la descarga se cortaba a los 2 min, el `.part` se borraba y cada
+    // reintento volvía a empezar de cero. Con timeout de conexión y de lectura
+    // por bloque, una descarga lenta pero viva termina; una conexión colgada
+    // sigue cortando.
+    let agent = ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(60))
+        .build();
+    let resp = agent
+        .get(&model.download_url())
         .call()
         .map_err(|e| format!("no se pudo descargar el modelo: {e}"))?;
     let total = resp
@@ -274,6 +284,13 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
         let mut buf = [0u8; 64 * 1024];
         let mut reader = resp.into_reader();
         use std::io::{Read, Write};
+        // El canal del arranque se drena a 10 Hz (un evento por tick), así que
+        // emitir progreso por cada bloque de 64 KB encolaba ~7.400 eventos en
+        // una descarga rápida: la UI se quedaba clavada en «5 / 465 MB · quedan
+        // más de 1 h» minutos después de haber terminado. Se emite como mucho
+        // un evento por 1 % (o por MB cuando el servidor no declara tamaño).
+        let step = if total > 0 { (total / 100).max(1) } else { 1 << 20 };
+        let mut last_emit = 0u64;
         loop {
             let n = reader
                 .read(&mut buf)
@@ -284,8 +301,12 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
             file.write_all(&buf[..n])
                 .map_err(|e| format!("error escribiendo modelo: {e}"))?;
             downloaded += n as u64;
-            on_progress(downloaded, total);
+            if downloaded - last_emit >= step {
+                last_emit = downloaded;
+                on_progress(downloaded, total);
+            }
         }
+        on_progress(downloaded, total);
         file.sync_all()
             .map_err(|e| format!("error sincronizando modelo: {e}"))?;
         // Cerrar el handle ANTES del rename: en Windows mover un fichero
