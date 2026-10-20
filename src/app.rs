@@ -2016,12 +2016,10 @@ impl WhisprApp {
                     self.startup = StartupPhase::Ready;
                     self.set_tray_status(crate::tray::MENU_LABEL_READY_NO_LLM);
                 }
-                // Aviso VISIBLE (requisito 09/09/2026: el fallo del server
-                // nunca es silencioso), salvo cuando el propio usuario apagó
-                // la corrección (razón vacía: no hay nada que avisar).
-                if !reason.is_empty() {
-                    self.last_correction = Some(format!("Corrección IA desactivada: {reason}"));
-                }
+                // Sin banner extra: la fila «Corrección IA» del Dictado ya
+                // muestra «Inactiva — <motivo>» de forma permanente. Antes se
+                // pintaban los dos textos a la vez (aviso verde + fila) con la
+                // misma frase, que es justo el ruido que sobra en la UI.
                 Task::none()
             }
         }
