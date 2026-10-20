@@ -3005,11 +3005,12 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
             llm.model,
             crate::llm::model_search_roots()
         );
-        let _ = tx.send(StartupEvent::LlmDisabled(format!(
-            "no está instalado el modelo del corrector «{}»; \
-             el dictado sigue funcionando sin corrección",
-            llm.model
-        )));
+        // El motivo que ve el usuario NO lleva el nombre del modelo: en la
+        // fila del pie se lee «Inactiva — carga un modelo de IA», sin códigos
+        // internos. El nombre exacto queda en el log de arriba.
+        let _ = tx.send(StartupEvent::LlmDisabled(
+            "carga un modelo de IA; el dictado funciona sin corrección".to_string(),
+        ));
         return;
     };
 
