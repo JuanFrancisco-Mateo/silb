@@ -70,6 +70,13 @@ fn main() {
 
     let mut res = winresource::WindowsResource::new();
     res.set_icon(repo_ico.to_str().unwrap());
+    // Metadatos de marca: sin esto Windows muestra el nombre del crate viejo
+    // («whispr-open») en el Administrador de tareas y en las propiedades del
+    // .exe, aunque el producto ya se llame Silb.
+    res.set("ProductName", "Silb");
+    res.set("FileDescription", "Silb — dictado local por voz");
+    res.set("OriginalFilename", "silb.exe");
+    res.set("InternalName", "silb");
     if let Err(e) = res.compile() {
         panic!("winresource falló: {e}");
     }
