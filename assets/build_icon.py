@@ -44,64 +44,91 @@ SIZES: tuple[int, ...] = (16, 24, 32, 48, 64, 128, 256)
 ACCENT_RGB: tuple[int, int, int] = (0x7C, 0x6C, 0xFF)
 
 
-def _mark_sample(nx: float, ny: float) -> tuple[bool, bool]:
-    """Punto normalizado (0..1) → (dentro del cuadrado, dentro de la onda).
+def _in_round_rect(px: float, py: float, x0: float, y0: float, x1: float, y1: float, r: float) -> bool:
+    """Punto dentro de un rectángulo de esquinas redondeadas (radio r)."""
+    if px < x0 or px > x1 or py < y0 or py > y1:
+        return False
+    cx = min(max(px, x0 + r), x1 - r)
+    cy = min(max(py, y0 + r), y1 - r)
+    return (px - cx) ** 2 + (py - cy) ** 2 < r * r
 
-    La marca es un cuadrado violeta de esquinas redondeadas con una onda de
-    audio blanca de 5 barras. Se evalúa por muestras para poder antialiasear
-    con supersampling sin dependencias.
-    """
-    # Cuadrado redondeado: recorte por esquinas (radio 22 % del lado).
-    r = 0.22
-    cx = min(max(nx, r), 1.0 - r)
-    cy = min(max(ny, r), 1.0 - r)
-    if (nx - cx) ** 2 + (ny - cy) ** 2 >= r * r:
-        return (False, False)
-    # Onda: 5 barras verticales centradas, alturas fijas (silueta reconocible
-    # a 16 px). Zona útil del 20 % al 80 % del lado.
-    heights = (0.34, 0.62, 1.0, 0.62, 0.34)
-    bar_w = 0.088
-    gap = 0.021
-    total = len(heights) * bar_w + (len(heights) - 1) * gap
-    x0 = 0.5 - total / 2.0
-    for i, h in enumerate(heights):
-        bx0 = x0 + i * (bar_w + gap)
-        bx1 = bx0 + bar_w
-        if bx0 <= nx < bx1:
-            half = h * 0.30
-            return (True, abs(ny - 0.5) < half)
-    return (True, False)
+
+def _in_tri(px: float, py: float, a, b, c) -> bool:
+    def sign(p1, p2):
+        return (px - p2[0]) * (p1[1] - p2[1]) - (p1[0] - p2[0]) * (py - p2[1])
+
+    d1, d2, d3 = sign(a, b), sign(b, c), sign(c, a)
+    neg = d1 < 0 or d2 < 0 or d3 < 0
+    pos = d1 > 0 or d2 > 0 or d3 > 0
+    return not (neg and pos)
+
+
+def _dist_seg(px: float, py: float, a, b) -> float:
+    vx, vy = b[0] - a[0], b[1] - a[1]
+    wx, wy = px - a[0], py - a[1]
+    L2 = vx * vx + vy * vy
+    t = 0.0 if L2 == 0 else max(0.0, min(1.0, (wx * vx + wy * vy) / L2))
+    return ((px - (a[0] + t * vx)) ** 2 + (py - (a[1] + t * vy)) ** 2) ** 0.5
+
+
+# Marca real de Silb, copiada del símbolo de Figma (assets/icons/whisprsymbol-*.svg):
+# cuadrado violeta redondeado + burbuja de diálogo oscura con cola + onda de voz
+# blanca. Todo en unidades del viewBox 32x32.
+_TILE = (0.0, 0.0, 1.0, 1.0, 7 / 32)
+_BUBBLE = (5 / 32, 5 / 32, 27 / 32, 25 / 32, 4 / 32)
+_TAIL = ((11 / 32, 25 / 32), (14 / 32, 28 / 32), (14 / 32, 25 / 32))
+_WAVE = [
+    (9.5 / 32, 14.5 / 32),
+    (12.5 / 32, 14.5 / 32),
+    (14 / 32, 11.5 / 32),
+    (16 / 32, 17.5 / 32),
+    (17.5 / 32, 14.5 / 32),
+    (22.5 / 32, 14.5 / 32),
+]
+_WAVE_HALF = 0.75 / 32  # stroke-width 1.5, extremos redondeados
+
+
+def _mark_sample(nx: float, ny: float) -> tuple[int, int, int, int]:
+    """Punto normalizado → color RGBA de la marca (0 alfa si fuera)."""
+    if not _in_round_rect(nx, ny, *_TILE):
+        return (0, 0, 0, 0)
+    if _in_round_rect(nx, ny, *_BUBBLE) or _in_tri(nx, ny, *_TAIL):
+        if min(_dist_seg(nx, ny, _WAVE[i], _WAVE[i + 1]) for i in range(len(_WAVE) - 1)) <= _WAVE_HALF:
+            return (0xF7, 0xF6, 0xF3, 255)  # onda
+        return (0x17, 0x18, 0x1C, 255)  # burbuja
+    return (0x7C, 0x6C, 0xFF, 255)  # losa
 
 
 def mark_rgba(size: int) -> bytes:
-    """Buffer RGBA ``size * size`` con la marca de Silb (cuadrado + onda)."""
+    """Buffer RGBA ``size * size`` con la marca de Silb (losa + burbuja + onda)."""
     assert size > 0
     buf = bytearray()
-    # 3x3 de supersampling: suficiente para que a 16 px no salgan bordes
-    # dentados y barato (256²·9 muestras tarda <1 s).
-    offs = (0.1667, 0.5, 0.8333)
+    # 3x3 de supersampling: bordes limpios sin dependencias y <1 s a 256 px.
+    offs = (1 / 6, 0.5, 5 / 6)
     inv = 1.0 / 9.0
     for y in range(size):
         for x in range(size):
-            in_mark = 0
-            in_wave = 0
+            r = g = b = a = 0
             for oy in offs:
                 for ox in offs:
-                    m, w = _mark_sample((x + ox) / size, (y + oy) / size)
-                    if m:
-                        in_mark += 1
-                        if w:
-                            in_wave += 1
-            if in_mark == 0:
+                    sr, sg, sb, sa = _mark_sample((x + ox) / size, (y + oy) / size)
+                    if sa:
+                        r += sr
+                        g += sg
+                        b += sb
+                        a += sa
+            if a == 0:
                 buf += b"\x00\x00\x00\x00"
                 continue
-            # Mezcla violeta→blanco según la fracción de la muestra que cae en
-            # la onda (así las barras quedan limpias incluso a 16 px).
-            wfrac = in_wave / in_mark
-            rgb = tuple(
-                int(round(ACCENT_RGB[i] * (1.0 - wfrac) + 255 * wfrac)) for i in range(3)
+            n = a / 255.0
+            buf += bytes(
+                (
+                    int(round(r / n)),
+                    int(round(g / n)),
+                    int(round(b / n)),
+                    int(round(a * inv)),
+                )
             )
-            buf += bytes((rgb[0], rgb[1], rgb[2], int(round(in_mark * inv * 255))))
     return bytes(buf)
 
 
