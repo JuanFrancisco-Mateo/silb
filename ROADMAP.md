@@ -23,9 +23,9 @@ plan original quedó archivado en
 | Mejoras de UI pendientes | [`docs/UI-FUTURA.md`](docs/UI-FUTURA.md) |
 | Roadmap de la versión web (histórico, rama `main`) | [`docs/ROADMAP-LEGADO-WEB.md`](docs/ROADMAP-LEGADO-WEB.md) |
 
-## Resumen de un vistazo (11/09/2026)
+## Resumen de un vistazo (26/10/2026)
 
-- Versión: **0.2.0**.
+- Versión: **0.5.0** (port a Linux integrado; 0.4.0 cerró el producto Windows).
 - Fases del encargo de cierre: **0–3 hechas** (robustez; nota editable y
   accesibilidad; open source con licencia MIT y documentación; doc-comments de
   las funciones públicas en español). **Fase 4 pendiente**: instalador,
