@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::cleanup::FillerWords;
 use crate::domain::dictionary::DictionaryEntry;
+#[cfg(unix)]
+use crate::inject::LinuxInjectBackend;
 use crate::theme::PaletteConfig;
 use crate::transcribe::Model;
 
@@ -366,6 +368,17 @@ pub struct Config {
     /// mayúsculas): si el título no lo contiene, el turno NO se inyecta.
     /// Vacío/ausente = inyectar en cualquier app.
     pub inject_window_filter: Option<String>,
+    /// Solo Linux: backend de inyección del turno. Valores válidos
+    /// (`inject_backend` en config.json):
+    /// - `"wl-clipboard"` (default): wl-copy al portapapeles + wtype para
+    ///   la pulsación del pegado. Sin daemons ni permisos extra.
+    /// - `"ydotool"`: tecleo por uinput (universal, Xwayland incluido);
+    ///   exige `ydotoold` corriendo — sin él se copia al portapapeles y se
+    ///   avisa (la app no teclea a ciegas).
+    /// - `"wtype"`: tecleo directo por teclado virtual Wayland; algunas
+    ///   apps lo bloquean (zwp_virtual_keyboard_v1) → portapapeles.
+    /// Cualquier otro valor cae al default (la config nunca rompe).
+    pub inject_backend: Option<String>,
     /// Idioma de la transcripción. Vacío o "auto" (sin distinguir
     /// mayúsculas) = autodetección de whisper (se pasa `None` al motor);
     /// cualquier otro valor se trimea y se trata como BCP-47 (`"es"`,
@@ -457,19 +470,37 @@ pub struct Config {
 
 /// Ruta del `config.json` del usuario (junto a `dictionary.json`).
 ///
+/// Windows: `%APPDATA%\whispr-open\config.json` (vía `dirs::data_dir`).
+/// Linux: `~/.config/whispr-open/config.json` (respeta `$XDG_CONFIG_HOME`).
+///
 /// Si el sistema no expone carpeta de datos se cae al directorio actual: la
 /// app sigue funcionando, solo guarda la config al lado del ejecutable.
+#[cfg(target_os = "windows")]
 pub fn config_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("config.json")
 }
 
+/// Linux: config en XDG (no en data); doc-comments/docsUPDATED-2026-10-03.
+#[cfg(not(target_os = "windows"))]
+pub fn config_path() -> PathBuf {
+    crate::paths::app_config_dir().join("config.json")
+}
+
 /// Ruta del diccionario personal exportable/importable (JSON).
 /// Mismo directorio base que `config_path`; el fichero vive junto a la
-/// config para que un backup de `%APPDATA%/whispr-open/` lo incluya todo.
+/// config para que un backup de la carpeta base lo incluya todo.
+#[cfg(target_os = "windows")]
 pub fn dictionary_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("dictionary.json")
+}
+
+/// Linux: junto a config (XDG_CONFIG_HOME), coincide con Windows en la
+/// disposición relativa (junto a config.json).
+#[cfg(not(target_os = "windows"))]
+pub fn dictionary_path() -> PathBuf {
+    crate::paths::app_config_dir().join("dictionary.json")
 }
 
 #[cfg(target_os = "windows")]
@@ -624,8 +655,9 @@ impl Config {
     }
 
     /// Comportamiento de inyección desde config.json: formato (paste/type),
-    /// retardo en ms (default 40, 0 = sin retardo) y filtro por título de la
-    /// ventana activa. Valores inválidos/ausentes → defaults seguros.
+    /// retardo en ms (default 40, 0 = sin retardo), filtro por título de la
+    /// ventana activa y —solo Linux— backend (wl-clipboard/ydotool/wtype).
+    /// Valores inválidos/ausentes → defaults seguros.
     pub fn inject_settings(&self) -> crate::inject::InjectSettings {
         crate::inject::InjectSettings {
             format: match self.inject_format.as_deref() {
@@ -639,6 +671,15 @@ impl Config {
                 .map(str::trim)
                 .filter(|f| !f.is_empty())
                 .map(str::to_string),
+            // Solo Linux: deserializar el backend pidiendo perdón si el
+            // valor no es reconocible (consulte el doc-comment del enum
+            // para las reglas). En Windows no existe el campo.
+            #[cfg(unix)]
+            backend: match self.inject_backend.as_deref() {
+                Some("ydotool") => LinuxInjectBackend::Ydotool,
+                Some("wtype") => LinuxInjectBackend::Wtype,
+                _ => LinuxInjectBackend::WlClipboard,
+            },
         }
     }
 
@@ -1000,6 +1041,37 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(c.inject_settings().window_filter, None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn inject_backend_linux_defaults_y_overrides() {
+        // Default: wl-clipboard (sin daemons ni permisos extra).
+        assert_eq!(
+            Config::default().inject_settings().backend,
+            crate::inject::LinuxInjectBackend::WlClipboard
+        );
+        // Overrides legítimos.
+        for (raw, esperado) in [
+            ("ydotool", crate::inject::LinuxInjectBackend::Ydotool),
+            ("wtype", crate::inject::LinuxInjectBackend::Wtype),
+            ("wl-clipboard", crate::inject::LinuxInjectBackend::WlClipboard),
+        ] {
+            let c = Config {
+                inject_backend: Some(raw.into()),
+                ..Default::default()
+            };
+            assert_eq!(c.inject_settings().backend, esperado, "backend {raw}");
+        }
+        // Valor desconocido → default (la config nunca rompe el arranque).
+        let raro = Config {
+            inject_backend: Some("xdotool-mola".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            raro.inject_settings().backend,
+            crate::inject::LinuxInjectBackend::WlClipboard
+        );
     }
 
     #[test]

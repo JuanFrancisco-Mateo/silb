@@ -1,7 +1,20 @@
 //! Transcripción con whisper-rs (whisper.cpp nativo, modelos GGML).
 //!
 //! Los modelos se descargan de HuggingFace (repo ggerganov/whisper.cpp,
-//! archivos ggml-*.bin) a `%APPDATA%/whispr-open/models/`.
+//! archivos ggml-*.bin) a `%APPDATA%/whispr-open/models/` en Windows y
+//! `~/.local/share/whispr-open/models/` en Linux (ver `models_dir`).
+//!
+//! GPU/CUDA (port Linux t_7ac526a3): la feature `cuda` de whisper-rs pasa a
+//! ser una feature de Cargo del propio crate, OFF por defecto (ver
+//! Cargo.toml `[features] cuda`). Sin ella, whisper.cpp compila CPU-only y
+//! `TranscribeEngine` es el ÚNICO camino (no hay código de selección de
+//! dispositivo GPU en este módulo: whisper.cpp decide internamente; la
+//! feature solo activa compilar los kernels CUDA y el backend GPU).
+//! En Linux el build default del port es CPU-only — viable en el portátil
+//! de 12 hilos con modelo small (estimación honesta y referencias en
+//! docs/PORT-LINUX/AUDIO-RUNTIME.md; la medición real la deja el usuario).
+//! El código no cambia entre ambas: los mismos `FullParams` aplican con y
+//! sin CUDA (whisper.cpp hace la reserva GPU en el contexto).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -76,13 +89,21 @@ impl std::fmt::Display for Model {
     }
 }
 
-/// Carpeta de modelos bajo `%APPDATA%\whispr-open\models` (donde instalan
-/// los GGML descargados).
+/// Carpeta de modelos bajo `%APPDATA%\whispr-open\models` (Windows) o
+/// `~/.local/share/whispr-open/models` (Linux, respeta `$XDG_DATA_HOME`);
+/// allí instalan los GGML descargados.
+#[cfg(target_os = "windows")]
 pub fn models_dir() -> PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("whispr-open")
         .join("models")
+}
+
+/// Linux: modelos en XDG data (ficheros grandes, no editables a mano).
+#[cfg(not(target_os = "windows"))]
+pub fn models_dir() -> PathBuf {
+    crate::paths::app_data_dir().join("models")
 }
 /// Ruta completa del GGML del modelo indicado.
 pub fn model_path(model: Model) -> PathBuf {
@@ -401,6 +422,15 @@ impl Default for InferenceParams {
         }
     }
 }
+
+/// Documentación de hilos recomendados (port Linux, t_7ac526a3): el default
+/// histórico es 4, razonable en un Ryzen 5 5650U (6C/12T) donde el resto de
+/// la app (UI iced, cpal) también corre; la velocidad de transcripción con
+/// small CPU-only se gana más subiendo n_threads a 6 que a 12 (el decoder
+/// de whisper.cpp escala de forma sublinear y el sistema lo comparte con la
+/// UI). El valor lo ajusta el usuario en Ajustes → Avanzado; este comentario
+/// documenta la recomendación, NO un benchmark medido (ninguno se ha
+/// ejecutado en el port: measurement pending, ver AUDIO-RUNTIME.md).
 
 fn build_params<'a>(
     inference: &'a InferenceParams,

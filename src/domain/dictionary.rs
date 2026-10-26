@@ -5,7 +5,9 @@
 //!
 //! Además de la lógica de reemplazo, aquí viven la importación y exportación
 //! del diccionario a JSON (backup/restore manual del usuario; la ruta por
-//! defecto es `%APPDATA%/whispr-open/dictionary.json` vía `config::dictionary_path`).
+//! defecto es `%APPDATA%/whispr-open/dictionary.json` (Windows) o
+//! `~/.config/whispr-open/dictionary.json` (Linux, XDG_CONFIG_HOME) vía
+//! `config::dictionary_path`).
 
 use std::path::Path;
 

@@ -28,6 +28,7 @@ pub mod icon_header;
 pub mod inject;
 pub mod llm;
 pub mod log;
+pub mod paths;
 pub mod single_instance;
 pub mod theme;
 pub mod transcribe;
