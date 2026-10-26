@@ -77,8 +77,12 @@ pub fn api_url(base_url: &str, path: &str) -> String {
     format!("{}/{}", api_base(base_url), path.trim_start_matches('/'))
 }
 
-/// Nombre del ÚNICO ejecutable que la app acepta como server LLM.
+/// Nombre del ÚNICO ejecutable que la app acepta como server LLM: `llama-server.exe`
+/// en Windows y `llama-server` (binario de llama.cpp) en el resto.
+#[cfg(target_os = "windows")]
 pub const SERVER_EXE_NAME: &str = "llama-server.exe";
+#[cfg(not(target_os = "windows"))]
+pub const SERVER_EXE_NAME: &str = "llama-server";
 
 /// Release de llama.cpp del que la app descarga el server bajo demanda
 /// (sprint final: nada viene de serie). Se fija aquí para que la UI y los
@@ -1412,16 +1416,59 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     Ok(pid)
 }
 
-/// Stub fuera de Windows: el server LLM es un binario nativo de Windows (regla
-/// del proyecto: nunca se arranca vía WSL), así que aquí no hay nada que
-/// lanzar; mismo contrato (`Err` con el motivo).
+/// [Linux/macOS] Lanza el server LLM local (`llama-server`) como proceso
+/// nativo. Mismo contrato que el camino Windows: stdout/stderr a
+/// `llama-server.log` junto a la config, cwd = directorio del exe (los builds
+/// de llama.cpp cargan sus libs relativas desde ahí) y PID registrado en
+/// `LAUNCHED_SERVER_PID` para matarlo al salir.
 #[cfg(not(target_os = "windows"))]
-pub fn launch_server(
-    _exe: &std::path::Path,
-    _model: &std::path::Path,
-    _port: u16,
-) -> Result<u32, String> {
-    Err("arranque automático del servidor LLM solo disponible en Windows".to_string())
+pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) -> Result<u32, String> {
+    use std::process::{Command, Stdio};
+
+    if !is_server_exe(exe) {
+        return Err(format!(
+            "el server LLM debe ser {SERVER_EXE_NAME} (binario nativo de llama.cpp, \
+             nunca un wrapper): {}",
+            exe.display()
+        ));
+    }
+    if !exe.is_file() {
+        return Err(format!(
+            "no existe el ejecutable del server LLM: {}",
+            exe.display()
+        ));
+    }
+    let cwd = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let args = build_server_args(model, port);
+    let log_path = crate::config::config_path()
+        .parent()
+        .map(|p| p.join("llama-server.log"))
+        .unwrap_or_else(|| std::path::PathBuf::from("llama-server.log"));
+    let log_file = std::fs::File::create(&log_path)
+        .map_err(|e| format!("no se pudo abrir el log del server ({log_path:?}): {e}"))?;
+
+    let child = Command::new(exe)
+        .args(&args)
+        .current_dir(cwd)
+        .stdin(Stdio::null())
+        .stdout(Stdio::from(
+            log_file
+                .try_clone()
+                .map_err(|e| format!("log del server: {e}"))?,
+        ))
+        .stderr(Stdio::from(log_file))
+        .spawn()
+        .map_err(|e| format!("no se pudo lanzar {}: {e}", exe.display()))?;
+
+    let pid = child.id();
+    LAUNCHED_SERVER_PID.store(pid, Ordering::SeqCst);
+    crate::log!(
+        "llm",
+        "server LLM lanzado (pid {pid}, {}): {}",
+        exe.display(),
+        args.join(" ")
+    );
+    Ok(pid)
 }
 
 /// Argumentos del `llama-server.exe` para el dictado. Flags de referencia
@@ -1534,8 +1581,44 @@ pub fn terminate_server_pid(pid: u32) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = pid;
-        false
+        // Salvaguarda contra reutilización de PID: /proc/<pid>/exe debe ser
+        // `llama-server`. Antes dejar un server huérfano que matar un ajeno.
+        let exe_link = match std::fs::read_link(format!("/proc/{pid}/exe")) {
+            Ok(p) => p,
+            Err(_) => {
+                crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (/proc)");
+                return false;
+            }
+        };
+        let is_ours = exe_link
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n == SERVER_EXE_NAME)
+            .unwrap_or(false);
+        if !is_ours {
+            crate::log!(
+                "llm",
+                "pid {pid} ya no es {SERVER_EXE_NAME} (reutilizado): no se toca"
+            );
+            return false;
+        }
+        // SIGTERM (cierre limpio, libera VRAM) y SIGKILL si sigue vivo a los 2 s.
+        unsafe {
+            if libc::kill(pid as libc::pid_t, libc::SIGTERM) != 0 {
+                crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (kill ESRCH)");
+                return false;
+            }
+            for _ in 0..20 {
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                if !std::path::Path::new(&format!("/proc/{pid}")).exists() {
+                    crate::log!("llm", "server LLM propio (pid {pid}) terminado (SIGTERM)");
+                    return true;
+                }
+            }
+            libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            crate::log!("llm", "server LLM propio (pid {pid}) terminado (SIGKILL tras 2 s)");
+            true
+        }
     }
 }
 
@@ -1648,6 +1731,7 @@ pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf>
 /// 2. Junto al exe de la app (layout plano, sin `vendor/`).
 /// 3. `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` (instalación por usuario).
 /// 4. PATH de Windows (`llama-server.exe` en cualquier directorio del PATH).
+#[cfg(target_os = "windows")]
 fn default_server_roots() -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -1665,6 +1749,34 @@ fn default_server_roots() -> Vec<std::path::PathBuf> {
     if let Some(path_var) = std::env::var_os("PATH") {
         for dir in std::env::split_paths(&path_var) {
             roots.push(dir.join("llama-server.exe"));
+        }
+    }
+    roots
+}
+
+/// [Linux/macOS] Candidatos de autodetección: junto al exe de la app,
+/// `~/.local/bin`, la carpeta de config y el PATH (`llama-server`).
+#[cfg(not(target_os = "windows"))]
+fn default_server_roots() -> Vec<std::path::PathBuf> {
+    use std::path::PathBuf;
+    let mut roots: Vec<PathBuf> = Vec::new();
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            roots.push(dir.join(SERVER_EXE_NAME));
+        }
+    }
+    if let Some(home) = dirs::home_dir() {
+        roots.push(home.join(".local").join("bin").join(SERVER_EXE_NAME));
+        roots.push(
+            dirs::config_dir()
+                .unwrap_or_else(|| home.join(".config"))
+                .join("whispr-open")
+                .join(SERVER_EXE_NAME),
+        );
+    }
+    if let Some(path_var) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path_var) {
+            roots.push(dir.join(SERVER_EXE_NAME));
         }
     }
     roots

@@ -66,11 +66,35 @@ pub fn acquire() -> bool {
     }
 }
 
-/// Stub fuera de Windows: sin mutex con nombre no hay guard de instancia
-/// única; `true` (esta instancia es la dueña) para no bloquear el arranque.
+/// [Linux/macOS] Guard por lock file con `flock` en
+/// `$XDG_RUNTIME_DIR/whispr-open/instance.lock` (`$TMPDIR` como recurso).
+/// flock lo libera el kernel al morir el proceso, así que un crash-kill no
+/// deja el candado pegado. `true` = esta instancia es la dueña.
+///
+/// ponytail: el lock se mantiene con `mem::forget` (vive lo que vive el
+/// proceso, que es exactamente lo que queremos); si algún día hacen falta
+/// "segundas instancias que avisan a la primera", guardar el File en un
+/// OnceLock y usar el socket de notificación.
 #[cfg(not(target_os = "windows"))]
 pub fn acquire() -> bool {
-    true
+    let base = std::env::var_os("XDG_RUNTIME_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(std::env::temp_dir);
+    let dir = base.join("whispr-open");
+    let _ = std::fs::create_dir_all(&dir);
+    let path = dir.join("instance.lock");
+    match std::fs::File::create(&path) {
+        Ok(file) => match file.try_lock() {
+            Ok(()) => {
+                let _ = std::fs::write(dir.join("instance.pid"), std::process::id().to_string());
+                std::mem::forget(file);
+                true
+            }
+            Err(_) => false,
+        },
+        // Sin poder crear el fichero (FS raro) no se bloquea el arranque.
+        Err(_) => true,
+    }
 }
 
 /// Aviso nativo para quien lanzó la segunda instancia con un doble clic y

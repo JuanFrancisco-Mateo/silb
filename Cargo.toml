@@ -80,6 +80,11 @@ fancy-regex = "0.14"
 uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"
 
+# [Linux/macOS] kill(2) para terminar el server LLM que lanzó la app
+# (SIGTERM limpio + SIGKILL de rescate; ver llm::terminate_server_pid).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 # Tests de glifos emoji: replica el FontSystem de Iced (cosmic-text) para
 # verificar que los símbolos de la UI (✓ ☀ ☾ ▾ ▸ ● → ✕) no quedan en
