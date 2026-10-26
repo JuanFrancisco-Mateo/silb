@@ -19,9 +19,28 @@
 //! - El icono se genera en código (RGBA 32×32, círculo violeta #7C6CFF, el
 //!   mismo acento que la burbuja): `Icon::from_rgba` en Windows convierte
 //!   RGBA→BGRA y monta la AND-mask, sin premultiplicar; no necesita assets.
+//!
+//! PORT LINUX (t_7ac526a3, estado «pendiente backend de sistema»):
+//! - `tray-icon` 0.24 soporta Linux SOLO vía AppIndicator/KSNI (docs.rs
+//!   0.24.2: «Linux (gtk Only)»): exige GTK3 + libappindicator/libayatana +
+//!   libxdo instaladas en el sistema Y un host de StatusNotifier (waybar con
+//!   soporte appindicator) que Hyprland no trae de fábrica.
+//! - Factor de fragilidad doble (deps GTK en build + host de tray en
+//!   runtime): decisión honesta del port es degradar a stub en Linux sin
+//!   compilar la dependencia (ver Cargo.toml, dependencia detrás de
+//!   `cfg(not(target_os = "linux"))`), dejar la ventana + atajo + Salir en la
+//!   UI como único camino, y dejar el backend real PENDIENTE. El stub cumple
+//!   el MISMO contrato (constantes, `SystemTray::new()` que devuelve `Err`
+//!   razonable, campos inoperantes) para que `app.rs` (fuera del reparto de
+//!   este port) no tenga que llevar cfg.
+//! - Cuando se quiera activar: instalar gtk3/libappindicator-gtk3/libxdo por
+//!   pacman, reactivar la dependencia y des-cfg las piezas marcadas abajo.
 
+#[cfg(not(target_os = "linux"))]
 use crossbeam_channel::Receiver;
+#[cfg(not(target_os = "linux"))]
 use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
+#[cfg(not(target_os = "linux"))]
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 /// Id estable del ítem «Mostrar/Ocultar ventana» (viaja en `MenuEvent.id`).
@@ -43,6 +62,7 @@ pub const MENU_LABEL_STARTUP_ERROR: &str = "Estado: error de arranque";
 
 /// Bandeja del sistema. Se mantiene viva mientras la app viva: si se suelta,
 /// el icono desaparece del tray.
+#[cfg(not(target_os = "linux"))]
 pub struct SystemTray {
     // El icono no se usa directamente; se conserva para que no se destruya.
     _tray: TrayIcon,
@@ -54,6 +74,28 @@ pub struct SystemTray {
     pub events: Receiver<MenuEvent>,
 }
 
+/// Stub Linux: la bandeja real queda PENDIENTE (AppIndicator + host de
+/// StatusNotifier). Cumple el contrato de Windows (los mismos campos
+/// públicos existen para que `app.rs` compile sin cfg) pero, al no haber
+/// icono, los ítems no van a ninguna parte y el canal de eventos está
+/// siempre vacío (el Poll de app.rs drena 0 mensajes y no cuesta nada).
+///
+/// `SystemTray::new()` devuelve el stub y NO un `Err`: el arranque en
+/// Hyprland debe declarar «sin bandeja, todo lo demás funciona» con un log,
+/// no mostrar una fila de error permanente en Ajustes (esto ya lo decidía
+/// así el patrón de «degradación avisada en vez de silent failure» del repo).
+#[cfg(target_os = "linux")]
+pub struct SystemTray {
+    /// Ítem de estado (deshabilitado): refleja el arranque (cargando/listo).
+    /// En el stub no existe un ítem real: es un marcador inoperante.
+    pub status_item: TrayMenuItem,
+    /// Ítem «Mostrar/Ocultar ventana», para cambiar su texto según el estado.
+    pub toggle_item: TrayMenuItem,
+    /// Canal global de eventos del menú contextual (siempre vacío en stub).
+    pub events: crossbeam_channel::Receiver<TrayMenuEvent>,
+}
+
+#[cfg(not(target_os = "linux"))]
 impl SystemTray {
     /// Crea el icono y el menú. Llámalo desde el hilo principal (el mismo
     /// donde corre el bucle de winit): ver doc del módulo.
@@ -97,11 +139,61 @@ impl SystemTray {
     }
 }
 
+/// Stub Linux de `SystemTray::new()`. NO falla (ver doc del módulo) y loguea
+/// el estado real: la pendiente es el backend del sistema, no la UI.
+#[cfg(target_os = "linux")]
+impl SystemTray {
+    pub fn new() -> Result<Self, String> {
+        crate::log!(
+            "tray",
+            "bandeja de sistema NO disponible en Hyprland/Wayland (backend \
+             AppIndicator pendiente, docs/PORT-LINUX/AUDIO-RUNTIME.md): la app \
+             funciona con ventana + atajo; «Salir» está en la propia interfaz"
+        );
+        Ok(SystemTray {
+            status_item: TrayMenuItem,
+            toggle_item: TrayMenuItem,
+            events: crossbeam_channel::never(), // nunca entrega mensajes, barato
+        })
+    }
+}
+
+/// Alias compilables solo para mantener la API: en el stub los ítems no
+/// existen. `set_text` es un no-op — el Poll de app.rs/set_tray_status lo
+/// llama sin tener cómo saber que el tray es simulado, y la llamada debe
+/// restar coste cero no compile-error.
+#[cfg(target_os = "linux")]
+pub struct TrayMenuItem;
+
+#[cfg(target_os = "linux")]
+impl TrayMenuItem {
+    /// No-op en el stub (conserva la API de `menu::MenuItem::set_text`).
+    pub fn set_text(&self, _text: impl Into<String>) {}
+}
+
+/// Marcador del evento de menú en el stub (el canal real está siempre vacío;
+/// existe para que `tray.events.try_recv()` compile).
+#[cfg(target_os = "linux")]
+pub struct TrayMenuEvent {
+    pub id: &'static str,
+}
+
 /// Icono 32×32 RGBA generado en código: círculo violeta #7C6CFF (acento de la
 /// app) con borde suavizado de 1 px, sobre fondo transparente.
+///
+/// En Linux el stub NO lo usa (no hay icono que pintar), pero la función se
+/// mantiene en ambos targets: es pura, testable y es la pieza que reutilizará
+/// el backend real cuando se active (Icon::from_rgba la pinta igual).
+#[cfg(not(target_os = "linux"))]
 fn circle_icon() -> Result<Icon, String> {
     let rgba = circle_rgba();
     Icon::from_rgba(rgba, SIZE, SIZE).map_err(|e| format!("rgba no válido: {e}"))
+}
+#[cfg(target_os = "linux")]
+fn circle_icon() -> Result<Vec<u8>, String> {
+    // Sin icono nativo en Linux: devuelto tal cual el buffer (el backend
+    // real futuro lo envolvería en Icon::from_rgba aquí en el único sitio).
+    Ok(circle_rgba())
 }
 
 const SIZE: u32 = 32;
@@ -152,12 +244,6 @@ mod tests {
     }
 
     #[test]
-    fn circle_icon_builds() {
-        // from_rgba valida las dimensiones contra el buffer (32×32).
-        let _ = circle_icon().expect("el icono debe generarse sin error");
-    }
-
-    #[test]
     fn menu_ids_match() {
         assert_eq!(MENU_TOGGLE_ID, "toggle-main");
         assert_eq!(MENU_QUIT_ID, "quit");
@@ -169,5 +255,16 @@ mod tests {
         assert_ne!(MENU_LABEL_LOADING, MENU_LABEL_READY);
         assert_ne!(MENU_LABEL_READY, MENU_LABEL_READY_NO_LLM);
         assert_ne!(MENU_LABEL_LOADING, MENU_LABEL_READY_NO_LLM);
+    }
+
+    // Test solo Windows/macOS: en Linux el stub no usa Icon::from_rgba
+    // (crítica del port: tray-icon no se compila ahí). El test original
+    // «circle_icon_builds» queda cubierto en el target Windows; en Linux
+    // la misma lógica la pinta el stub. Ver docs PORT-LINUX.
+    #[cfg(not(target_os = "linux"))]
+    #[test]
+    fn circle_icon_builds() {
+        // from_rgba valida las dimensiones contra el buffer (32×32).
+        let _ = circle_icon().expect("el icono debe generarse sin error");
     }
 }
