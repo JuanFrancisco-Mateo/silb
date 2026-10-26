@@ -4,6 +4,39 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.5.0] — 2026-10-26
+
+Primera versión que **compila y arranca en Linux** además de Windows. Sin
+cambios de formato de datos: la config y los modelos siguen en
+`%APPDATA%\whispr-open` (Windows) / `~/.local/share/whispr-open` (Linux).
+
+### Añadido
+
+- **Port a Linux integrado** (venía de las ramas `feature/port-linux-*` del
+  3-4 de octubre, nunca mergeadas). Lo que se comporta distinto por plataforma:
+  - **Atajo global**: en Windows sigue `global-hotkey`; en Wayland/Hyprland se
+    usa el socket de `hyprctl` (`docs/PORT-LINUX/HOTKEY-HYPR.md`).
+  - **Inyección en la app activa**: Windows con `enigo` + portapapeles; en
+    Linux con `wl-copy`/`wtype`/`ydotool` según `inject_backend`.
+  - **Instancia única**: mutex con nombre en Windows, `flock` en
+    `$XDG_RUNTIME_DIR/whispr-open/instance.lock` en Linux.
+  - **Server LLM local**: `llama-server.exe` en Windows, `llama-server` en
+    Linux; en ambos casos el proceso se termina al salir (SIGTERM + SIGKILL de
+    rescate en Linux, `TerminateProcess` verificado por imagen en Windows).
+  - **Bandeja**: el tray es de Windows; en Linux la app funciona sin bandeja
+    (ventana + atajo + Salir en la UI) porque Hyprland no trae host
+    StatusNotifier.
+  - **Burbuja flotante**: sin `WS_EX_NOACTIVATE` en Linux; el resto del
+    comportamiento es el mismo.
+
+### Notas
+
+- En Linux no hay instalador: se compila con `scripts/build-linux.sh` y se
+  lanza con `scripts/run-linux.sh`.
+- El runtime de Linux está verificado a nivel de compilación (`cargo check` y
+  `cargo test` en Ubuntu), **no** todavía en una sesión Wayland real: la
+  primera prueba de micrófono + inyección en Hyprland queda pendiente.
+
 ## [0.4.0] — 2026-10-19
 
 Primera versión con el producto ya renombrado a **Silb** y el repo listo para

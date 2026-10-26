@@ -39,7 +39,7 @@
 #define MyAppURL "https://github.com/JuanFrancisco-Mateo/whispr-open"
 #define MyAppExeName "silb.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.4.0"
+  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.5.0"
 #endif
 
 [Setup]

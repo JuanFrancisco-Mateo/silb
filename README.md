@@ -1,14 +1,14 @@
 <div align="center">
 
-![Silb — dictado por voz local para Windows](docs/img/banner.png)
+![Silb — dictado por voz local de escritorio](docs/img/banner.png)
 
 **Dictado por voz local y de escritorio nativo. Alternativa open-source al flujo de Wispr Flow.**
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-7C6CFF?style=flat-square)](LICENSE)
 [![Rust](https://img.shields.io/badge/Rust-2021-7C6CFF?style=flat-square)](https://www.rust-lang.org/)
-[![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11-7C6CFF?style=flat-square)](#compilar-desde-el-código)
+[![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11%20%C2%B7%20Linux-7C6CFF?style=flat-square)](#compilar-desde-el-código)
 [![whisper.cpp](https://img.shields.io/badge/whisper.cpp-local-7C6CFF?style=flat-square)](https://github.com/ggerganov/whisper.cpp)
-[![Tests](https://img.shields.io/badge/tests-336%20passed-3fb950?style=flat-square)](#tests)
+[![Tests](https://img.shields.io/badge/tests-341%20passed-3fb950?style=flat-square)](#tests)
 
 [Instalar](#instalar) · [Compilar](#compilar-desde-el-código) · [Uso](#uso) · [Configuración](#configuración-avanzada-configjson) · [Contribuir](#contribuir)
 
@@ -104,9 +104,14 @@ Detalles de empaquetado, tamaños medidos y firma en
 
 **Requisitos** (solo para compilar):
 
-- Rust con toolchain MSVC (`rustup default stable-msvc`) en Windows 10/11.
-- Visual Studio Build Tools con **MSVC** y **CMake** — whisper-rs compila
+- **Windows 10/11**: Rust con toolchain MSVC (`rustup default stable-msvc`),
+  Visual Studio Build Tools con **MSVC** y **CMake** — whisper-rs compila
   whisper.cpp en C desde el primer build.
+- **Linux**: Rust estable, `cmake` y las librerías de desarrollo de ALSA,
+  Wayland/XKB y GTK 3 (en Arch: `alsa-lib cmake clang`; en Debian/Ubuntu:
+  `libasound2-dev libxkbcommon-dev libwayland-dev libgtk-3-dev cmake clang`).
+  Build: `scripts/build-linux.sh` (binario `target/release/silb`), lanzar con
+  `scripts/run-linux.sh`.
 
 Eso es todo para el build **CPU** (el de por defecto): no hace falta toolkit
 CUDA ni GPU.
@@ -138,7 +143,9 @@ La primera compilación tarda 5–10 min (iced + whisper.cpp). El binario queda
 en `target\release\silb.exe` y **no necesita nada instalado para
 ejecutarse**.
 
-> **Nota para WSL**: usa el cargo de Windows (`cmd.exe /c "cd /d <ruta> && <ruta>\cargo.exe run --release"`); apuntar al cargo de WSL genera un binario Linux que no enlaza.
+> **Nota para WSL**: para un binario **Linux** compila dentro de WSL
+> (`cargo build --release`) con las librerías de desarrollo del apartado de
+> requisitos; para el `.exe` usa el cargo de Windows desde `cmd.exe`.
 
 ### Primer arranque
 
@@ -286,15 +293,18 @@ verdes) y qué rama tocar.
 - 🗺️ Qué queda por hacer: [`docs/ROADMAP.md`](docs/ROADMAP.md) y
   [`docs/UI-FUTURA.md`](docs/UI-FUTURA.md)
 
-Hay un **port experimental a Linux** en las ramas `feature/port-linux-*`
-(colaboradores bienvenidos).
+Desde la **0.5.0** el port a Linux está integrado en `native-iced`: compila y
+arranca en Wayland (Hyprland) y X11. Lo que cambia por plataforma está en
+[`docs/PORT-LINUX/`](docs/PORT-LINUX/) (dependencias, atajo en Hyprland,
+backend de inyección y límites conocidos). En Linux no hay bandeja del sistema
+ni instalador.
 
 ## Roadmap
 
 La hoja de ruta viva es [`docs/ROADMAP.md`](docs/ROADMAP.md). Resumen: la
-versión 0.3.0 cierra el producto para Windows (instalador, icono,
-personalización completa); lo pendiente se agrupa en
-[`docs/UI-FUTURA.md`](docs/UI-FUTURA.md) y en el port a Linux.
+0.4.0 cerró el producto para Windows (instalador, icono, personalización
+completa) y la 0.5.0 integra el port a Linux; lo pendiente se agrupa en
+[`docs/UI-FUTURA.md`](docs/UI-FUTURA.md).
 
 ## Otros proyectos
 

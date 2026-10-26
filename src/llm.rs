@@ -2968,6 +2968,7 @@ mod tests {
     /// inválido no rompe nada; sin vendado se autodetecta. Todo con
     /// directorios temporales: ni `D:\LlamaCPP` ni el PATH de la máquina
     /// entran en juego.
+    #[cfg(target_os = "windows")]
     #[test]
     fn el_server_vendado_gana_al_config_y_a_la_autodeteccion() {
         let base = std::env::temp_dir().join(format!("whispr-orden-{}", std::process::id()));
@@ -3074,6 +3075,7 @@ mod tests {
         assert!(!kill_launched_server());
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn ruta_explicita_rota_o_falsa_se_ignora_deterministicamente() {
         // Requisito de robustez («ruta rota»): la ruta explícita de Ajustes
@@ -3243,6 +3245,7 @@ mod tests {
 
     // ── Saneado del ejecutable del server (t_75732630) ────────────────────
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn is_server_exe_solo_acepta_llama_server_exe() {
         use std::path::Path;
@@ -3256,6 +3259,7 @@ mod tests {
         assert!(!is_server_exe(Path::new("")));
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn sanitize_server_exe_cambia_el_wrapper_por_el_hermano_real() {
         let dir = std::env::temp_dir().join(format!("whispr-sanitize-{}", std::process::id()));
