@@ -28,8 +28,16 @@ etapa.
 | Build release | `target/release/silb.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
 | Licencia y documentación | `LICENSE`, `README.md`, `docs/` | MIT (10/09/2026); `docs/ARQUITECTURA.md` (recorrido del código para quien no ha tocado Rust), `docs/GUIA-USUARIO.md` y doc-comments públicos en español (11/09/2026). |
 
-Versión actual del paquete: **0.2.0** (`Cargo.toml`). Rama activa: `native-iced`
+Versión actual del paquete: **0.5.0** (`Cargo.toml`). Rama activa: `native-iced`
 (la rama `main` es la versión web legada y no se toca desde aquí).
+
+> **Actualización 26/10/2026 (0.5.0)**: el roadmap de abajo se escribió en
+> septiembre y sus referencias de versión (0.2.0) están obsoletas. Lo que ha
+> entrado desde entonces: instalador Inno Setup con .ico y CUDA opcional,
+> rediseño de UI desde Figma, server LLM embebido en el paquete, y el **port a
+> Linux integrado** (ver `docs/PORT-LINUX/` y `docs/VERIFICACION-2026-10-26.txt`).
+> Lo único que sigue abierto de este documento es el backlog P3
+> (transcripción casi-tiempo-real, notetaker) y los ítems de `UI-FUTURA.md`.
 
 Verificación de hoy (11/09/2026): `cargo.exe test` → **271 passed, 0 failed,
 1 ignored** (el ignorado pide un server llama.cpp real encendido);
