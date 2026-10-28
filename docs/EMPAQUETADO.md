@@ -263,6 +263,35 @@ backend es siempre `cuda` y se avisa si no hay GPU; en el base se avisa de que
 existe el pack si detecta NVIDIA. Antes de esta separación el instalador base
 pesaba **549 MB** porque metía el runtime CUDA de todas formas.
 
+**Requisito del pack CUDA: runtime CUDA 12.** `silb-cuda.exe` está compilado
+contra CUDA 12: su tabla de imports pide `cudart64_12.dll` y `cublas64_12.dll`.
+Esas DLLs **no** viajan en el pack — `vendor\llama\cuda\` es CUDA 13 y solo lo
+usa `llama-server` —, así que sin el runtime CUDA 12 instalado (o en el PATH)
+el exe no llega a arrancar. Por eso el pack lo comprueba en
+`PrepareToInstall` y aborta con un mensaje que remite al instalador CPU. El
+instalador 0.5.0 ya hacía esta comprobación (`UseCuda` + `FindRuntimeDll`); al
+separar los artefactos se perdió. Para que el pack deje de necesitar el
+toolkit hay que recompilar `silb-cuda.exe` contra CUDA 13 (o empaquetar el
+runtime 12).
+
+**Orden de build (el base NO fija el exe).** El instalador base empaqueta
+`target\release\silb.exe`, así que el último `cargo build --release` debe ser
+el CPU. El build `--features cuda` deja el exe CUDA en esa misma ruta y se
+copia aparte a `packaging\build\silb-cuda.exe` (el pack lo toma de ahí, o de
+`WHISPR_CUDA_EXE`): si se compila el base con el exe CUDA todavía en
+`target\release`, el instalador sale con un binario que necesita el runtime 12
+y `cuda\`, y no arranca en un equipo limpio. El tamaño lo delata (23,6 MB CPU
+frente a 49,8 MB CUDA), pero conviene respetar el orden.
+
+**Actualizar con Silb abierto.** Inno usa `CloseApplications` (por defecto
+`yes`) y Windows Restart Manager: en modo interactivo pausa en «Preparando la
+instalación», lista `silb.exe` y pide cerrarlo; en silencioso lo cierra solo
+(`/CLOSEAPPLICATIONS`). Si el usuario se niega, el instalador no puede
+reemplazar `silb.exe` y termina con error. Silb no llama a
+`RegisterApplicationRestart`, así que Restart Manager no la relanza: la vuelve
+a abrir la entrada `[Run]` del final (con `skipifsilent`, o sea, no en
+instalaciones silenciosas).
+
 El instalador **no requiere elevación** (`PrivilegesRequired=lowest`),
 instala en `%LOCALAPPDATA%\Programs\Silb`, registra el
 desinstalador en
