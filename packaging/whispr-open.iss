@@ -8,7 +8,10 @@
 ; descarga de todos. Detalle en docs/EMPAQUETADO.md §Pack CUDA.
 ;
 ; En el pack CUDA el backend es SIEMPRE cuda (lleva solo ese exe) y se avisa si
-; el equipo no tiene GPU NVIDIA.
+; el equipo no tiene GPU NVIDIA. Además se EXIGE el runtime CUDA 12: el exe
+; importa cudart64_12.dll y cublas64_12.dll, que NO viajan en el pack (el
+; `cuda\` del vendor es CUDA 13 y solo lo usa llama-server). Sin ellas el
+; instalador aborta en vez de dejar una app que no arranca.
 ;
 ; INSTALACIÓN POR USUARIO (sin admin):
 ;   Silb se instala en %LOCALAPPDATA%\Programs\Silb, igual que
@@ -217,6 +220,30 @@ begin
 #endif
 end;
 
+// El exe CUDA está compilado contra CUDA 12: su tabla de imports pide
+// cudart64_12.dll y cublas64_12.dll. Esas DLLs no se empaquetan (vendor\llama\
+// cuda\ es CUDA 13 y solo lo usa llama-server), así que sin el runtime CUDA 12
+// en el equipo silb.exe no llega a arrancar. El instalador 0.5.0 ya lo
+// comprobaba (UseCuda -> FindRuntimeDll); al separar los artefactos se perdió.
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+#ifdef MyCudaPack
+  if (not FindRuntimeDll('cudart64_12.dll')) or (not FindRuntimeDll('cublas64_12.dll')) then
+  begin
+    Log('Silb: runtime CUDA 12 ausente; se cancela el pack CUDA');
+    Result := 'Este instalador CUDA necesita el runtime CUDA 12 '
+      + '(cudart64_12.dll y cublas64_12.dll) en el sistema o en el PATH.'
+      + #13#10 + #13#10
+      + 'El runtime que trae el pack (vendor\llama\cuda) es CUDA 13 y solo lo usa el '
+      + 'server LLM: silb.exe está compilado contra CUDA 12 y sin esas DLLs no arranca.'
+      + #13#10 + #13#10
+      + 'Instala el runtime CUDA 12 y vuelve a ejecutar este instalador, o usa '
+      + 'silb-{#MyAppVersion}-setup.exe (versión CPU): funciona igual, transcribe más lento.';
+  end;
+#endif
+end;
+
 procedure CurStepChanged(CurStep: TSetupStep);
 var
   Backend: String;
@@ -234,7 +261,8 @@ begin
       MsgBox('Este equipo tiene GPU NVIDIA, pero esta es la versión CPU de Silb'
         + #13#10 + '(funciona igual, transcribe más lento).'
         + #13#10 + #13#10 + 'Para usar la GPU, descarga además silb-{#MyAppVersion}-cuda-setup.exe'
-        + #13#10 + 'y ejecútalo encima: solo cambia el binario y añade el runtime de NVIDIA.',
+        + #13#10 + 'y ejecútalo encima: solo cambia el binario y añade el runtime de NVIDIA.'
+        + #13#10 + '(ese pack exige el runtime CUDA 12 instalado; lo comprueba antes de copiar).',
         mbInformation, MB_OK);
 #endif
   end;
