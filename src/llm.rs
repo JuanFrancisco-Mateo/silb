@@ -1833,7 +1833,9 @@ fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> 
                 .join("lmstudio-community"),
         );
     }
-    // Instalaciones de llama.cpp con carpeta models propia.
+    // Instalaciones de llama.cpp con carpeta models propia (solo Windows: en
+    // Linux quedaban como rutas relativas "C:/..." que no existen).
+    #[cfg(windows)]
     for drive in ['C', 'D'] {
         roots.push(PathBuf::from(format!("{drive}:/LlamaCPP/models")));
         roots.push(PathBuf::from(format!("{drive}:/models")));
