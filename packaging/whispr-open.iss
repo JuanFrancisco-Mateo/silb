@@ -1,10 +1,14 @@
 ; whispr-open.iss — instalador de Silb.
 ;
-; BACKEND AUTOMÁTICO: el instalador lleva los dos builds (CPU y CUDA) y elige
-; en tiempo de instalación (ver [Code] → UseCuda), dejando el resultado en
-; {app}\backend.txt. CUDA solo si hay GPU NVIDIA (nvidia-smi.exe en System32) Y
-; runtime CUDA 12 (cudart64_12.dll + cublas64_12.dll en System32/CUDA_PATH/PATH).
-; Si el build CUDA no existe al compilar, el instalador sale solo-CPU.
+; PACK AUTOMÁTICO: el instalador base es CPU-only (sin `vendor\llama\cuda\` ni
+; el exe CUDA) y pesa ~70 MB sin comprimir / ~30 MB comprimido. El pack CUDA,
+; con el exe CUDA y el runtime de NVIDIA (~656 MB en `vendor\llama\cuda\`), se
+; compila aparte con /DMyCudaPack y se publica como fichero opcional: son
+; DLLs de NVIDIA que solo sirven con GPU, no tiene sentido meterlas en la
+; descarga de todos. Detalle en docs/EMPAQUETADO.md §Pack CUDA.
+;
+; En el pack CUDA el backend es SIEMPRE cuda (lleva solo ese exe) y se avisa si
+; el equipo no tiene GPU NVIDIA.
 ;
 ; INSTALACIÓN POR USUARIO (sin admin):
 ;   Silb se instala en %LOCALAPPDATA%\Programs\Silb, igual que
@@ -40,6 +44,21 @@
 #define MyAppExeName "silb.exe"
 #ifndef MyAppVersion
   #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.5.0"
+#endif
+; --- Pack: sin define = instalador base (CPU only) · /DMyCudaPack = pack CUDA --
+; La presencia del define es el flag (ISPP compara mal string vs número):
+;   ISCC.exe packaging\whispr-open.iss                     -> silb-<v>-setup.exe
+;   ISCC.exe /DMyCudaPack packaging\whispr-open.iss        -> silb-<v>-cuda-setup.exe
+#ifdef MyCudaPack
+  #define MyOutputBase "silb-" + MyAppVersion + "-cuda-setup"
+  #if !FileExists(AddBackslash(SourcePath) + MyCudaExe)
+    #error El pack CUDA necesita el exe CUDA (packaging\build\silb-cuda.exe)
+  #endif
+  #if !FileExists(AddBackslash(SourcePath) + "..\vendor\llama\cuda\ggml-cuda.dll")
+    #error El pack CUDA necesita vendor\llama\cuda\ (bash packaging/vendor-llama.sh --cuda)
+  #endif
+#else
+  #define MyOutputBase "silb-" + MyAppVersion + "-setup"
 #endif
 
 [Setup]
@@ -81,7 +100,7 @@ UninstallDisplayName={#MyAppName}
 UninstallFilesDir={app}
 ; Nombre del desinstalador.
 OutputDir=Output
-OutputBaseFilename=silb-{#MyAppVersion}-setup
+OutputBaseFilename={#MyOutputBase}
 ; Permite instalar sobre una versión anterior sin desinstalar primero.
 MinVersion=10.0
 ArchitecturesAllowed=x64compatible
@@ -96,14 +115,12 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Crear un acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: checkedonce
 
 [Files]
-; Binario principal. Dos builds del MISMO producto: el instalador copia uno u
-; otro con el nombre silb.exe segun lo que aguante la maquina (ver [Code]).
-;   - CPU (por defecto): arranca en cualquier Windows x64.
-;   - CUDA: solo si hay GPU NVIDIA Y el runtime CUDA 12 en el PATH/CUDA_PATH
-;     (el binario enlaza cudart64_12.dll y cublas64_12.dll).
-Source: "{#MyReleaseDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion; Check: not UseCuda
-#if MyHasCuda
-Source: "{#MyCudaExe}"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion; Check: UseCuda
+; Un solo exe por instalador. El base lleva el build CPU (arranca en cualquier
+; Windows x64); el pack CUDA lleva el build CUDA y nada más.
+#ifdef MyCudaPack
+Source: "{#MyCudaExe}"; DestDir: "{app}"; DestName: "{#MyAppExeName}"; Flags: ignoreversion
+#else
+Source: "{#MyReleaseDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
 #endif
 ; Icono que verá el acceso directo (mismo .ico que el binario, redundante
 ; pero Inno lo necesita para el .lnk; el .exe ya lleva el suyo).
@@ -111,8 +128,12 @@ Source: "..\assets\whispr-open.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Server LLM EMBARCADO: viaja con la app para que el usuario no teclee
 ; ninguna ruta (la app lo busca en {app}\vendor\llama\llama-server.exe). Lo
 ; copia packaging\vendor-llama.sh desde el build local de llama.cpp; NO va a
-; git. El subdirectorio cuda\ (runtime CUDA opcional) entra con recursesubdirs.
-Source: "..\vendor\llama\*"; DestDir: "{app}\vendor\llama"; Flags: ignoreversion recursesubdirs createallsubdirs
+; git. `cuda\` se EXCLUYE siempre aquí: son ~656 MB de DLLs de NVIDIA y solo
+; entran en el pack CUDA (ver abajo), que es un instalador aparte.
+Source: "..\vendor\llama\*"; DestDir: "{app}\vendor\llama"; Excludes: "cuda"; Flags: ignoreversion recursesubdirs createallsubdirs
+#ifdef MyCudaPack
+Source: "..\vendor\llama\cuda\*"; DestDir: "{app}\vendor\llama\cuda"; Flags: ignoreversion
+#endif
 
 [Icons]
 ; Menú Inicio (siempre).
@@ -187,8 +208,13 @@ end;
 
 function UseCuda: Boolean;
 begin
-  Result := CudaBuildAvailable and HasNvidiaGpu
-    and FindRuntimeDll('cudart64_12.dll') and FindRuntimeDll('cublas64_12.dll');
+#ifdef MyCudaPack
+  // El pack CUDA solo trae el build CUDA: no hay nada que detectar.
+  Result := True;
+#else
+  // El instalador base es CPU-only por diseño (el pack CUDA va aparte).
+  Result := False;
+#endif
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -197,12 +223,20 @@ var
 begin
   if CurStep = ssInstall then
   begin
-    if (not WizardSilent) and CudaBuildAvailable and HasNvidiaGpu and (not UseCuda) then
-      MsgBox('Este equipo tiene GPU NVIDIA, pero le falta el runtime CUDA 12'
-        + #13#10 + '(cudart64_12.dll y cublas64_12.dll).'
-        + #13#10 + #13#10 + 'Se instalará la versión CPU: funciona igual, transcribe más lento.'
-        + #13#10 + #13#10 + 'Para la versión GPU, instala el toolkit CUDA 12 y vuelve a ejecutar este instalador.',
+#ifdef MyCudaPack
+    if (not WizardSilent) and (not HasNvidiaGpu) then
+      MsgBox('Este es el instalador CUDA de Silb y no se ha detectado ninguna GPU NVIDIA.'
+        + #13#10 + #13#10 + 'Instálalo solo en equipos con GPU: sin ella el programa no arranca.'
+        + #13#10 + 'Si te has equivocado, usa silb-{#MyAppVersion}-setup.exe (versión CPU).',
+        mbError, MB_OK);
+#else
+    if (not WizardSilent) and HasNvidiaGpu then
+      MsgBox('Este equipo tiene GPU NVIDIA, pero esta es la versión CPU de Silb'
+        + #13#10 + '(funciona igual, transcribe más lento).'
+        + #13#10 + #13#10 + 'Para usar la GPU, descarga además silb-{#MyAppVersion}-cuda-setup.exe'
+        + #13#10 + 'y ejecútalo encima: solo cambia el binario y añade el runtime de NVIDIA.',
         mbInformation, MB_OK);
+#endif
   end;
   if CurStep = ssPostInstall then
   begin

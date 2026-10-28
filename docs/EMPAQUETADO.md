@@ -239,6 +239,30 @@ sobreescribir).
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss
 ```
 
+#### Dos artefactos: base (CPU) y pack CUDA
+
+Desde 0.6 hay **dos instaladores** y el base es el único obligatorio:
+
+| Artefacto | Contenido | Sin comprimir | Comprimido |
+|---|---|---|---|
+| `silb-<v>-setup.exe` | exe CPU + `vendor\llama\` **sin** `cuda\` | ~70 MB | **~15 MB** |
+| `silb-<v>-cuda-setup.exe` | exe CUDA + `vendor\llama\cuda\` (runtime NVIDIA) | ~700 MB | ~550 MB |
+
+```cmd
+:: Base (CPU, el que descarga todo el mundo)
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss
+
+:: Pack CUDA opcional (solo para equipos con GPU NVIDIA)
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyCudaPack packaging\whispr-open.iss
+```
+
+El flag es la **presencia** del define `/DMyCudaPack` (ISPP no compara bien
+string vs número). El base excluye `vendor\llama\cuda\` con
+`Excludes: "cuda"`; el pack lo añade y lleva solo el exe CUDA. En el pack el
+backend es siempre `cuda` y se avisa si no hay GPU; en el base se avisa de que
+existe el pack si detecta NVIDIA. Antes de esta separación el instalador base
+pesaba **549 MB** porque metía el runtime CUDA de todas formas.
+
 El instalador **no requiere elevación** (`PrivilegesRequired=lowest`),
 instala en `%LOCALAPPDATA%\Programs\Silb`, registra el
 desinstalador en
