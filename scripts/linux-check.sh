@@ -52,7 +52,7 @@ if [ "${SKIP_BUILD:-0}" != "1" ]; then
   step "cargo build --release" cargo build --release
 fi
 
-BIN=$(ls target/release/silb target/release/whispr-open 2>/dev/null | head -1)
+BIN=target/release/silb
 log ""
 log "── Medidas ────────────────────────────────────────────"
 if [ -n "${BIN:-}" ] && [ -x "$BIN" ]; then
