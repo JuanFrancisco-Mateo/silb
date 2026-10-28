@@ -27,11 +27,25 @@
 
 ### scripts/run-linux.sh
 
-- Envuelve el binario `target/release/whispr-open` con
+- Envuelve el binario `target/release/silb` con
   `WINIT_UNIX_BACKEND=wayland` exportado y `exec`.
-- Falla explicito si no hay binario (mensaje: «Ejecuta antes
+- Falla explícito si no hay binario (mensaje: «Ejecuta antes
   build-linux.sh»).
-- VERIFICADO: sintaxis `bash -n` ok. NO ejecutado (no hay binario construido).
+- OJO: el binario se llama **`silb`** desde el renombrado (`Cargo.toml` → `[[bin]]
+  name = "silb"`); los scripts apuntaban a `whispr-open` y ejecutaban un binario
+  viejo. Corregido en build-linux.sh y run-linux.sh.
+
+### scripts/linux-check.sh
+
+- Verificación completa en una pasada, pensada para lanzarse por SSH en el
+  portátil: `ssh omarchy 'bash ~/silb/scripts/linux-check.sh'`.
+- Pasos: `cargo check` → `cargo check --tests` → `cargo test` →
+  `cargo build --release` → medidas (tamaño del binario + `ldd`).
+- Escribe `docs/VERIFICACION-LINUX-<fecha>.txt` y sale con el nº de fallos.
+  `SKIP_BUILD=1` salta el build (para iterar solo con los tests).
+- El `cargo test` es el dato que faltaba: en WSL con rustc 1.94 daba ICE del
+  compilador; en el portátil (Arch) se verá si el toolchain lo pasa.
+
 
 ## Pendientes declarados
 
