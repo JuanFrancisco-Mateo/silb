@@ -6,7 +6,8 @@
 #
 #   ssh omarchy 'bash ~/silb/scripts/linux-check.sh'
 #
-# Hace, en orden y parando al primer fallo de compilación:
+# Hace, en orden, y sigue aunque algo falle (cuenta los fallos y sale con su
+# número):
 #   1. cargo check            (código base)
 #   2. cargo check --tests    (tests compilan)
 #   3. cargo test             (suite; en rustc 1.94 del WSL daba ICE, aquí se ve
@@ -32,7 +33,7 @@ step() {
   if "$@" >>"$REPORT" 2>&1; then
     log "OK   $name ($((SECONDS - t0))s)"
   else
-    log "FALLO $name ($((SECONDS - t0))s) — ver detalle arriba"
+    log "FALLO $name ($((SECONDS - t0))s) — ver informe $REPORT"
     FAIL=$((FAIL + 1))
   fi
 }
@@ -63,7 +64,8 @@ if [ -n "${BIN:-}" ] && [ -x "$BIN" ]; then
   log "dependencias   :"
   ldd "$BIN" 2>/dev/null | awk '{print $1, $3}' | grep -v "^/" | sort -u | head -40 | tee -a "$REPORT"
 else
-  log "binario        : no encontrado (¿build saltado?)"
+  log "binario        : no encontrado — no se ha medido nada"
+  FAIL=$((FAIL + 1))
 fi
 
 log ""

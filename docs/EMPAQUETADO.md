@@ -283,6 +283,15 @@ copia aparte a `packaging\build\silb-cuda.exe` (el pack lo toma de ahí, o de
 y `cuda\`, y no arranca en un equipo limpio. El tamaño lo delata (23,6 MB CPU
 frente a 49,8 MB CUDA), pero conviene respetar el orden.
 
+**Actualizar encima de una instalación CUDA: `cuda\` se queda a propósito.**
+Si alguien que instaló el pack se pasa al base, el exe CUDA se sustituye por el
+CPU y `backend.txt` pasa a `cpu`, pero los 656 MB de `vendor\llama\cuda\`
+siguen en disco y el server LLM los sigue usando con la GPU (`src/llm.rs`,
+`vendored_cuda_dir_in`), que es lo que el usuario quiso al instalar el pack.
+Borrarlos desde el instalador base sería quitarle una aceleración que ya tenía.
+El desinstalador sí los limpia (verificado), así que no hay fuga: es espacio
+recuperable cuando se desinstala.
+
 **Actualizar con Silb abierto.** Inno usa `CloseApplications` (por defecto
 `yes`) y Windows Restart Manager: en modo interactivo pausa en «Preparando la
 instalación», lista `silb.exe` y pide cerrarlo; en silencioso lo cierra solo
