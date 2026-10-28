@@ -33,6 +33,6 @@ if [ "$CUDA" = "--cuda" ]; then
 fi
 
 cargo build --release
-BIN=target/release/whispr-open
+BIN=target/release/silb
 ls -lh "$BIN"
 echo "── binario listo: $BIN ──"
