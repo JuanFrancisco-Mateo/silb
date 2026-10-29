@@ -1398,11 +1398,11 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     Ok(pid)
 }
 
-/// [Linux/macOS] Lanza el server LLM local (`llama-server`) como proceso
-/// nativo. Mismo contrato que el camino Windows: stdout/stderr a
-/// `llama-server.log` junto a la config, cwd = directorio del exe (los builds
-/// de llama.cpp cargan sus libs relativas desde ahí) y PID registrado en
-/// `LAUNCHED_SERVER_PID` para matarlo al salir.
+/// [Linux/macOS] Lanza el servidor local (`llama-server`) como proceso nativo.
+/// Mismo trato que en Windows: stdout/stderr a `llama-server.log` junto a la
+/// config, cwd = la carpeta del exe (los builds de llama.cpp cargan sus
+/// librerías desde ahí) y el PID apuntado en `LAUNCHED_SERVER_PID` para cerrarlo
+/// al salir.
 #[cfg(not(target_os = "windows"))]
 pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) -> Result<u32, String> {
     use std::process::{Command, Stdio};
@@ -1453,15 +1453,15 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
     Ok(pid)
 }
 
-/// Argumentos del `llama-server.exe` para el dictado. Flags de referencia
-/// de la instalación local (verificados con el binario real y los .bats de
-/// D:\LlamaCPP): `-ngl 99` + `--flash-attn on` (GPU, la RTX 4070 de
-/// Juanfri), `-ctk/-ctv q8_0` (cache KV cuantizada, 8.1 GB VRAM libres) y
-/// `-c 8192` (contexto holgado para el turno + corrección, sin pagar la
-/// RAM/VRAM de los 128K de los .bats). `--host 127.0.0.1` = solo loopback:
-/// un server de dictado no debe exponerse a la red.
+/// Argumentos de `llama-server.exe` para dictar. Los flags salen de la
+/// instalación local (probados con el binario real y los .bats de
+/// D:\LlamaCPP): `-ngl 99` + `--flash-attn on` (GPU), `-ctk/-ctv q8_0` (caché
+/// KV cuantizada, con los 8.1 GB de VRAM libres) y `-c 8192` (contexto de sobra
+/// para el turno y la corrección, sin pagar la RAM/VRAM de los 128K de los
+/// .bats). `--host 127.0.0.1` = solo loopback: un servidor de dictado no debe
+/// asomar a la red.
 ///
-/// Función pura y testeable: el spawn usa exactamente esta lista.
+/// Función pura y fácil de probar: el lanzamiento usa exactamente esta lista.
 fn build_server_args(model: &std::path::Path, port: u16) -> Vec<String> {
     vec![
         "-m".to_string(),
@@ -1483,25 +1483,25 @@ fn build_server_args(model: &std::path::Path, port: u16) -> Vec<String> {
     ]
 }
 
-/// PID del server LLM lanzado por ESTA instancia de la app (0 = ninguno).
-/// Lo escribe `launch_server` (hilo de arranque) y lo lee
-/// `kill_launched_server` (hilo de UI al salir): un `AtomicU32` evita
-/// cualquier carrera de canal entre el arranque y el «Salir».
+/// PID del servidor que lanzó ESTA instancia de la app (0 = ninguno). Lo escribe
+/// `launch_server` (hilo de arranque) y lo lee `kill_launched_server` (hilo de la
+/// interfaz al salir): con un `AtomicU32` no hay carrera entre el arranque y el
+/// «Salir».
 static LAUNCHED_SERVER_PID: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
 
-/// PID registrado por esta instancia (tests y log de diagnóstico).
+/// PID apuntado por esta instancia (pruebas y log de diagnóstico).
 pub fn launched_server_pid() -> u32 {
     LAUNCHED_SERVER_PID.load(Ordering::SeqCst)
 }
 
-/// Termina un PID concreto de server LLM, solo si el proceso sigue siendo
-/// `llama-server.exe` (salvaguarda contra la reutilización de PIDs).
-/// Devuelve `true` si era nuestro server y se terminó; `0` nunca se toca.
+/// Cierra un PID concreto de servidor, solo si el proceso sigue siendo
+/// `llama-server.exe` (protección contra PIDs que se reutilizan). Devuelve `true`
+/// si era nuestro servidor y se cerró; el 0 no se toca nunca.
 ///
-/// Lo usan `kill_launched_server` (slot global de la app) y el hilo de la
-/// fase LLM al cancelarla en caliente (toggle off): el hilo mata el PID
-/// concreto que él lanzó, no lo que haya en el slot global (otra fase pudo
-/// reemplazarlo mientras tanto).
+/// Lo usan `kill_launched_server` (el hueco global de la app) y el hilo de la
+/// fase del modelo al cancelarla en caliente (interruptor apagado): el hilo
+/// cierra el PID concreto que lanzó él, no lo que haya en el hueco global (otra
+/// fase pudo cambiarlo mientras tanto).
 pub fn terminate_server_pid(pid: u32) -> bool {
     if pid == 0 {
         return false;
@@ -1524,8 +1524,8 @@ pub fn terminate_server_pid(pid: u32) -> bool {
                 crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (OpenProcess)");
                 return false;
             }
-            // Salvaguarda contra la reutilización de PIDs: solo terminamos
-            // un proceso que efectivamente se llame llama-server.exe.
+            // Protección contra PIDs reutilizados: solo se cierra un proceso que se
+            // llame de verdad llama-server.exe.
             let mut buf: Vec<u16> = Vec::with_capacity(512);
             let mut size: u32 = 512;
             let ok = QueryFullProcessImageNameW(
@@ -1563,8 +1563,8 @@ pub fn terminate_server_pid(pid: u32) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        // Salvaguarda contra reutilización de PID: /proc/<pid>/exe debe ser
-        // `llama-server`. Antes dejar un server huérfano que matar un ajeno.
+        // Protección contra PID reutilizado: /proc/<pid>/exe tiene que ser
+        // `llama-server`. Mejor dejar un servidor huérfano que cerrar uno ajeno.
         let exe_link = match std::fs::read_link(format!("/proc/{pid}/exe")) {
             Ok(p) => p,
             Err(_) => {
@@ -1584,7 +1584,7 @@ pub fn terminate_server_pid(pid: u32) -> bool {
             );
             return false;
         }
-        // SIGTERM (cierre limpio, libera VRAM) y SIGKILL si sigue vivo a los 2 s.
+        // SIGTERM (cierre limpio, suelta la VRAM) y SIGKILL si a los 2 s sigue vivo.
         unsafe {
             if libc::kill(pid as libc::pid_t, libc::SIGTERM) != 0 {
                 crate::log!("llm", "server LLM propio (pid {pid}) ya no existe (kill ESRCH)");
@@ -1604,15 +1604,15 @@ pub fn terminate_server_pid(pid: u32) -> bool {
     }
 }
 
-/// Termina el server LLM que ESTA instancia lanzó, si lo lanzó. NO toca
-/// servers ajenos: (a) si nunca lanzamos nada el PID es 0 y no se hace
-/// nada; (b) aunque el PID se hubiera reutilizado por otro proceso, se
-/// verifica por nombre de imagen (`llama-server.exe`) antes de matar.
-/// Devuelve `true` si había un server propio y se terminó.
+/// Cierra el servidor que lanzó ESTA instancia, si lanzó alguno. NO toca
+/// servidores ajenos: (a) si nunca se lanzó nada el PID es 0 y no se hace nada;
+/// (b) aunque otro proceso hubiera cogido ese PID, se comprueba el nombre de
+/// imagen (`llama-server.exe`) antes de cerrar. Devuelve `true` si había un
+/// servidor propio y se cerró.
 ///
-/// Se llama en TODOS los caminos de salida de la app (tray «Salir» y
-/// cierre de la burbuja) ANTES de `iced::exit()`, y en el toggle «off»
-/// de la corrección IA en caliente (descarga el modelo de memoria).
+/// Se llama en TODOS los caminos de salida de la app (el «Salir» de la bandeja y
+/// el cierre de la burbuja) ANTES de `iced::exit()`, y al apagar la corrección IA
+/// en caliente (así el modelo sale de memoria).
 pub fn kill_launched_server() -> bool {
     let pid = LAUNCHED_SERVER_PID.swap(0, Ordering::SeqCst);
     if pid == 0 {
@@ -1621,22 +1621,22 @@ pub fn kill_launched_server() -> bool {
     terminate_server_pid(pid)
 }
 
-/// Ruta del ejecutable `llama-server.exe` a usar. Orden (14/10/2026, «cero
-/// rutas que teclear»): el server EMBARCADO en el paquete
-/// (`vendor/llama/llama-server.exe` junto al exe de la app) → el descargado
-/// por la app a `%APPDATA%/whispr-open/bin/` → la ruta del config (override
-/// manual histórico, validado) → autodetección (rutas comunes y PATH). El
-/// vendado GANA al config: una ruta vieja en config.json (de una instalación
-/// anterior) no puede romper una instalación nueva.
-/// `None` si no hay ningún candidato → el arranque lo reporta como
-/// `LlmDisabled` con aviso (el endpoint OpenAI-compatible editable sigue
-/// disponible como alternativa).
+/// Ruta del ejecutable `llama-server.exe` que hay que usar. Orden (14/10/2026,
+/// «cero rutas que teclear»): el servidor EMBARCADO en el paquete
+/// (`vendor/llama/llama-server.exe` junto al exe de la app) → el que ha
+/// descargado la app en `%APPDATA%/whispr-open/bin/` → la ruta de la config (lo
+/// que haya escrito el usuario, comprobado) → autodetección (rutas de siempre y
+/// PATH). El embarcado GANA a la config: una ruta vieja en config.json (de una
+/// instalación anterior) no puede romper una instalación nueva.
+/// `None` si no hay ningún candidato → el arranque lo cuenta como `LlmDisabled`
+/// con aviso (y queda la dirección OpenAI-compatible editable como
+/// alternativa).
 pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::PathBuf> {
-    // Candidatos de autodetección: primero el server descargado por la app a
-    // `%APPDATA%/whispr-open/bin/` (la carpeta que documenta la UI de
-    // Corrección IA), después las rutas comunes/PATH. Se pasa como lista para
-    // que `resolve_server_path_in` siga siendo hermético en los tests (no lee
-    // el %APPDATA% real).
+    // Candidatos de autodetección: primero el servidor que ha descargado la app en
+    // `%APPDATA%/whispr-open/bin/` (la carpeta que enseña la pantalla de
+    // Corrección IA), después las rutas de siempre y el PATH. Se pasan como lista
+    // para que `resolve_server_path_in` siga sin tocar nada de fuera en las
+    // pruebas (no lee el %APPDATA% real).
     let mut common: Vec<std::path::PathBuf> = Vec::new();
     let downloaded = downloaded_server_path();
     if downloaded.is_file() {
@@ -1646,8 +1646,8 @@ pub fn resolve_server_path(cfg: &crate::config::Config) -> Option<std::path::Pat
     resolve_server_path_in(exe_dir().as_deref(), cfg.llama_server_path(), &common)
 }
 
-/// Núcleo del orden de resolución, parametrizable para tests con directorios
-/// temporales (nada de disco real: ni `D:\LlamaCPP` ni PATH de la máquina).
+/// El núcleo del orden de búsqueda, con parámetros para probarlo con carpetas
+/// temporales (nada del disco real: ni `D:\LlamaCPP` ni el PATH de la máquina).
 pub(crate) fn resolve_server_path_in(
     exe_dir: Option<&std::path::Path>,
     explicit: Option<&str>,
@@ -1659,14 +1659,14 @@ pub(crate) fn resolve_server_path_in(
         .or_else(|| resolve_server_path_with(common))
 }
 
-/// Decide SOLO sobre la ruta explícita de Ajustes («Server LLM»). Separada
-/// de las rutas de autodetección para poder testearla con ficheros temporales
-/// sin depender del disco real de la máquina (D:\LlamaCPP, PATH…).
+/// Decide SOLO con la ruta escrita en Ajustes («Server LLM»). Va aparte de las
+/// rutas de autodetección para poder probarla con ficheros temporales sin
+/// depender del disco de la máquina (D:\LlamaCPP, PATH…).
 ///
-/// - No existe en disco → `None` (el caller cae a la autodetección).
-/// - Existe pero no es `llama-server.exe` (ni tiene un hermano que lo sea)
-///   → `None` con log (se ignora y se autodetecta).
-/// - Existe y es (o se sanea a) `llama-server.exe` → `Some`.
+/// - No existe en disco → `None` (quien llama pasa a la autodetección).
+/// - Existe pero no es `llama-server.exe` (ni hay uno al lado) → `None` y queda
+///   en el log (se ignora y se autodetecta).
+/// - Existe y es (o se arregla a) `llama-server.exe` → `Some`.
 pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf> {
     use std::path::PathBuf;
     let p = PathBuf::from(explicit);
@@ -1678,10 +1678,10 @@ pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf>
         );
         return None;
     }
-    // Saneado (t_75732630): la ruta configurada DEBE ser
-    // `llama-server.exe`. Si apunta a un wrapper (p. ej.
-    // `llama.exe`) usamos el `llama-server.exe` hermano — así el
-    // proceso lanzado es matable por nombre al salir.
+    // Arreglo (t_75732630): la ruta de la config TIENE que ser
+    // `llama-server.exe`. Si apunta a un envoltorio (por ejemplo `llama.exe`) se
+    // usa el `llama-server.exe` de al lado — así al salir se puede cerrar el
+    // proceso por nombre.
     match sanitize_server_exe(&p) {
         Some(fixed) => {
             if fixed != p {
@@ -1706,13 +1706,13 @@ pub(crate) fn explicit_server_path(explicit: &str) -> Option<std::path::PathBuf>
     }
 }
 
-/// Candidatos de AUTODETECCIÓN del server LLM (el vendado y el config se
-/// prueban ANTES, en `resolve_server_path_in`), en orden de preferencia:
-/// 1. `D:\LlamaCPP\llama-server.exe` (instalación histórica de Juanfri,
-///    build CUDA 13 con cublas64_13.dll) — y su gemelo `C:\LlamaCPP`.
-/// 2. Junto al exe de la app (layout plano, sin `vendor/`).
+/// Candidatos de AUTODETECCIÓN (el embarcado y el de la config se prueban
+/// ANTES, en `resolve_server_path_in`), por orden de preferencia:
+/// 1. `D:\LlamaCPP\llama-server.exe` (la instalación de siempre en este
+///    equipo, build CUDA 13 con cublas64_13.dll) — y su gemelo `C:\LlamaCPP`.
+/// 2. Al lado del exe de la app (todo en la misma carpeta, sin `vendor/`).
 /// 3. `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` (instalación por usuario).
-/// 4. PATH de Windows (`llama-server.exe` en cualquier directorio del PATH).
+/// 4. PATH de Windows (`llama-server.exe` en cualquier carpeta del PATH).
 #[cfg(target_os = "windows")]
 fn default_server_roots() -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
@@ -1736,7 +1736,7 @@ fn default_server_roots() -> Vec<std::path::PathBuf> {
     roots
 }
 
-/// [Linux/macOS] Candidatos de autodetección: junto al exe de la app,
+/// [Linux/macOS] Candidatos de autodetección: al lado del exe de la app,
 /// `~/.local/bin`, la carpeta de config y el PATH (`llama-server`).
 #[cfg(not(target_os = "windows"))]
 fn default_server_roots() -> Vec<std::path::PathBuf> {
@@ -1764,8 +1764,8 @@ fn default_server_roots() -> Vec<std::path::PathBuf> {
     roots
 }
 
-/// Núcleo de la búsqueda del ejecutable (parametrizable para tests con
-/// rutas temporales): primer candidato existente, en orden.
+/// El núcleo de la búsqueda del ejecutable (con parámetros para probarlo con
+/// rutas temporales): el primer candidato que exista, en orden.
 fn resolve_server_path_with(roots: &[std::path::PathBuf]) -> Option<std::path::PathBuf> {
     roots
         .iter()
@@ -1773,28 +1773,28 @@ fn resolve_server_path_with(roots: &[std::path::PathBuf]) -> Option<std::path::P
         .map(Clone::clone)
 }
 
-/// Búsqueda del modelo LLM (fichero GGUF). Si `model_name` ya es una ruta
-/// (contiene separador) se usa literalmente cuando existe; si no, se recorre
-/// un conjunto de raíces típicas en busca de un fichero cuyo nombre base
-/// coincida. Recorrido acotado en profundidad para no escanear discos
-/// enteros.
+/// Búsqueda del modelo (fichero GGUF). Si `model_name` ya es una ruta (lleva
+/// separador) se usa tal cual cuando existe; si no, se recorre un puñado de
+/// carpetas de siempre buscando un fichero con ese mismo nombre. El recorrido va
+/// con tope de profundidad para no peinar discos enteros.
 pub fn resolve_model_path(model_name: &str) -> Option<std::path::PathBuf> {
     resolve_model_path_with(model_name, &model_roots_in(exe_dir().as_deref()))
 }
 
-/// Raíces donde busca el GGUF del corrector `resolve_model_path` (log de
-/// diagnóstico cuando no aparece: el usuario no tiene que escribir ninguna).
+/// Carpetas donde busca el GGUF del corrector `resolve_model_path` (sale en el
+/// log de diagnóstico cuando no aparece: el usuario no tiene que escribir
+/// ninguna).
 pub fn model_search_roots() -> Vec<std::path::PathBuf> {
     model_roots_in(exe_dir().as_deref())
 }
 
-/// Raíces donde buscar el GGUF del corrector, en orden:
-/// 1. `vendor/models` junto al exe: el modelo puede VIAJAR con la app (misma
-///    raíz `vendor/` que el server; si no está, no pasa nada).
+/// Carpetas donde buscar el GGUF del corrector, en orden:
+/// 1. `vendor/models` junto al exe: el modelo puede VIAJAR con la app (la misma
+///    raíz `vendor/` que el servidor; si no está, no pasa nada).
 /// 2. `%APPDATA%\whispr-open\models`: la MISMA carpeta donde la app descarga
-///    los modelos de whisper — es el sitio natural para el GGUF descargado.
-/// 3. LM Studio e instalaciones de llama.cpp con carpeta `models` propia
-///    (compatibilidad con lo que ya hubiera en la máquina).
+///    los modelos de whisper — el sitio natural para el GGUF descargado.
+/// 3. LM Studio e instalaciones de llama.cpp con su propia carpeta `models`
+///    (para aprovechar lo que ya hubiera en la máquina).
 fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> {
     use std::path::PathBuf;
     let mut roots: Vec<PathBuf> = Vec::new();
@@ -1802,11 +1802,11 @@ fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> 
         roots.push(dir.join("vendor").join("models"));
     }
     roots.push(crate::transcribe::models_dir());
-    // Carpeta específica del corrector (`%APPDATA%/whispr-open/models-llm/`):
-    // es la que documenta la UI de Corrección IA, así que un GGUF dejado ahí
-    // se encuentra solo.
+    // Carpeta propia del corrector (`%APPDATA%/whispr-open/models-llm/`): es la
+    // que enseña la pantalla de Corrección IA, así que un GGUF dejado ahí se
+    // encuentra solo.
     roots.push(llm_models_dir());
-    // LM Studio: la carpeta por defecto de modelos del usuario.
+    // LM Studio: la carpeta de modelos por defecto del usuario.
     if let Some(home) = dirs::home_dir() {
         roots.push(home.join(".lmstudio").join("models"));
         roots.push(
@@ -1815,7 +1815,7 @@ fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> 
                 .join("lmstudio-community"),
         );
     }
-    // Instalaciones de llama.cpp con carpeta models propia (solo Windows: en
+    // Instalaciones de llama.cpp con su propia carpeta models (solo Windows: en
     // Linux quedaban como rutas relativas "C:/..." que no existen).
     #[cfg(windows)]
     for drive in ['C', 'D'] {
@@ -1825,10 +1825,10 @@ fn model_roots_in(exe_dir: Option<&std::path::Path>) -> Vec<std::path::PathBuf> 
     roots
 }
 
-/// Núcleo de la búsqueda de modelo, parametrizable para tests con raíces
-/// temporales. Profundidad máxima 6: los GGUF de LM Studio suelen estar a
-/// 3-4 niveles (models/<autor>/<modelo>/<fichero>); más allá no merece la
-/// pena escanear (un disco entero tardaría minutos).
+/// El núcleo de la búsqueda de modelo, con parámetros para probarlo con carpetas
+/// temporales. Profundidad máxima 6: los GGUF de LM Studio suelen estar a 3-4
+/// niveles (models/<autor>/<modelo>/<fichero>); más abajo no compensa (peinar un
+/// disco entero tardaría minutos).
 fn resolve_model_path_with<'a>(
     model_name: &str,
     roots: &'a [std::path::PathBuf],
@@ -1864,15 +1864,15 @@ fn resolve_model_path_with<'a>(
     roots.iter().find_map(|root| walk(root, name, 6))
 }
 
-/// Espera (con polling cada 400 ms) a que `/v1/models` responda. Devuelve
-/// `true` si el server quedó listo dentro del plazo, `false` si se agotó.
-/// Tiempos reales: un 0.8B Q8 carga en ~2-5 s en GPU; 60 s de margen cubren
-/// modelos grandes y descartes por puerto ocupado sin colgar la app.
+/// Espera (preguntando cada 400 ms) a que `/v1/models` conteste. Devuelve `true`
+/// si el servidor quedó listo dentro del plazo y `false` si se agotó. Tiempos
+/// reales: un 0.8B Q8 carga en ~2-5 s en GPU; 60 s de margen cubren modelos
+/// grandes y los descartes por puerto ocupado sin dejar la app colgada.
 ///
-/// Si el server lanzado por ESTA instancia no responde al plazo, `false`
-/// termina en `LlmDisabled` con aviso visible — el dictado sigue. El PID
-/// lanzado queda registrado igualmente: al salir se termina, no se deja un
-/// server zombie a medio cargar.
+/// Si el servidor que lanzó ESTA instancia no contesta en el plazo, ese `false`
+/// acaba en `LlmDisabled` con aviso a la vista — el dictado sigue. El PID
+/// lanzado se queda apuntado igual: al salir se cierra, no se deja un servidor a
+/// medio cargar por ahí.
 pub fn wait_for_server(base_url: &str, timeout: Duration) -> bool {
     let deadline = std::time::Instant::now() + timeout;
     loop {
