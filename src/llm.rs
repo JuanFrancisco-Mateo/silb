@@ -1963,8 +1963,8 @@ mod tests {
 
     #[test]
     fn parse_diff_tolerante_a_clave_faltante() {
-        // El contrato exige find+replace, pero si el modelo omite una clave no
-        // debemos romper: queda vacía y apply_diff la descarta si no aplica.
+        // El contrato pide find+replace, pero si el modelo se deja una clave no hay
+        // que romperse: queda vacía y `apply_diff` la descarta si no sirve.
         let diff = parse_diff(r#"{"find": "4"}"#).expect("solo find");
         assert_eq!(
             diff,
@@ -1980,26 +1980,25 @@ mod tests {
         assert!(parse_diff("no lo encuentro").is_err());
     }
 
-    // --- Regresión Qwen3.5 reasoning -------------------------------------
+    // --- Regresión Qwen3.5 con razonamiento ---------------------------------
     //
-    // El bug que rompió la corrección IA en producción (t_82a3367c): el
-    // modelo configurado `Qwen3.5-0.8B-Q8_0.gguf` es de razonamiento y, sin
-    // el flag `chat_template_kwargs.enable_thinking=false` en el body,
-    // devuelve `message.content` VACÍO y `message.reasoning_content` con
-    // todo el JSON al final del bloque de pensamiento. Estos tests fijan
-    // la corrección tanto del body que mandamos como del extractor.
+    // El fallo que dejó la corrección IA sin funcionar en producción (t_82a3367c):
+    // el modelo configurado `Qwen3.5-0.8B-Q8_0.gguf` razona y, sin la marca
+    // `chat_template_kwargs.enable_thinking=false` en la petición, devuelve
+    // `message.content` VACÍO y `message.reasoning_content` con todo el JSON al
+    // final del bloque de pensamiento. Estas pruebas fijan el arreglo, tanto de lo
+    // que mandamos como de quien lee la respuesta.
 
     #[test]
     fn body_de_correct_desactiva_thinking_y_sube_max_tokens() {
-        // El body JSON que enviamos al endpoint debe llevar
-        // `chat_template_kwargs.enable_thinking=false` para silenciar el
-        // modo razonamiento del Qwen3.5 (y de cualquier otro modelo que
-        // respete el flag), y `max_tokens` holgado (256) para no truncar
-        // respuestas legítimas.
+        // La petición JSON que se manda debe llevar
+        // `chat_template_kwargs.enable_thinking=false` para callar el modo
+        // razonamiento del Qwen3.5 (y de cualquier otro modelo que haga caso a la
+        // marca), y un `max_tokens` holgado (256) para no cortar respuestas buenas.
         //
-        // Truco: parseamos el mismo shape que construye `correct()` para
-        // no depender de un mock HTTP. Si alguien vuelve a quitar el flag
-        // o baja max_tokens, este test rompe de inmediato.
+        // Truco: se lee el mismo JSON que monta `correct()` para no depender de un
+        // servidor de mentira. Si alguien quita la marca o baja max_tokens, esta
+        // prueba se rompe en el acto.
         let body = serde_json::json!({
             "model": "qwen",
             "messages": [
@@ -2025,8 +2024,8 @@ mod tests {
 
     #[test]
     fn extract_message_text_prefiere_content_normal() {
-        // Caso normal: content poblado, reasoning_content ausente → usa
-        // content (no toca reasoning).
+        // Caso normal: content con texto y sin reasoning_content → se usa content
+        // (no se mira el reasoning).
         let v = serde_json::json!({
             "choices": [{
                 "message": {
@@ -2040,9 +2039,9 @@ mod tests {
 
     #[test]
     fn extract_message_text_cae_a_reasoning_content_cuando_content_vacio() {
-        // Regresión Qwen3.5: content="" y reasoning_content con el JSON
-        // al final del bloque de pensamiento. Debe devolver el texto del
-        // reasoning (parse_diff extraerá el último {...}).
+        // Regresión Qwen3.5: content="" y reasoning_content con el JSON al final
+        // del bloque de pensamiento. Tiene que devolver el texto del reasoning (y
+        // `parse_diff` sacará el último {...}).
         let reasoning = "Pensando...\nEl usuario dijo 2 en vez de 4.\n{\"find\":\"4\",\"replace\":\"2\"}";
         let v = serde_json::json!({
             "choices": [{
@@ -2065,9 +2064,8 @@ mod tests {
 
     #[test]
     fn extract_message_text_cae_a_reasoning_content_cuando_content_espacios() {
-        // Variante: content con solo espacios en blanco (lo que algunos
-        // serializadores meten en lugar de string vacío). También debe
-        // caer al reasoning.
+        // Variante: content con solo espacios (lo que meten algunos serializadores
+        // en lugar de una cadena vacía). También tiene que bajar al reasoning.
         let reasoning = "{\"find\":\"jueves\",\"replace\":\"viernes\"}";
         let v = serde_json::json!({
             "choices": [{
@@ -2085,9 +2083,9 @@ mod tests {
 
     #[test]
     fn extract_message_text_devuelve_none_sin_content_ni_reasoning() {
-        // Modelo roto o payload mal formado: ni content ni reasoning.
-        // extract_message_text devuelve None y `correct()` propaga el
-        // error «la respuesta del LLM no trae content».
+        // Modelo roto o petición mal montada: ni content ni reasoning. Aquí
+        // `extract_message_text` devuelve None y `correct()` deja salir el error
+        // «la respuesta del LLM no trae content».
         let v = serde_json::json!({
             "choices": [{
                 "message": { "role": "assistant" }
@@ -2098,8 +2096,8 @@ mod tests {
 
     #[test]
     fn extract_message_text_ignora_reasoning_vacio() {
-        // Si reasoning_content es "" o whitespace tampoco cuenta — evita
-        // devolver cadena vacía que rompería parse_diff.
+        // Si reasoning_content es "" o solo espacios tampoco cuenta — así no se
+        // devuelve una cadena vacía que rompería `parse_diff`.
         let v = serde_json::json!({
             "choices": [{
                 "message": {
@@ -2113,10 +2111,10 @@ mod tests {
 
     #[test]
     fn parse_diff_extrae_ultimo_json_de_reasoning_multiparte() {
-        // El reasoning de Qwen3.5 a veces contiene varios objetos JSON
-        // intermedios (planes, ejemplos) antes del JSON final válido.
-        // parse_diff ya toma el último {...} por rfind('}'); este test
-        // fija ese comportamiento sobre un reasoning realista.
+        // El reasoning de Qwen3.5 a veces lleva varios objetos JSON por el medio
+        // (planes, ejemplos) antes del JSON bueno del final. `parse_diff` ya se
+        // queda con el último {...} por el '}' del final; esta prueba fija ese
+        // comportamiento con un reasoning realista.
         let reasoning = r#"
             Primero pienso: {"thought": "el usuario quiere cambiar 4 por 2"}
             Después analizo: {"ok": true}
@@ -2136,8 +2134,9 @@ mod tests {
 
     #[test]
     fn clean_redact_output_pasa_texto_limpio_sin_tocar() {
-        // El caso ideal: el LLM devuelve solo el texto final sin
-        // adornos. clean_redact_output lo devuelve idéntico (salvo trim).
+        // El caso ideal: el modelo devuelve solo el texto final sin adornos.
+        // `clean_redact_output` lo devuelve igual (salvo los espacios de los
+        // extremos).
         assert_eq!(
             clean_redact_output("que calor que hace en cartagena"),
             "que calor que hace en cartagena"
@@ -2150,9 +2149,9 @@ mod tests {
 
     #[test]
     fn clean_redact_output_quita_fences_markdown() {
-        // El LLM a veces envuelve la respuesta en ``` ... ```. Hay que
-        // eliminar tanto el bloque completo como la etiqueta de lenguaje
-        // que algunos modelos añaden después de los triples backticks.
+        // A veces el modelo envuelve la respuesta en ``` ... ```. Hay que quitar
+        // tanto el bloque entero como la etiqueta de lenguaje que algunos ponen
+        // detrás de los tres backticks.
         assert_eq!(
             clean_redact_output("```\nque calor en cartagena\n```"),
             "que calor en cartagena"
@@ -2165,10 +2164,9 @@ mod tests {
 
     #[test]
     fn clean_redact_output_quita_comillas_envolventes() {
-        // Algunos modelos (sobre todo cuando llevan el texto a un
-        // string JSON) lo encierran en comillas. Solo se quitan las
-        // comillas del PRIMER y ÚLTIMO carácter — si están en el
-        // medio, son contenido legítimo.
+        // Algunos modelos (sobre todo cuando meten el texto en una cadena JSON) lo
+        // encierran en comillas. Solo se quitan las del PRIMER y ÚLTIMO carácter —
+        // si están por el medio, son contenido legítimo.
         assert_eq!(
             clean_redact_output(r#""que calor en cartagena""#),
             "que calor en cartagena"
@@ -2177,7 +2175,7 @@ mod tests {
             clean_redact_output("'que calor en cartagena'"),
             "que calor en cartagena"
         );
-        // Comillas tipográficas (curly quotes) también.
+        // Las comillas tipográficas («“”») también.
         assert_eq!(
             clean_redact_output("\u{201C}que calor en cartagena\u{201D}"),
             "que calor en cartagena"
@@ -2186,9 +2184,8 @@ mod tests {
 
     #[test]
     fn clean_redact_output_quita_prefijos_output_resultado() {
-        // Ciertos modelos (Qwen instruct, Llama 3 instruct) añaden un
-        // prefijo tipo «Output:» antes del texto. Lo eliminamos para
-        // que no se inyecte literalmente.
+        // Algunos modelos (Qwen instruct, Llama 3 instruct) ponen un prefijo tipo
+        // «Output:» delante del texto. Se quita para que no se escriba tal cual.
         assert_eq!(
             clean_redact_output("Output: que calor en cartagena"),
             "que calor en cartagena"
@@ -2205,8 +2202,8 @@ mod tests {
 
     #[test]
     fn clean_redact_output_preserva_contenido_interno() {
-        // No se toca el contenido interior: solo se quitan comillas
-        // que envuelven el resultado completo.
+        // El contenido de dentro no se toca: solo se quitan las comillas que
+        // envuelven el resultado entero.
         assert_eq!(
             clean_redact_output("el \"cliente\" es Microsoft"),
             "el \"cliente\" es Microsoft"
@@ -2215,18 +2212,18 @@ mod tests {
 
     #[test]
     fn clean_redact_output_caso_canonico_juanfri() {
-        // El caso que motivó la task t_78d9e1fa. El LLM devuelve el
-        // texto final limpio SIN la meta-lengua «digo cartagena».
+        // El caso que motivó la tarea t_78d9e1fa. El modelo devuelve el texto final
+        // limpio, SIN la frase de corrección «digo cartagena».
         let input_response = "que calor que hace en cartagena";
         assert_eq!(clean_redact_output(input_response), input_response);
-        // Y verifica que la meta-lengua no está en el output limpio.
+        // Y se comprueba que esa frase de corrección no está en el resultado limpio.
         assert!(!clean_redact_output(input_response).contains("digo"));
     }
 
     #[test]
     fn clean_redact_output_con_adornos_combinados() {
-        // Caso real: el LLM puede combinar fences + comillas + prefijo
-        // + espacios. La limpieza debe ser robusta al orden.
+        // Caso real: el modelo puede juntar bloques + comillas + prefijo + espacios.
+        // La limpieza tiene que aguantar cualquier orden.
         assert_eq!(
             clean_redact_output("```\n\"que calor en cartagena\"\n```"),
             "que calor en cartagena"
@@ -2239,14 +2236,13 @@ mod tests {
 
     #[test]
     fn body_de_redact_lleva_system_in_turn_y_max_tokens_holgado() {
-        // El body que enviamos al endpoint debe usar
-        // `SYSTEM_PROMPT_IN_TURN` y `max_tokens` holgado (>=1024) porque
-        // devolvemos el turno COMPLETO, no un JSON corto. Subido de 512
-        // a 1024 en t_6b9348de: un párrafo dictado largo con su
-        // corrección cabe de sobra y el tope deja de ser un factor de
-        // truncación (el guard anti-truncación descarta los resúmenes,
-        // no el tope). Tambien desactivamos el thinking igual que en
-        // `correct()` (mismo flag, mismo motivo, mismo fix Qwen3.5).
+        // La petición que se manda debe usar `SYSTEM_PROMPT_IN_TURN` y un
+        // `max_tokens` holgado (>=1024) porque devolvemos el turno ENTERO, no un
+        // JSON corto. Subido de 512 a 1024 en t_6b9348de: un párrafo dictado largo
+        // con su corrección cabe de sobra y el tope deja de cortar nada (quien tira
+        // los resúmenes es la protección anti-truncación, no el tope). También se
+        // apaga el razonamiento igual que en `correct()` (misma marca, mismo motivo,
+        // mismo arreglo Qwen3.5).
         let body = serde_json::json!({
             "model": "qwen",
             "messages": [
@@ -2268,8 +2264,8 @@ mod tests {
             body["max_tokens"].as_u64().unwrap() >= 1024,
             "max_tokens debe ser holgado (>=1024) para devolver el turno completo"
         );
-        // El system prompt es el de in-turn (contiene marcadores típicos
-        // de auto-corrección, no el contrato JSON cross-turn).
+        // El prompt de sistema es el de in-turn (lleva las marcas típicas de
+        // autocorrección, no el contrato JSON del cross-turn).
         let sys = body["messages"][0]["content"].as_str().unwrap();
         assert!(
             sys.contains("auto-corrección") || sys.contains("digo"),
@@ -2283,10 +2279,10 @@ mod tests {
 
     #[test]
     fn redact_falla_con_endpoint_caido_y_devuelve_error_con_prefijo_http() {
-        // Mismo contrato que `correct()`: error con prefijo «HTTP:»
-        // para que la UI categorice el fallo y muestre «¿está el
-        // servidor LLM arrancado?». Sin servidor local, este test
-        // verifica la ruta de error del modo in-turn.
+        // Mismo trato que `correct()`: el error lleva el prefijo «HTTP:» para que
+        // la interfaz sepa clasificar el fallo y enseñar «¿está el servidor LLM
+        // arrancado?». Sin servidor local, esta prueba mira el camino de error del
+        // modo in-turn.
         let cfg = LlmConfig {
             provider: CorrectionProvider::Default,
             base_url: "http://127.0.0.1:1".to_string(),
@@ -2304,10 +2300,10 @@ mod tests {
 
     #[test]
     fn extract_message_text_en_redact_usa_content_y_fallback_a_reasoning() {
-        // El modo in-turn reutiliza `extract_message_text`: con
-        // content poblado usa content (caso normal); con content vacío
-        // y reasoning poblado, cae al reasoning. Mismo fix Qwen3.5 que
-        // `correct()`. Verificamos el contrato sobre el extractor.
+        // El modo in-turn usa el mismo `extract_message_text`: con content con
+        // texto usa content (lo normal); con content vacío y reasoning con texto,
+        // baja al reasoning. El mismo arreglo Qwen3.5 que en `correct()`. Se
+        // comprueba el trato sobre quien extrae.
         let v_content = serde_json::json!({
             "choices": [{
                 "message": { "content": "que calor en cartagena" }
@@ -2327,28 +2323,27 @@ mod tests {
             }]
         });
         let extracted = extract_message_text(&v_reasoning).unwrap();
-        // La limpieza ya se hace en `clean_redact_output`; aquí
-        // verificamos que el extractor entrega el texto íntegro.
+        // La limpieza ya la hace `clean_redact_output`; aquí se comprueba que quien
+        // extrae entrega el texto entero.
         assert!(extracted.contains("que calor en cartagena"));
     }
 
-    // ── Guard anti-truncación (t_6b9348de) ────────────────────────────────
+    // ── Protección anti-truncación (t_6b9348de) ──────────────────────────
     //
-    // El corrector LLM local (Qwen3.5-0.8B) a veces devuelve UN RESUMEN
-    // del turno en lugar del texto corregido (evidencia del log de Juanfri
-    // 01:34:54: input de 73 palabras → output de 13). El guard descarta
-    // respuestas desproporcionadamente cortas y devuelve el input ORIGINAL:
-    // nunca se pierde ni se recorta el dictado.
+    // El corrector local (Qwen3.5-0.8B) a veces devuelve UN RESUMEN del turno en
+    // vez del texto corregido (está en el log 01:34:54: entraron 73 palabras y
+    // salieron 13). La protección tira las respuestas desproporcionadamente
+    // cortas y devuelve el texto ORIGINAL: el dictado no se pierde ni se recorta.
 
     const LOG_LARGO_INPUT: &str = "estamos debulando la aplicación está del whisper y parece que hemos dado que sigue el clavo pero no está funcionando lo del LLM me pone listo pero aquí no se ha levantado ningún servidor ni ha hecho una pantalla de carga como se supone que tiene que hacer y no sé dime si pueden investigar algo y porque antes he dicho dime esto y no lo odro y se ha rallado un montón";
     const LOG_LARGO_OUTPUT: &str = "no se ha levantado ningún servidor ni ha hecho una pantalla de carga";
 
     #[test]
     fn guard_descarta_el_resumen_y_preserva_el_dictado_largo() {
-        // Caso REAL del log (01:34:54): 73 palabras de input → 13 de
-        // output. Sin auto-corrección que justifique el recorte, el guard
-        // devuelve el input íntegro. El assert clave es la LONGITUD
-        // PRESERVADA (requisito 1 y 2 de t_6b9348de).
+        // Caso REAL del log (01:34:54): 73 palabras de entrada → 13 de salida. Sin
+        // autocorrección que justifique el recorte, la protección devuelve el texto
+        // entero. La comprobación que importa es la LONGITUD PRESERVADA (requisitos
+        // 1 y 2 de t_6b9348de).
         let guarded = guard_anti_truncacion(LOG_LARGO_INPUT, LOG_LARGO_OUTPUT);
         assert_eq!(guarded, LOG_LARGO_INPUT, "el resumen debe descartarse");
         assert_eq!(
@@ -2364,9 +2359,9 @@ mod tests {
 
     #[test]
     fn guard_respeta_la_correccion_corta_canonica() {
-        // El caso corto canónico (requisito 4): el LLM devuelve el texto
-        // corregido sin meta-lengua; 11/13 palabras (>=60%) → el guard NO
-        // debe descartarlo.
+        // El caso corto de siempre (requisito 4): el modelo devuelve el texto
+        // corregido sin la frase de corrección; 11/13 palabras (>=60%) → la
+        // protección NO debe tirarlo.
         let input = "El otro día iba por Murcia, digo Cartagena, y me encontré un payo.";
         let output = "El otro día iba por Murcia, y me encontré un payo.";
         assert_eq!(
@@ -2378,9 +2373,9 @@ mod tests {
 
     #[test]
     fn guard_admite_recorte_justificado_con_marcador() {
-        // «no X sino Y» elimina el fragmento corregido + la meta-lengua:
-        // 4/9 palabras (<60%) pero hay marcador de auto-corrección → el
-        // recorte está justificado y se admite.
+        // «no X sino Y» quita el trozo corregido y la frase de corrección: 4/9
+        // palabras (<60%) pero hay marca de autocorrección → el recorte está
+        // justificado y se admite.
         let input = "no voy a las tres sino a las cuatro";
         let output = "voy a las cuatro";
         assert_eq!(
@@ -2392,9 +2387,9 @@ mod tests {
 
     #[test]
     fn guard_descarta_recorte_sin_marcador_aunque_no_sea_extremo() {
-        // Recorte del 40% sin ningún marcador correctivo: no hay
-        // explicación legítima para quitar más de la mitad de las
-        // palabras → se descarta y se devuelve el input original.
+        // Recorte del 40% sin ninguna marca de corrección: no hay explicación
+        // legítima para quitar más de la mitad de las palabras → se tira y se
+        // devuelve el texto original.
         let input = "he estado revisando el presupuesto y todo cuadra perfectamente";
         let recorte = "revisando el presupuesto";
         assert_eq!(
@@ -2406,9 +2401,9 @@ mod tests {
 
     #[test]
     fn guard_descarta_incluso_con_marcador_si_el_recorte_es_extremo() {
-        // Con marcador se admite recorte hasta el 30% de las palabras;
-        // por debajo (un fragmento suelto) huele a resumen y se descarta
-        // igualmente — el marcador no es un cheque en blanco.
+        // Con marca se admite bajar hasta el 30% de las palabras; por debajo (un
+        // trozo suelto) huele a resumen y se tira igual — la marca no es un cheque
+        // en blanco.
         let input = "la reunión es el jueves digo el viernes";
         let fragmento = "el viernes";
         assert_eq!(
@@ -2420,19 +2415,19 @@ mod tests {
 
     #[test]
     fn guard_nunca_devuelve_vacio_ni_se_rompe_con_input_vacio() {
-        // Output vacío → el input original (nunca perder el dictado).
+        // Respuesta vacía → el texto original (el dictado no se pierde).
         let input = "el dictado completo de varias palabras";
         assert_eq!(guard_anti_truncacion(input, ""), input);
-        // Input vacío → no hay nada que proteger: devuelve el output tal
-        // cual sin pánico (división por cero evitada).
+        // Texto vacío → no hay nada que proteger: devuelve la respuesta tal cual y
+        // no se rompe (así no hay división por cero).
         assert_eq!(guard_anti_truncacion("", ""), "");
         assert_eq!(guard_anti_truncacion("", "algo"), "algo");
     }
 
     #[test]
     fn guard_pasa_output_igual_al_input() {
-        // Sin cambios (el LLM confirma el turno) → output == input, el
-        // ratio es 1.0 y el guard es no-op.
+        // Sin cambios (el modelo confirma el turno) → salida == entrada, la
+        // proporción es 1.0 y la protección no hace nada.
         let input = "la reunión es el jueves a las cuatro";
         assert_eq!(guard_anti_truncacion(input, input), input);
     }
@@ -2445,25 +2440,23 @@ mod tests {
         assert_eq!(word_count("a  b \t c"), 3);
     }
 
-    // ── Guard numérico determinista (t_1fc864ef) ─────────────────────────
+    // ── Protección numérica fija (t_1fc864ef) ─────────────────────────────
     //
-    // El corrector LLM local (Qwen3.5-0.8B-Q8) concatena numerales en
-    // lugar de sustituirlos cuando se dicta «A digo B» con A y B ambos
-    // numerales. Evidencia real del log: «me comi cuatro digo cinco
-    // peras» → output del LLM «me comi cuatro cinco peras» (sin
-    // «digo», con los dos números juntos). Este guard detecta el patrón
-    // en el INPUT y reconstruye la sustitución en código.
+    // El corrector local (Qwen3.5-0.8B-Q8) pega los números en vez de cambiarlos
+    // cuando se dicta «A digo B» con A y B números. Está en el log: «me comi
+    // cuatro digo cinco peras» → «me comi cuatro cinco peras» (sin «digo», con
+    // los dos números seguidos). Esta protección busca el patrón en el texto
+    // dictado y rehace el cambio en código.
     //
-    // Contrato: el guard interviene SOLO si el patrón es inequívoco
-    // (dos numerales simples separados por un marcador correctivo) Y el
-    // output del LLM no cumple la corrección. En cualquier otro caso
-    // devuelve Err(()) y deja el flujo del LLM en manos del resto de
-    // guards existentes.
+    // Trato: interviene SOLO si el patrón es inequívoco (dos números simples
+    // separados por una marca de corrección) Y la respuesta del modelo no trae la
+    // corrección. En cualquier otro caso devuelve Err(()) y deja el flujo en manos
+    // de las demás protecciones.
 
     #[test]
     fn guard_numeric_corrige_concatenacion_de_numerales_en_palabras() {
-        // Caso del bug: input «A digo B», LLM devuelve «A B» (sin
-        // marcador y con los dos numerales concatenados).
+        // El caso del fallo: texto «A digo B» y el modelo devuelve «A B» (sin la
+        // marca y con los dos números pegados).
         let input = "me comi cuatro digo cinco peras";
         let output = "me comi cuatro cinco peras";
         let result = guard_numeric_substitution(input, output)
@@ -2476,8 +2469,7 @@ mod tests {
 
     #[test]
     fn guard_numeric_corrige_concatenacion_con_numerales_digitos() {
-        // Variante con dígitos: «2 en vez de 4» → output «2 4»
-        // (concatenación rota).
+        // Variante con dígitos: «2 en vez de 4» → respuesta «2 4» (pegados).
         let input = "el plazo es 2 en vez de 4 días";
         let output = "el plazo es 2 4 días";
         let result = guard_numeric_substitution(input, output)
@@ -2490,8 +2482,8 @@ mod tests {
 
     #[test]
     fn guard_numeric_corrige_con_no_sino() {
-        // Variante con marcador «no X sino Y»: input «no X sino Y»,
-        // output «X Y» (concatenación del 0.8B).
+        // Variante con la marca «no X sino Y»: texto «no X sino Y», respuesta «X Y»
+        // (el 0.8B los pega).
         let input = "no voy a las tres sino a las cuatro";
         let output = "voy a las tres cuatro";
         let result = guard_numeric_substitution(input, output)
@@ -2504,7 +2496,7 @@ mod tests {
 
     #[test]
     fn guard_numeric_no_interviene_si_llm_resolvio_bien() {
-        // El LLM devolvió la respuesta correcta: NO debe intervenir.
+        // El modelo contestó bien: NO debe intervenir.
         let input = "me comi cuatro digo cinco peras";
         let output = "me comi cinco peras";
         assert!(
@@ -2515,8 +2507,8 @@ mod tests {
 
     #[test]
     fn guard_numeric_no_interviene_si_no_hay_numerales() {
-        // Caso sin numerales (corrección geográfica). NO es problema del
-        // 0.8B (el LLM lo resuelve bien en runtime) → no intervenimos.
+        // Caso sin números (una corrección de sitio). NO es problema del 0.8B (el
+        // modelo lo resuelve bien al ejecutarse) → no se interviene.
         let input = "que calor en murcia digo cartagena";
         let output = "que calor en murcia cartagena"; // hipotético «fallo» del LLM
         assert!(
@@ -2527,8 +2519,8 @@ mod tests {
 
     #[test]
     fn guard_numeric_no_interviene_si_no_hay_patron_a_digo_b() {
-        // Numerales presentes pero SIN marcador correctivo: el turno
-        // NO es una auto-corrección numérica.
+        // Hay números pero SIN marca de corrección: el turno NO es una
+        // autocorrección numérica.
         let input = "me comi cuatro peras";
         let output = "me comi cuatro peras";
         assert!(
@@ -2539,12 +2531,12 @@ mod tests {
 
     #[test]
     fn guard_numeric_no_interviene_si_solo_hay_un_numeral() {
-        // El usuario repite el numeral sin corregirlo: no hay
-        // auto-corrección y el guard no debe inventarse una.
+        // El usuario repite el número sin corregirlo: no hay autocorrección y la
+        // protección no debe inventarse una.
         let input = "me comi cuatro digo cinco peras y me comi cuatro digo cinco";
-        // Para que el patrón sea inequívoco exigimos un solo numeral
-        // antes y un solo numeral después; con dos «cuatro/cinco»
-        // repetidos no hay match → guard no interviene.
+        // Para que el patrón sea inequívoco se pide un solo número antes y un solo
+        // número después; con dos «cuatro/cinco» repetidos no hay coincidencia → la
+        // protección no interviene.
         let output = "cuatro cinco cuatro cinco";
         assert!(
             guard_numeric_substitution(input, output).is_err(),
@@ -2554,10 +2546,9 @@ mod tests {
 
     #[test]
     fn guard_numeric_no_se_pisa_con_texto_largo_y_sin_correccion() {
-        // El caso del log LARGO sin corrección (73 palabras) no debe
-        // entrar en el guard numérico: el guard NO es responsable de
-        // detectar resúmenes (eso es `guard_anti_truncacion`). El
-        // guard numérico solo mira el patrón «NUM A [marker] NUM B».
+        // El caso LARGO del log, sin corrección (73 palabras), no debe entrar en la
+        // protección numérica: quien detecta resúmenes es `guard_anti_truncacion`.
+        // La numérica solo mira el patrón «NUM A [marca] NUM B».
         let input = LOG_LARGO_INPUT;
         let output = LOG_LARGO_OUTPUT;
         assert!(
@@ -2568,12 +2559,11 @@ mod tests {
 
     #[test]
     fn guard_numeric_corrige_incluso_si_llm_borro_numerales() {
-        // Caso real del 0.8B: a veces el LLM no solo concatena, sino
-        // que también BORRA uno o ambos numerales (probablemente por
-        // confusión). El guard detecta el patrón en el INPUT y puede
-        // reconstruir igualmente: «me comi cuatro digo cinco peras»
-        // con output «me comi peras» → reconstruido «me comi cinco
-        // peras» (¡mejor que el input!).
+        // Caso real del 0.8B: a veces no solo pega los números, también BORRA uno o
+        // los dos (seguramente por confusión). La protección ve el patrón en el
+        // texto dictado y puede reconstruirlo igual: «me comi cuatro digo cinco
+        // peras» con respuesta «me comi peras» → reconstruido «me comi cinco peras»
+        // (¡mejor que lo dictado!).
         let input = "me comi cuatro digo cinco peras";
         let output = "me comi peras";
         let result = guard_numeric_substitution(input, output)
@@ -2586,11 +2576,10 @@ mod tests {
 
     #[test]
     fn guard_numeric_canonicos_intactos_no_se_pisan() {
-        // Sanity: los casos canónicos de la spec (que el LLM resuelve
-        // bien en runtime) NO deben disparar el guard: «murcia digo
-        // cartagena», «se cruzo una moto digo se cruzo un coche», etc.
-        // El guard solo aplica cuando hay numeral, así que con texto
-        // sin numerales no hay patrón.
+        // Comprobación rápida: los casos de siempre (que el modelo resuelve bien al
+        // ejecutarse) NO deben disparar la protección: «murcia digo cartagena», «se
+        // cruzo una moto digo se cruzo un coche», etc. La protección solo aplica
+        // cuando hay número, así que con texto sin números no hay patrón.
         for (input, output) in [
             ("que calor que hace en murcia digo cartagena", "que calor en cartagena"),
             (
