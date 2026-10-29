@@ -1,60 +1,61 @@
 # Atajo global en Hyprland (backend "hyprland")
 
-Estado: LISTO A VALIDAR (compilación y prueba real de teclado pendientes del
-usuario — el agente no puede ejecutar `cargo build` en esta máquina).
+Estado: LISTO PARA VALIDAR (la compilación y la prueba real de teclado las hace
+el usuario — el agente no puede ejecutar `cargo build` en esta máquina).
 
 ## Por qué no hay atajo global nativo
 
-En Windows, Whispr Open registra su atajo con `global-hotkey` (registro
-global del sistema: funciona sobre cualquier app con foco). En Linux con
-Wayland ese mecanismo no existe y no puede existir: el protocolo no permite
-a una app capturar teclas de otras superficies (es una decisión de seguridad
-de Wayland, no un bug de Hyprland ni de cpal/winit).
+En Windows, Whispr Open registra su atajo con `global-hotkey` (registro global del
+sistema: funciona sobre cualquier app que tenga el foco). En Linux con Wayland ese
+mecanismo no existe y no puede existir: el protocolo no permite que una app capture
+teclas de otras ventanas (es una decisión de seguridad de Wayland, no un fallo de
+Hyprland ni de cpal/winit).
 
-`global-hotkey` 0.6 en Linux solo soporta X11 (docs del crate:
-"Linux (X11 Only)"); en una sesión Hyprland/Wayland pura el registro no
-tiene efecto. No se usa.
+`global-hotkey` 0.6 en Linux solo soporta X11 (docs del crate: "Linux (X11
+Only)"); en una sesión Hyprland/Wayland pura el registro no hace nada. No se usa.
 
 ## Solución del port: socket UNIX + bind de Hyprland
 
-La app, al arrancar (backend "hyprland"), crea un socket UNIX de escucha en:
+La app, al arrancar (parte «hyprland»), crea un socket UNIX a la escucha en:
 
     $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 
-y un hilo propio hace `accept` en bucle. Cualquier línea escrita en el
-socket se traduce a un evento de atajo interno:
+y un hilo propio hace `accept` en bucle. Cualquier línea que se escriba
+en el socket se convierte en un evento de atajo interno:
 
-- `toggle` → alterna dictado (equivalente a pulsar el atajo).
+- `toggle` → enciende o apaga el dictado (como pulsar el atajo).
 - `off` → palabra reservada: no hace nada (útil para probar el socket sin
   disparar el dictado).
-- cualquier otra línea no vacía → tratada como toggle (y logueada como
-  comando desconocido: el socket es tolerante, no rompe por basura).
+- cualquier otra línea no vacía → se trata como toggle (y se apunta en el registro
+  como comando desconocido: el socket aguanta lo que le llegue, no se rompe por
+  basura).
 
-El atajo configurado en la UI/config (`shortcut`, default "Ctrl+Shift+D")
-se conserva como etiqueta informativa; en Wayland ES el bind de Hyprland el
-que decide qué tecla dispara el toggle (fuente de verdad del bind: el
-`hyprland.conf` del usuario).
+El atajo configurado en la interfaz o en la configuración (`shortcut`, por defecto
+"Ctrl+Shift+D") se queda como etiqueta informativa; en Wayland ES el bind de
+Hyprland el que decide qué tecla dispara el toggle (la referencia de verdad del
+bind es el `hyprland.conf` del usuario).
 
 ## Bind recomendado en hyprland.conf
 
     # Whispr Open — toggle de dictado (Ctrl+Shift+D equivale a SUPER SHIFT D)
     bind = SUPER SHIFT, D, exec, echo toggle > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 
-Con `$mainMod` (si tu conf lo define, es habitual: `$mainMod = SUPER`):
+Con `$mainMod` (si tu configuración lo define, que es lo habitual:
+`$mainMod = SUPER`):
 
     bind = $mainMod SHIFT, D, exec, echo toggle > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 
 Notas:
 
-- `echo` escribe «toggle\n» y cierra: cada pulsación = UN connect = UN
-  toggle. Fiable aunque se pulse varias veces seguidas (cada exec es un
-  proceso nuevo y un connect nuevo).
-- La app debe estar corriendo ANTES de la primera pulsación; si el socket
-  no existe, el shell devuelve «No such file or directory» y no pasa nada
-  (el bind falla silenciosamente, no crashea Hyprland).
-- Ruta alternativa si no existe `$XDG_RUNTIME_DIR` (no debería en una
-  sesión Wayland estándar): la app cae a `~/.cache/whispr-open/hotkey.sock`
-  y lo loguea en su arranque. El bind debería apuntar a la misma ruta.
+- `echo` escribe «toggle\n» y cierra: cada pulsación = UNA conexión = UN toggle.
+  Fiable aunque pulses varias veces seguidas (cada exec es un proceso nuevo y una
+  conexión nueva).
+- La app tiene que estar corriendo ANTES de la primera pulsación; si el socket no
+  existe, el shell devuelve «No such file or directory» y no pasa nada (el bind
+  falla en silencio, no rompe Hyprland).
+- Ruta alternativa si no existe `$XDG_RUNTIME_DIR` (no debería pasar en una sesión
+  Wayland normal): la app usa `~/.cache/whispr-open/hotkey.sock` y lo apunta al
+  arrancar. El bind debería apuntar a esa misma ruta.
 
 ## Cómo probar (checklist del usuario, sin tocar código)
 
@@ -67,37 +68,38 @@ Notas:
 
        echo toggle > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 
-   → la ventana de la app debe pasar a estado «Grabando» (o el editor
-   abre el turno de dictado, según el estado actual).
+   → la ventana de la app debe pasar a estado «Grabando» (o el editor abre el turno
+   de dictado, según cómo esté ahora).
 
 4. Añadir el bind de arriba a `~/.config/hypr/hyprland.conf` y recargar
    (`hyprctl reload`). Pulsar `SUPER+SHIFT+D` → toggle.
 
-5. Palabra reservada (no togglea): `echo off > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock`
-   → en el log de la app aparece «socket recibió «off» (reservado; sin
-   efecto)». Sirve para verificar el cableado sin disparar el dictado.
+5. Palabra reservada (no cambia nada): `echo off > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock`
+   → en el registro de la app aparece «socket recibió «off» (reservado; sin
+   efecto)». Sirve para verificar que está todo conectado sin disparar el dictado.
 
 ## Permisos y seguridad
 
-- El socket vive en `$XDG_RUNTIME_DIR` (tmpfs del usuario, 0700): otro
-  usuario del sistema no puede ni verlo ni escribirlo.
-- Procesos del MISMO usuario sí pueden: es el modelo del bind de Hyprland
-  (se ejecuta como tu usuario). Es el mismo nivel de confianza que un
-  atajo registrado en el sistema.
-- El hilo del socket NO ejecuta nada de lo que recibe: solo cuenta líneas
-  y emite "toggle" (cualquier otra cosa va al log, nunca a un shell).
+- El socket vive en `$XDG_RUNTIME_DIR` (memoria temporal del usuario, 0700): otro
+  usuario del sistema no puede ni verlo ni escribir en él.
+- Los procesos del MISMO usuario sí pueden: es cómo funciona el bind de Hyprland
+  (se ejecuta como tu usuario). Es el mismo nivel de confianza que un atajo
+  registrado en el sistema.
+- El hilo del socket NO ejecuta nada de lo que recibe: solo cuenta líneas y emite
+  «toggle» (cualquier otra cosa va al registro, nunca a un shell).
 
 ## Detalles de implementación (para quien mantenga esto)
 
-- Código: `src/hotkey.rs` — backend `hyprland` (módulo `hyprland`), listener
+- Código: `src/hotkey.rs` — parte `hyprland` (módulo `hyprland`), listener
   `HotkeySocketListener` en `HotkeyManager::register()` bajo
   `#[cfg(target_os = "linux")]`.
 - Eventos: el hilo emite `GlobalHotKeyEvent { id: <hash del atajo canónico>,
-  state: Pressed }` al canal que `HotkeyManager::listen()` entrega; el Poll
-  de la app (100 ms) filtra por `hotkey.id()` y hace toggle. Mismo contrato
-  que el backend Windows (app.rs/ui/poll.rs no distinguen backends).
-- Id del evento: FNV-1a 32 bits del label canónico ("Ctrl+Shift+D"), el
-  mismo parse que normaliza config compartida entre SO (tests lo fijan).
-- Limpieza: al morir la app el socket se borra (y a cada arranque se hace
-  unlink previo de un socket huérfano de una ejecución anterior).
-- Palabra reservada "off" y tolerancia a líneas desconocidas: ver arriba.
+  state: Pressed }` al canal que entrega `HotkeyManager::listen()`; el Poll de la
+  app (100 ms) filtra por `hotkey.id()` y hace toggle. El mismo contrato que la
+  parte de Windows (app.rs/ui/poll.rs no distinguen uno de otro).
+- Id del evento: FNV-1a de 32 bits del texto canónico del atajo ("Ctrl+Shift+D"),
+  el mismo análisis que se usa al normalizar la configuración común a los dos
+  sistemas (hay tests que lo fijan).
+- Limpieza: al morir la app el socket se borra (y en cada arranque se hace un
+  unlink previo de un socket abandonado por una ejecución anterior).
+- Palabra reservada «off» y aguante ante líneas desconocidas: ver arriba.

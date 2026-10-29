@@ -1,21 +1,21 @@
 # TESTEO 0.6 en el portátil (Arch + Hyprland/Wayland)
 
-Todo esto ya está hecho y verificado desde el sobremesa; lo que falta es la
-prueba con manos.
+Todo esto ya está hecho y comprobado desde el sobremesa; lo que falta es la
+prueba con las manos.
 
 ## Preparado
 
-- Código y binario: `~/silb-linux` (mismo `src/` que `release/0.6.0`,
+- Código y binario: `~/silb-linux` (el mismo `src/` que `release/0.6.0`,
   comprobado por hash) → `target/release/silb`, ~23 MB.
 - Modelo: `~/.local/share/whispr-open/models/ggml-small.bin` (487 MB, cabecera
   GGML válida, ya cacheado por la app).
-- Micrófono: PipeWire arriba, `alsa_input.pci-0000_07_00.6.analog-stereo`.
-- Inyección: `wl-copy` y `wtype` instalados (no hay `ydotool`).
+- Micrófono: PipeWire en marcha, `alsa_input.pci-0000_07_00.6.analog-stereo`.
+- Escritura del texto: `wl-copy` y `wtype` instalados (no hay `ydotool`).
 - Atajo: bind de Hyprland añadido a `~/.config/hypr/bindings.lua` →
   **SUPER + SHIFT + D** escribe `toggle` en
   `$XDG_RUNTIME_DIR/whispr-open/hotkey.sock`. Recargado con `hyprctl reload`.
-- VAD: no hay `ggml-vad-q8.bin`. Es opcional; si se quiere probar, dejarlo en
-  la carpeta de modelos.
+- VAD: no hay `ggml-vad-q8.bin`. Es opcional; si se quiere probar, se deja en la
+  carpeta de modelos.
 
 ## Lanzar
 
@@ -23,8 +23,8 @@ prueba con manos.
 bash ~/silb-linux/scripts/run-linux.sh
 ```
 
-Sin bandeja del sistema en Hyprland (no hay host StatusNotifier): la app se
-cierra desde su propia UI.
+En Hyprland no hay icono junto al reloj (no hay nada que lo pinte): la app se
+cierra desde su propia ventana.
 
 ## Qué comprobar (y qué apuntar)
 
@@ -41,9 +41,9 @@ cierra desde su propia UI.
 
 ## Dónde mirar cuando algo falle
 
-- Log de la app: `~/.local/share/whispr-open/whispr-open.log`
-- Verificación automática: `bash ~/silb-linux/scripts/linux-check.sh`
+- Registro de la app: `~/.local/share/whispr-open/whispr-open.log`
+- Comprobación automática: `bash ~/silb-linux/scripts/linux-check.sh`
   (deja `docs/VERIFICACION-LINUX-<fecha>.txt`)
 - Socket del atajo: `$XDG_RUNTIME_DIR/whispr-open/hotkey.sock`
 
-Lo que falle, con la línea exacta del log, se apunta en el informe de la 0.6.
+Lo que falle, con la línea exacta del registro, se apunta en el informe de la 0.6.
