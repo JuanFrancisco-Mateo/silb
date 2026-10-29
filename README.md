@@ -95,7 +95,7 @@ El recorrido completo de una frase, fichero por fichero, está en
 ## Instalar
 
 - **Instalador** (lo recomendado): `silb-X.Y.Z-setup.exe` desde la página
-  de [Releases](https://github.com/JuanFrancisco-Mateo/whispr-open/releases).
+  de [Releases](https://github.com/JuanFrancisco-Mateo/silb/releases).
   Instala en `%LOCALAPPDATA%\Programs\Silb` **sin pedir permisos de
   administrador**, con acceso directo, entrada en «Agregar o quitar programas»
   y desinstalador.
@@ -141,7 +141,7 @@ Qué ganas y qué pierdes:
   de CUDA en el equipo donde compilas, y el binario da por hecho que hay GPU.
 
 ```powershell
-git clone https://github.com/JuanFrancisco-Mateo/whispr-open.git
+git clone https://github.com/JuanFrancisco-Mateo/silb.git
 cd whispr-open
 git checkout native-iced        # rama activa (main es el legado web)
 cargo run --release
@@ -298,8 +298,8 @@ Las contribuciones son bienvenidas. Antes de empezar, lee
 y enviar cambios, el estilo del proyecto (commits en español, tests en verde) y
 qué rama tocar.
 
-- 🐛 [Avisar de un fallo](https://github.com/JuanFrancisco-Mateo/whispr-open/issues/new?template=bug.yml)
-- 💡 [Pedir una función](https://github.com/JuanFrancisco-Mateo/whispr-open/issues/new?template=feature.yml)
+- 🐛 [Avisar de un fallo](https://github.com/JuanFrancisco-Mateo/silb/issues/new?template=bug.yml)
+- 💡 [Pedir una función](https://github.com/JuanFrancisco-Mateo/silb/issues/new?template=feature.yml)
 - 🗺️ Qué queda por hacer: [`docs/ROADMAP.md`](docs/ROADMAP.md) y
   [`docs/UI-FUTURA.md`](docs/UI-FUTURA.md)
 

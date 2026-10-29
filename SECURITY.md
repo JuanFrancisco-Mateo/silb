@@ -9,7 +9,7 @@ IA opcional, y solo si configuras un proveedor en la nube o uno propio.
 Si encuentras una vulnerabilidad (que se escriba texto donde no toca, que se
 escapen datos, una API key guardada sin proteger, ejecución remota…), **no abras
 un issue público**. Usa el
-[aviso de vulnerabilidades de GitHub](https://github.com/JuanFrancisco-Mateo/whispr-open/security/advisories/new)
+[aviso de vulnerabilidades de GitHub](https://github.com/JuanFrancisco-Mateo/silb/security/advisories/new)
 o escribe al mantenedor desde su [perfil de GitHub](https://github.com/JuanFrancisco-Mateo).
 
 Intentaremos responder en unos días y arreglarlo de común acuerdo antes de hacer

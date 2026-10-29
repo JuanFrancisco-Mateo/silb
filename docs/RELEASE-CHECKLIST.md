@@ -1,7 +1,7 @@
 # Checklist para publicar la release v0.4.0
 
 Estado a 2026-10-19. Solo se marca lo que está **hecho y comprobado**; lo que
-depende de juanfri queda sin marcar con su nota. Toda la evidencia está en
+depende del mantenedor queda sin marcar con su nota. Toda la evidencia está en
 [`VERIFICACION-2026-10-19.txt`](VERIFICACION-2026-10-19.txt).
 
 ## 1. Antes de nada (una sola vez, al hacer público el repo)
@@ -12,7 +12,7 @@ depende de juanfri queda sin marcar con su nota. Toda la evidencia está en
 - [x] **Rama por defecto**: `native-iced` ya es la default en GitHub (comprobado
   por API el 19/10/2026).
 - [ ] **Aviso de vulnerabilidades**: activarlo en Settings → Code security. Solo
-  puede hacerlo juanfri.
+  puede hacerlo el mantenedor.
 - [x] **Sin contraseñas ni claves en el historial**: búsqueda de `sk-`, `ghp_`,
   `AIza` y `api_key=` sobre el clon limpio, sin resultados. La API key vive en
   el Administrador de credenciales, nunca en el repo.

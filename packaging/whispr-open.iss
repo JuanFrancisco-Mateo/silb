@@ -43,7 +43,7 @@
 #define MyHasCuda FileExists(AddBackslash(SourcePath) + MyCudaExe)
 #define MyAppName "Silb"
 #define MyAppPublisher "Whispr Open contributors"
-#define MyAppURL "https://github.com/JuanFrancisco-Mateo/whispr-open"
+#define MyAppURL "https://github.com/JuanFrancisco-Mateo/silb"
 #define MyAppExeName "silb.exe"
 #ifndef MyAppVersion
   #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.6.0"

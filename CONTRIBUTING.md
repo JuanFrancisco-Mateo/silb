@@ -7,12 +7,12 @@ traducciones, documentación, avisos de fallos o ideas.
 ## Cómo contribuir
 
 - **🐛 Avisar de un fallo**: abre un issue con la
-  [plantilla de fallo](https://github.com/JuanFrancisco-Mateo/whispr-open/issues/new?template=bug.yml).
+  [plantilla de fallo](https://github.com/JuanFrancisco-Mateo/silb/issues/new?template=bug.yml).
   Cuenta qué versión de la app usas, qué versión de Windows tienes, los pasos
   para que vuelva a pasar y qué esperabas que ocurriera. Pega el registro
   (`%APPDATA%\whispr-open\whispr-open.log`) **sin tus datos personales**.
 - **💡 Pedir una función**: usa la
-  [plantilla de función](https://github.com/JuanFrancisco-Mateo/whispr-open/issues/new?template=feature.yml).
+  [plantilla de función](https://github.com/JuanFrancisco-Mateo/silb/issues/new?template=feature.yml).
   Cuenta primero el problema que quieres resolver; la solución ya la
   discutimos entre todos.
 - **🔧 Mandar código**: fork + rama + pull request (ver abajo).

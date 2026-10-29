@@ -569,7 +569,7 @@ Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
 
 - `cargo test` verde (**336 passed + 3 ignored** a 24/09/2026, incluidos los que
   añadió t_c2b0a22f sobre el selector de proveedor y el degradado a remoto).
-  Cubren: clasificadores cross-turn e in-turn (el caso de siempre de Juanfri «que
+  Cubren: clasificadores cross-turn e in-turn (el caso de siempre del autor «que
   calor en murcia digo cartagena» + variantes), `apply_diff` (números, «lo
   último», diff inválido que no toca nada), deshacer, `clean_redact_output`,
   `contains_in_turn_marker` / `strip_in_turn_meta`, protección contra respuestas
