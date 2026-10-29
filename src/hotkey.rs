@@ -1,32 +1,32 @@
-//! Atajo global de dictado (toggle), configurable: `shortcut` en config.json
-//! (p.ej. "Ctrl+Shift+D", "Alt+Space", "Ctrl+Alt+F12"); default Ctrl+Shift+D.
+//! Atajo global del dictado (se pulsa y suelta), configurable: `shortcut` en
+//! config.json (por ejemplo "Ctrl+Shift+D", "Alt+Space", "Ctrl+Alt+F12"); por
+//! defecto Ctrl+Shift+D.
 //!
-//! DÚOS BACK-END (port Linux t_7ac526a3):
+//! Dos formas de hacerlo (port a Linux t_7ac526a3):
 //!
-//! - **Windows (y el resto de plataformas del crate)**: el crate
-//!   `global-hotkey` registra el atajo en el sistema (X11 grab en Linux con
-//!   sesión X11). Los eventos llegan por canal:
+//! - **Windows (y el resto de sistemas que cubre el crate)**: el crate
+//!   `global-hotkey` registra el atajo en el sistema (en Linux con sesión
+//!   X11 lo coge X11). Los eventos llegan por un canal:
 //!   `GlobalHotKeyEvent::receiver()`. Igual que hacía el plugin de Tauri.
 //!
-//! - **Linux/Wayland (Hyprland)**: NO hay grab global — el modelo de
-//!   seguridad de Wayland prohíbe capturar teclas de otras apps. Backend
-//!   config-driven «hyprland»: la app crea un UNIX socket en
-//!   `$XDG_RUNTIME_DIR/whispr-open/hotkey.sock` y un bind externo de
+//! - **Linux/Wayland (Hyprland)**: NO se pueden capturar teclas de otras
+//!   apps (Wayland lo prohíbe por seguridad). Se usa una vía distinta,
+//!   «hyprland»: la app abre un socket local en
+//!   `$XDG_RUNTIME_DIR/whispr-open/hotkey.sock` y un atajo de
 //!   `hyprland.conf` le escribe un byte (ver docs/PORT-LINUX/HOTKEY-HYPR.md):
 //!
 //!     bind = $mainMod SHIFT, D, exec, echo toggle > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 //!
-//!   El socket escucha en su propio hilo y entrega eventos del MISMO tipo
-//!   que Windows (`GlobalHotKeyEvent`, con campos públicos id/state) por el
-//!   mismo canal crossbeam, de modo que `app.rs` / `ui/poll.rs` no distinguen
-//!   backends. En Hyprland el ID se hace determinista con el parse del
-//!   `shortcut` de config para que los ids de un mismo atajo coincidan entre
-//!   plataformas (tests lo fijan).
+//!   El socket se escucha en su propio hilo y entrega eventos del MISMO tipo
+//!   que en Windows (`GlobalHotKeyEvent`, con los campos públicos id/state)
+//!   por el mismo canal, de modo que `app.rs` y `ui/poll.rs` no notan la
+//!   diferencia. En Hyprland el id sale del `shortcut` del config para que el
+//!   mismo atajo tenga el mismo id en todas las plataformas (hay tests).
 //!
-//! Si el valor de config es inválido o el backend falla (socket no
-//! creable, atajo ya ocupado por otra app en Windows), se vuelve al default
-//! / modo stub: los botones de la UI siguen funcionando, simplemente no hay
-//! atajo global.
+//! Si el valor del config no vale o la vía falla (no se puede crear el
+//! socket, el atajo ya lo tiene otra app en Windows), se vuelve al de por
+//! defecto o a un modo sin atajo: los botones de la interfaz siguen
+//! funcionando, solo que no hay atajo global.
 
 use crossbeam_channel::Receiver;
 #[cfg(not(target_os = "linux"))]
@@ -34,48 +34,47 @@ use global_hotkey::hotkey::{Code, HotKey, Modifiers};
 #[cfg(not(target_os = "linux"))]
 use global_hotkey::{GlobalHotKeyManager, GlobalHotKeyEvent};
 
-/// Atajo por defecto (también es el valor de `shortcut` ausente en config).
+/// Atajo de por defecto (también se usa si `shortcut` falta en el config).
 pub const DEFAULT_SHORTCUT: &str = "Ctrl+Shift+D";
 
-/// Manager del atajo global. En Windows mantiene vivo el registro de
-/// global-hotkey; en Linux/Wayland levanta el listener del UNIX socket de
-/// Hyprland (`HotkeySocket`, modulo abajo).
+/// Encargado del atajo global. En Windows mantiene vivo el registro de
+/// global-hotkey; en Linux/Wayland levanta el que escucha el socket de
+/// Hyprland (`HotkeySocket`, más abajo).
 pub struct HotkeyManager {
-    // [Windows] Registro vivo: si se cae, el atajo se desregistra.
+    // [Windows] El registro tiene que seguir vivo: si se suelta, el atajo se pierde.
     #[cfg(not(target_os = "linux"))]
     #[allow(dead_code)]
     manager: Option<GlobalHotKeyManager>,
-    /// [Windows] Atajo parseado y registrado: su id filtra los eventos del
-    /// canal y su etiqueta canónica alimenta la UI ("Atajo global: …").
+    /// [Windows] Atajo leído y registrado: su id sirve para filtrar los eventos
+    /// del canal y su etiqueta se enseña en la interfaz ("Atajo global: …").
     #[cfg(not(target_os = "linux"))]
     hotkey: HotKey,
-    /// [Linux/Hyprland] Listener del UNIX socket. Vive en un hilo propio;
-    /// se conserva para que no muera (drop del listener cierra el socket).
+    /// [Linux/Hyprland] El que escucha el socket. Vive en un hilo propio; se
+    /// guarda para que no se muera (si se suelta, se cierra el socket).
     #[cfg(target_os = "linux")]
     listener: Option<HotkeySocketListener>,
-    /// Canal de eventos del backend activo (Windows: el global de
-    /// global-hotkey; Linux: el canal propio del socket Hyprland).
+    /// Canal de eventos de la vía activa (Windows: el general de
+    /// global-hotkey; Linux: el del socket de Hyprland).
     rx: Receiver<global_hotkey::GlobalHotKeyEvent>,
-    /// Etiqueta canónica del atajo activo (p.ej. "Ctrl+Shift+D"): la UI la
-    /// pinta en el placeholder y en Ajustes.
+    /// Etiqueta del atajo activo (por ejemplo "Ctrl+Shift+D"): la interfaz la
+    /// enseña en el hueco del atajo y en Ajustes.
     label: String,
-    /// Id determinista del atajo activo (mismo algoritmo en ambos
-    /// backends — en Windows es el id del crate, en Linux el derivado del
-    /// parse del shortcut via hash estable del label).
+    /// Id del atajo activo, igual en las dos vías (en Windows es el que da el
+    /// crate; en Linux sale del `shortcut` con un hash estable de la etiqueta).
     id: u32,
 }
 
-/// Ruta del UNIX socket de Hyprland. La app la abre en modo "mkdir + bind";
-/// el bind de hyprland.conf SOLO escribe bytes finitos ("toggle\n"). Se
-/// documentada en docs/PORT-LINUX/HOTKEY-HYPR.md.
+/// Ruta del socket de Hyprland. La app crea la carpeta y abre el socket; el
+/// atajo de hyprland.conf solo escribe bytes sueltos ("toggle\n"). Está
+/// explicado en docs/PORT-LINUX/HOTKEY-HYPR.md.
 pub const HOTKEY_SOCKET_FILENAME: &str = "hotkey.sock";
 
-/// Token escrito por el bind de Hyprland. Cualquier byte/linea no vacía
-/// que no sea "off" cuenta como toggle (fault-tolerant).
+/// Lo que escribe el atajo de Hyprland. Cualquier línea no vacía que no sea
+/// "off" cuenta como pulsación (así no se rompe con textos raros).
 pub const HOTKEY_MSG_TOGGLE: &str = "toggle";
 
 /// Ruta del socket: `$XDG_RUNTIME_DIR/whispr-open/hotkey.sock`.
-/// Fallback: si XDG_RUNTIME_DIR no está (raro en Wayland), `~/.cache`.
+/// Si no está XDG_RUNTIME_DIR (raro en Wayland), se usa `~/.cache`.
 pub fn hotkey_socket_path() -> std::path::PathBuf {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
         .map(std::path::PathBuf::from)
@@ -92,9 +91,9 @@ pub fn hotkey_socket_path() -> std::path::PathBuf {
 }
 
 impl HotkeyManager {
-    /// Activa el atajo `shortcut` en el backend del sistema. `Err` con
-    /// mensaje en español si el formato no es válido o ya lo tiene otra
-    /// app; el llamador degrada a [`stub`](Self::stub) en vez de abortar.
+    /// Activa el atajo `shortcut` en el sistema. `Err` con mensaje en español
+    /// si el formato no vale o ya lo tiene otra app; quien llama se queda en
+    /// [`stub`](Self::stub) en vez de abortar.
     #[cfg(not(target_os = "linux"))]
     pub fn register(shortcut: &str) -> Result<Self, String> {
         let manager = GlobalHotKeyManager::new()
@@ -114,11 +113,10 @@ impl HotkeyManager {
         })
     }
 
-    /// Linux/Wayland: backend «hyprland». Activa el listener del UNIX
-    /// socket. `Err` si no se puede crear el socket (permisos,
-    /// XDG_RUNTIME_DIR sin permiso de escritura, etc.) — igual que el
-    /// `register`
-    /// de Windows, el caller degrada a stub.
+    /// Linux/Wayland: vía «hyprland». Pone en marcha el que escucha el socket.
+    /// `Err` si no se puede crear el socket (permisos, XDG_RUNTIME_DIR sin
+    /// permiso de escritura, etc.); igual que `register` en Windows, quien
+    /// llama se queda en el modo sin atajo.
     #[cfg(target_os = "linux")]
     pub fn register(shortcut: &str) -> Result<Self, String> {
         let listener = HotkeySocketListener::spawn(hotkey_id_from_label(&parse_shortcut(
@@ -138,9 +136,9 @@ impl HotkeyManager {
             hotkey_socket_path().display(),
             parsed
         );
-        // E0382: clonar el canal ANTES de mover `listener` al initializer
-        // (este se evalúa en orden de fuente y `listener: Some(listener)`
-        // consume el valor antes de que `rx:` pueda pedirlo prestado).
+        // E0382: se copia el canal ANTES de mover `listener` al constructor
+        // (se evalúa en orden y `listener: Some(listener)` se queda el valor
+        // antes de que `rx:` pueda pedirlo prestado).
         let rx = listener.rx.clone();
         Ok(Self {
             listener: Some(listener),
@@ -150,11 +148,11 @@ impl HotkeyManager {
         })
     }
 
-    /// Stub para cuando el registro falla: siguen funcionando los botones
-    /// de la UI, simplemente no hay atajo global. En Linux el stub TAMBIÉN
-    /// deja de escuchar el socket (el bind del conf se quedaría apuntando
-    /// a un socket muerto; ahí se degrada en «sin atajo» y el usuario lo
-    /// ve en la UI).
+    /// Modo sin atajo, para cuando el registro falla: los botones de la
+    /// interfaz siguen funcionando, solo que no hay atajo global. En Linux
+    /// además deja de escuchar el socket (el atajo del conf apuntaría a un
+    /// socket muerto; ahí se queda en «sin atajo» y el usuario lo ve en la
+    /// interfaz).
     pub fn stub(shortcut: &str) -> Self {
         #[cfg(target_os = "linux")]
         let parsed = parse_shortcut(shortcut);
@@ -163,9 +161,9 @@ impl HotkeyManager {
             Self {
                 listener: None,
                 rx: crossbeam_channel::unbounded().1,
-                // E0382: clonado por orden de evaluación del initializer —
-                // `label` consume `parsed` antes de que `id` lo pida prestado
-                // (sugerencia del compilador: `parsed.clone()`).
+                // E0382: se copia por el orden en que se evalúa el constructor —
+                // `label` se queda `parsed` antes de que `id` lo pida prestado
+                // (el compilador sugiere `parsed.clone()`).
                 label: parsed.clone(),
                 id: hotkey_id_from_label(&parsed),
             }
@@ -183,31 +181,30 @@ impl HotkeyManager {
         }
     }
 
-    /// Canal de eventos globales. La UI escucha, filtra por [`Self::id`]
-    /// y hace toggle. En Windows es el canal global del crate; en Linux
-    /// es el canal interno del listener del socket.
+    /// Canal de eventos globales. La interfaz escucha, filtra por [`Self::id`]
+    /// y cambia el estado. En Windows es el canal general del crate; en Linux
+    /// es el de dentro del que escucha el socket.
     pub fn listen(&self) -> Receiver<global_hotkey::GlobalHotKeyEvent> {
         self.rx.clone()
     }
 
-    /// Id del atajo activo: solo los eventos con este id son de nuestro
-    /// atajo (cualquier otro id del canal se ignora).
+    /// Id del atajo activo: solo los eventos con este id son de nuestro atajo
+    /// (cualquier otro id del canal se ignora).
     pub fn id(&self) -> u32 {
         self.id
     }
 
-    /// Etiqueta canónica para la UI (p.ej. "Ctrl+Shift+D").
+    /// Etiqueta para la interfaz (por ejemplo "Ctrl+Shift+D").
     pub fn label(&self) -> String {
         self.label.clone()
     }
 }
 
-/// Hash estable (FNV-1a 32-bit) de la etiqueta canónica del atajo. En
-/// Linux el id de los eventos construidos por el socket es ESTE hash, de
-/// modo que (a) es determinista entre ejecuciones (los tests de
-/// app.rs/poll.rs comparan `ev.id == hotkey.id()`), y (b) coincide con el
-/// mismo shortcut => mismo id en ambas plataformas (suficiente para que
-/// una config compartida funcione igual en Windows y Linux).
+/// Hash estable (FNV-1a de 32 bits) de la etiqueta del atajo. En Linux el id
+/// de los eventos que crea el socket es ESTE hash, de modo que (a) sale igual
+/// en cada arranque (los tests de app.rs/poll.rs comparan
+/// `ev.id == hotkey.id()`) y (b) el mismo atajo da el mismo id en las dos
+/// plataformas (así un config compartido funciona igual en Windows y Linux).
 fn hotkey_id_from_label(label: &str) -> u32 {
     let mut hash: u32 = 0x811c9dc5; // FNV offset basis
     for byte in label.as_bytes() {
@@ -217,55 +214,56 @@ fn hotkey_id_from_label(label: &str) -> u32 {
     hash
 }
 
-// ───────────────────────── Linux / Hyprland — listener UNIX socket ─────────────
+// ───────────────────────── Linux / Hyprland — socket local ──────────────────────
 
 #[cfg(target_os = "linux")]
 mod hyprland {
     use super::*;
     use crossbeam_channel::Sender;
 
-    /// Listener del UNIX socket de Hyprland: un hilo que hace `accept` en
-    /// bucle y, por cada conexión, lee una línea ("toggle\n" u otra) y
-    /// mete un `GlobalHotKeyEvent { id: hash_de_atajo, state: Pressed }`
-    /// en el canal de la app.
+    /// Escucha el socket de Hyprland: un hilo que acepta conexiones en bucle
+    /// y, por cada una, lee una línea ("toggle\n" u otra) y mete un
+    /// `GlobalHotKeyEvent { id: hash_de_atajo, state: Pressed }` en el canal
+    /// de la app.
     pub struct HotkeySocketListener {
-        /// Canal de la app (el que se reparte via HotkeyManager::listen).
+        /// Canal de la app (el que se reparte con HotkeyManager::listen).
         pub rx: Receiver<global_hotkey::GlobalHotKeyEvent>,
-        /// JoinHandle del hilo de accept; se conserva para garantizar la
-        /// vida del hilo mientras el manager viva.
+        /// Hilo que acepta conexiones; se guarda para que siga vivo mientras
+        /// viva el encargado.
         #[allow(dead_code)]
         worker: std::thread::JoinHandle<()>,
     }
 
     impl HotkeySocketListener {
-        /// Crea el socket (unlink previo si quedó de una ejecución anterior
-        /// y bind a la ruta) y lanza el hilo de accept. Err = mensaje en
-        /// español para el log + caller degrada a stub.
+        /// Crea el socket (borra antes el que haya quedado de otra ejecución
+        /// y lo abre en la ruta) y lanza el hilo que acepta conexiones. `Err` =
+        /// mensaje en español para el log; quien llama se queda en el modo sin
+        /// atajo.
         ///
-        /// `event_id`: id determinista del atajo parseado (hash del label,
-        /// ver `hotkey_id_from_label`): los eventos que el hilo emite
-        /// llevan ese id para que el Poll de la UI (que filtra por
-        /// `hotkey.id()`) los reconozca.
+        /// `event_id`: id del atajo ya leído (hash de la etiqueta, ver
+        /// `hotkey_id_from_label`). Los eventos que emite el hilo llevan ese id
+        /// para que el `Poll` de la interfaz (que filtra por `hotkey.id()`) los
+        /// reconozca.
         pub fn spawn(event_id: u32) -> Result<Self, String> {
             let path = hotkey_socket_path();
-            // El directorio padre debe existir antes del bind; crearlo.
+            // La carpeta tiene que existir antes de abrir el socket: se crea.
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|e| format!("no se pudo crear {}: {e}", parent.display()))?;
             }
-            // Un socket viejo de una ejecución anterior bloquearía el bind
-            // con «Address already in use»: la app que lo tenía murió, así
-            // que su socket está sin dueño. Sanear: unlink antes de bind.
+            // Un socket viejo de otra ejecución impediría abrirlo («Address
+            // already in use»): la app que lo tenía ya no está, así que está
+            // sin dueño. Se limpia: se borra antes de abrir.
             let _ = std::fs::remove_file(&path);
             let listener = std::os::unix::net::UnixListener::bind(&path)
                 .map_err(|e| format!("no se pudo crear el socket {path:?}: {e}"))?;
             crate::log!("hotkey", "socket de hotkey listo en {}", path.display());
 
-            // Permisos: el socket hereda la umask del usuario (022 típica →
-            // 755). Todo proceso del MISMO usuario puede escribir «toggle»;
-            // los de otras cuentas no (el directorio whispr-open es del
-            // usuario). En Hyprland el write llega del bind de hyprland.conf,
-            // lanzado por el MISMO usuario que la app.
+            // Permisos: el socket hereda los del usuario (022 típico → 755).
+            // Cualquier proceso del MISMO usuario puede escribir «toggle»; los
+            // de otras cuentas no (la carpeta whispr-open es del usuario). En
+            // Hyprland el que escribe es el atajo de hyprland.conf, lanzado por
+            // el mismo usuario que la app.
 
             let (tx, rx) = crossbeam_channel::unbounded::<global_hotkey::GlobalHotKeyEvent>();
             let worker = std::thread::Builder::new()
@@ -274,22 +272,22 @@ mod hyprland {
                 .map_err(|e| format!("no se pudo lanzar el hilo del socket: {e}"))?;
             Ok(Self { rx, worker })
         }
-        /// Ruta del socket para el log y la doc.
+        /// Ruta del socket, para el log y la documentación.
         pub fn path(&self) -> std::path::PathBuf {
             hotkey_socket_path()
         }
     }
 
-    /// Bucle del hilo worker: accept → leer el stream completo → UN evento
-    /// `Pressed` por cada línea recibida. `echo toggle > socket` = UN
-    /// toggle por ejecución del bind (un connect por write; si el bind
-    /// disparase muy rápido y el shell agrupara dos writes en el mismo
-    /// connect, cada línea «toggle» es un toggle: fiable).
+    /// Bucle del hilo: aceptar, leer todo lo que llega y sacar UN evento
+    /// `Pressed` por cada línea. `echo toggle > socket` = una pulsación por
+    /// cada vez que se lanza el atajo (una conexión por escritura; si el shell
+    /// juntara dos escrituras en la misma conexión, cada línea «toggle» cuenta
+    /// igual: fiable).
     ///
-    /// Palabra reservada: «off» no togglea (documentado en HOTKEY-HYPR.md;
-    /// sirve para probar/purgar el socket sin efecto). Cualquier otra
-    /// línea NO vacía se trata como toggle (fault-tolerante con ecos con
-    /// texto extra, mensajes con fecha, etc.) y queda en el log.
+    /// Palabra reservada: «off» no cambia nada (está en HOTKEY-HYPR.md; sirve
+    /// para probar o vaciar el socket sin efecto). Cualquier otra línea no
+    /// vacía cuenta como pulsación (aguanta textos de más, mensajes con fecha,
+    /// etc.) y queda en el log.
     fn serve(
         listener: std::os::unix::net::UnixListener,
         tx: Sender<global_hotkey::GlobalHotKeyEvent>,
@@ -333,20 +331,20 @@ mod hyprland {
                         "socket recibió «{cmd}» (desconocido; tratado como toggle)"
                     );
                 }
-                // Un evento Pressed por línea. El Poll de la UI (ui/poll.rs)
-                // hace toggle al ver UN; si llegan dos en el mismo batch de
-                // 100 ms, el flag `toggled` colapsa a UNO solo: igual que
-                // en Windows no se puede pulsar dos veces dentro del mismo
-                // tick del Poll.
+                // Un evento Pressed por línea. El `Poll` de la interfaz
+                // (ui/poll.rs) cambia el estado al ver UNO; si llegan dos en la
+                // misma tanda de 100 ms, la marca `toggled` los junta en uno
+                // solo: igual que en Windows no se puede pulsar dos veces
+                // dentro de la misma vuelta del `Poll`.
                 let _ = tx.send(global_hotkey::GlobalHotKeyEvent {
                     id: event_id,
                     state: global_hotkey::HotKeyState::Pressed,
                 });
             }
         }
-        // Salida del bucle = el socket se cerró (drop del listener cuando
-        // manager muere): limpiar el fichero para que la próxima
-        // ejecución no herede un socket muerto.
+        // Si el bucle termina, es que se cerró el socket (se soltó el que lo
+        // escuchaba cuando muere el encargado): se limpia el fichero para que
+        // la próxima ejecución no herede un socket muerto.
         let _ = std::fs::remove_file(hotkey_socket_path());
     }
 }
@@ -360,9 +358,9 @@ fn parse_shortcut(shortcut: &str) -> String {
     if trimmed.is_empty() {
         return DEFAULT_SHORTCUT.to_string();
     }
-    // No se exige una sintaxis aquí: el label se normaliza (split por
-    // '+', título por token) para que "ctrl+shift+d" y "Ctrl+Shift+D"
-    // den el MISMO id determinista (importante para el hash).
+    // Aquí no se exige una sintaxis: la etiqueta se ordena (se corta por '+'
+    // y se pone cada trozo con mayúscula inicial) para que "ctrl+shift+d" y
+    // "Ctrl+Shift+D" den el MISMO id (importante para el hash).
     let mut parts: Vec<String> = trimmed
         .split('+')
         .map(|p| p.trim().to_ascii_lowercase())
@@ -374,9 +372,9 @@ fn parse_shortcut(shortcut: &str) -> String {
             }
         })
         .collect();
-    // Orden canónico Ctrl+Shift+Alt+Super (igual que el backend Windows,
-    // ver hotkey_label abajo) para que una config compartida dé el mismo
-    // id en ambas plataformas.
+    // Orden fijo Ctrl+Shift+Alt+Super (igual que en Windows, ver
+    // hotkey_label más abajo) para que un config compartido dé el mismo id en
+    // las dos plataformas.
     let order = ["Ctrl", "Shift", "Alt", "Super", "Win", "Meta"];
     parts.sort_by_key(|p| order.iter().position(|o| o.eq_ignore_ascii_case(p)).unwrap_or(order.len()));
     if parts.is_empty() {
@@ -402,11 +400,10 @@ fn parse_shortcut(shortcut: &str) -> HotKey {
 
 #[cfg(not(target_os = "linux"))]
 fn default_hotkey() -> HotKey {
-    // Fuente de verdad: la constante de arriba (validada por tests). El
-    // parse de una constante no puede fallar en la práctica, pero el
-    // requisito de robustez veta pánicos en el arranque: si una
-    // actualización del crate cambiara el formato aceptado, se construye
-    // el MISMO atajo por API (infalible) en vez de tumbar el proceso.
+    // La referencia es la constante de arriba (hay tests). Leer una constante
+    // no puede fallar en la práctica, pero no se quiere un pánico al arrancar:
+    // si una actualización del crate cambiara el formato aceptado, se construye
+    // el MISMO atajo con la API (que no falla) en vez de tumbar el proceso.
     DEFAULT_SHORTCUT.parse::<HotKey>().unwrap_or_else(|_| {
         crate::log!(
             "hotkey",
@@ -416,10 +413,9 @@ fn default_hotkey() -> HotKey {
     })
 }
 
-/// Etiqueta canónica Windows-style («Ctrl+Shift+D») a partir del atajo
-/// parseado, independiente del orden/estilo que el usuario escribió en
-/// config. [Windows/macOS; en Linux el parse devuelve ya un label
-/// canónico String].
+/// Etiqueta al estilo de Windows («Ctrl+Shift+D») a partir del atajo ya
+/// leído, sin importar el orden ni el estilo con que el usuario lo escribió
+/// en el config. [Windows/macOS; en Linux ya sale la etiqueta hecha].
 #[cfg(not(target_os = "linux"))]
 fn hotkey_label(h: HotKey) -> String {
     let mut parts: Vec<String> = Vec::new();
@@ -474,12 +470,12 @@ mod tests {
         assert_eq!(hotkey_label(parse_shortcut("Alt+Space")), "Alt+Space");
         assert_eq!(hotkey_label(parse_shortcut("Ctrl+Alt+F12")), "Ctrl+Alt+F12");
         assert_eq!(hotkey_label(parse_shortcut("shift+KeyK")), "Shift+K");
-        // Orden canónico fijo: Ctrl+Shift+Alt+Win, da igual el orden de entrada.
+        // Orden fijo: Ctrl+Shift+Alt+Win, dé igual cómo se escriba.
         assert_eq!(
             hotkey_label(parse_shortcut("Ctrl+Alt+Shift+Space")),
             "Ctrl+Shift+Alt+Space"
         );
-        // Espacios alrededor no rompen el parseo.
+        // Los espacios de alrededor no rompen la lectura.
         assert_eq!(
             hotkey_label(parse_shortcut("  Ctrl+Shift+D  ")),
             "Ctrl+Shift+D"
@@ -489,7 +485,7 @@ mod tests {
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn invalido_cae_al_default() {
-        // Sin tecla principal, token vacío, tecla inexistente.
+        // Sin tecla principal, trozo vacío o tecla que no existe.
         assert_eq!(hotkey_label(parse_shortcut("Ctrl+Shift+")), "Ctrl+Shift+D");
         assert_eq!(hotkey_label(parse_shortcut("")), "Ctrl+Shift+D");
         assert_eq!(hotkey_label(parse_shortcut("zzz")), "Ctrl+Shift+D");
@@ -501,18 +497,17 @@ mod tests {
         let a = parse_shortcut("Ctrl+Shift+D");
         let b = parse_shortcut("Ctrl+Shift+D");
         assert_eq!(a.id(), b.id());
-        // Distinto atajo → distinto id: los eventos se filtran por él.
+        // Otro atajo → otro id: los eventos se filtran por él.
         assert_ne!(a.id(), parse_shortcut("Alt+Space").id());
     }
 
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn fallback_por_api_es_el_mismo_atajo_que_el_default_parseado() {
-        // Requisito de robustez: default_hotkey() ya no puede pánico. Si el
-        // parse de la constante llegara a romperse (cambio de crate), la
-        // construcción por API debe producir EXACTAMENTE el mismo atajo
-        // (misma etiqueta y mismo id) para que la UI y el filtrado de
-        // eventos no cambien de comportamiento.
+        // El atajo por defecto ya no puede dar pánico. Si la lectura de la
+        // constante se rompiera (cambio de crate), construirlo con la API tiene
+        // que dar EXACTAMENTE el mismo atajo (misma etiqueta y mismo id) para
+        // que la interfaz y el filtrado de eventos no cambien.
         let por_api = HotKey::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
         let por_parse = DEFAULT_SHORTCUT.parse::<HotKey>().unwrap();
         assert_eq!(por_api.id(), por_parse.id());
@@ -526,7 +521,7 @@ mod tests {
         assert_eq!(stub.label(), "Ctrl+Alt+D");
     }
 
-    // ── Linux/Hyprland: id determinista por etiqueta ──────────────────────
+    // ── Linux/Hyprland: id fijo por etiqueta ────────────────────────────────
 
     #[cfg(target_os = "linux")]
     #[test]
@@ -540,8 +535,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn hyprland_stub_nunca_puede_emitir_eventos() {
-        // El canal del stub se crea vacío y jamás se le escribe: el Poll
-        // de la UI dará Err siempre (equivalente a «sin atajo global»).
+        // El canal del modo sin atajo se crea vacío y nunca se escribe: el
+        // `Poll` de la interfaz dará `Err` siempre (como «sin atajo global»).
         let stub = HotkeyManager::stub("ctrl+alt+d");
         assert!(stub.rx.try_recv().is_err());
         assert_eq!(stub.id(), hotkey_id_from_label("Ctrl+Alt+D"));
@@ -550,9 +545,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn hyprland_socket_path_vive_bajo_xdg_runtime() {
-        // En el entorno de tests XDG_RUNTIME_DIR suele existir (Wayland);
-        // si no existe, el fallback es ~/.cache. En ambos casos la ruta
-        // debe terminar en whispr-open/hotkey.sock.
+        // En el entorno de tests XDG_RUNTIME_DIR suele existir (Wayland); si
+        // no, se usa ~/.cache. En los dos casos la ruta tiene que terminar en
+        // whispr-open/hotkey.sock.
         let path = hotkey_socket_path();
         assert!(path.ends_with(HOTKEY_SOCKET_FILENAME));
         assert!(path.to_string_lossy().contains("whispr-open"));
@@ -561,8 +556,8 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn hyprland_parse_normaliza_orden_y_caso_y_da_ids_estables() {
-        // La misma config escrita distinta debe dar el MISMO id (config
-        // compartida Windows/Linux).
+        // El mismo config escrito de otra forma tiene que dar el MISMO id
+        // (config compartida Windows/Linux).
         assert_eq!(parse_shortcut("ctrl+shift+d"), parse_shortcut("Ctrl+Shift+D"));
         assert_eq!(parse_shortcut("Shift+D+Ctrl"), "Ctrl+Shift+D");
         let id1 = hotkey_id_from_label(&parse_shortcut("ctrl+shift+d"));
@@ -575,8 +570,8 @@ mod tests {
     fn hyprland_vacio_o_invalido_cae_al_default() {
         assert_eq!(parse_shortcut(""), DEFAULT_SHORTCUT);
         assert_eq!(parse_shortcut("   "), DEFAULT_SHORTCUT);
-        // Un label con excepcional que no es modificador igual se
-        // normaliza a mayúscula inicial (KeyD, etc).
+        // Una palabra rara que no es modificador también se pone con mayúscula
+        // inicial (KeyD, etc.).
         assert_eq!(parse_shortcut("ctrl+d"), "Ctrl+D");
     }
 }

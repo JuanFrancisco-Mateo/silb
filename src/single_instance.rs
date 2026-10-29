@@ -1,41 +1,39 @@
-//! Guard de instancia única (requisito de robustez): una segunda ejecución
-//! de `silb.exe` NO debe robar ni duplicar el atajo global. Sin este
-//! guard, el `RegisterHotKey` de la segunda instancia fallaría a ciegas
-//! (Windows no permite dos registros del mismo atajo), la segunda bandeja
-//! se acumularía en el tray y el usuario vería dos burbujas.
+//! Solo puede haber una copia abierta: una segunda ejecución de `silb.exe`
+//! no debe quitar ni duplicar el atajo global. Sin esto, el `RegisterHotKey`
+//! de la segunda fallaría sin avisar (Windows no deja dos registros del mismo
+//! atajo), la segunda bandeja se acumularía y el usuario vería dos burbujas.
 //!
-//! Mecanismo: mutex nombrado de Windows (`CreateMutexW`). El nombre vive en
-//! el namespace `Local\` (por sesión de usuario): dos sesiones de escritorio
-//! distintas pueden tener su instancia —que es lo correcto para una app de
-//! usuario— pero dentro de la misma sesión solo pasa la primera.
+//! Cómo: un mutex con nombre de Windows (`CreateMutexW`). El nombre vive en
+//! `Local\` (por sesión de usuario): dos sesiones de escritorio distintas
+//! pueden tener su copia —que es lo correcto para una app de usuario— pero
+//! dentro de la misma sesión solo pasa la primera.
 
 use std::sync::OnceLock;
 
-/// Namespace `Local\` = por sesión de usuario iniciada (no global a la
-/// máquina). Identidad fija de la app: cualquier proceso que la conozca ve
-/// el mismo mutex.
+/// `Local\` = por sesión de usuario (no para toda la máquina). Nombre fijo de
+/// la app: cualquier proceso que lo sepa ve el mismo mutex.
 pub const MUTEX_NAME: &str = "Local\\WhisprOpen-SingleInstance";
 
 /// `GetLastError` de un `CreateMutexW` sobre un mutex que ya existía.
 const ERROR_ALREADY_EXISTS: u32 = 183;
 
 /// Handle del mutex, vivo mientras viva el proceso (si se cerrara, otra
-/// instancia podría colarse). Se guarda como `usize` porque un HANDLE
-/// (puntero crudo) no es `Send`/`Sync` y los statics lo exigen.
+/// copia podría colarse). Se guarda como `usize` porque un HANDLE (puntero
+/// crudo) no se puede compartir entre hilos y los statics lo exigen.
 static MUTEX: OnceLock<usize> = OnceLock::new();
 
-/// Intenta adquirir el guard. `true` = esta ejecución es la primera (se
-/// queda con el mutex); `false` = ya hay otra instancia y esta debe salir
-/// sin registrar atajo, bandeja ni burbuja.
+/// Intenta coger el turno. `true` = esta ejecución es la primera (se queda con
+/// el mutex); `false` = ya hay otra copia y esta debe salir sin registrar
+/// atajo, bandeja ni burbuja.
 ///
-/// Si el propio mutex no pudiera crearse (memoria agotada, …) se devuelve
-/// `true`: mejor una app sin guard que una app que no arranca por su
-/// mecanismo anti-duplicado (el atajo ya degrada a stub por su cuenta si
+/// Si el mutex no se pudiera crear (memoria agotada…), se devuelve `true`:
+/// mejor una app sin esta protección que una app que no arranca por su propio
+/// mecanismo anti-duplicados (el atajo ya se queda en modo sin atajo solo si
 /// el registro falla).
 #[cfg(target_os = "windows")]
 pub fn acquire() -> bool {
     if *MUTEX.get_or_init(|| 0) != 0 {
-        // Ya adquirido por este mismo proceso (llamada repetida).
+        // Ya lo tiene este mismo proceso (llamada repetida).
         return true;
     }
     let mut name: Vec<u16> = MUTEX_NAME.encode_utf16().collect();
@@ -56,7 +54,7 @@ pub fn acquire() -> bool {
             return true;
         }
         if winapi::um::errhandlingapi::GetLastError() == ERROR_ALREADY_EXISTS {
-            // La otra instancia es la dueña: soltar nuestro handle duplicado.
+            // La otra copia es la dueña: se suelta nuestro handle de más.
             winapi::um::handleapi::CloseHandle(handle);
             false
         } else {
@@ -66,15 +64,15 @@ pub fn acquire() -> bool {
     }
 }
 
-/// [Linux/macOS] Guard por lock file con `flock` en
-/// `$XDG_RUNTIME_DIR/whispr-open/instance.lock` (`$TMPDIR` como recurso).
-/// flock lo libera el kernel al morir el proceso, así que un crash-kill no
-/// deja el candado pegado. `true` = esta instancia es la dueña.
+/// [Linux/macOS] Protección con un fichero bloqueado (`flock`) en
+/// `$XDG_RUNTIME_DIR/whispr-open/instance.lock` (`$TMPDIR` si no está).
+/// flock lo suelta el sistema al morir el proceso, así que un cierre brusco
+/// no deja el candado pegado. `true` = esta copia es la dueña.
 ///
-/// ponytail: el lock se mantiene con `mem::forget` (vive lo que vive el
-/// proceso, que es exactamente lo que queremos); si algún día hacen falta
-/// "segundas instancias que avisan a la primera", guardar el File en un
-/// OnceLock y usar el socket de notificación.
+/// ponytail: el bloqueo se mantiene con `mem::forget` (dura lo que dura el
+/// proceso, que es justo lo que queremos); si algún día hacen falta
+/// «segundas copias que avisan a la primera», guardar el File en un OnceLock
+/// y usar el socket de aviso.
 #[cfg(not(target_os = "windows"))]
 pub fn acquire() -> bool {
     let base = std::env::var_os("XDG_RUNTIME_DIR")
@@ -92,16 +90,16 @@ pub fn acquire() -> bool {
             }
             Err(_) => false,
         },
-        // Sin poder crear el fichero (FS raro) no se bloquea el arranque.
+        // Si no se puede crear el fichero (disco raro), no se bloquea el arranque.
         Err(_) => true,
     }
 }
 
-/// Aviso nativo para quien lanzó la segunda instancia con un doble clic y
-/// no ve aparecer nada: la app que ya corría sigue en la bandeja.
+/// Aviso del sistema para quien abrió la segunda copia con doble clic y no ve
+/// nada: la app que ya corría sigue en la bandeja.
 #[cfg(target_os = "windows")]
 pub fn notify_second_instance() {
-    // MessageBoxW espera cadenas UTF-16 (wide): se terminan en NUL.
+    // MessageBoxW pide texto UTF-16: se cierra con NUL.
     let mut texto: Vec<u16> =
         "Ya hay otra instancia de Silb abierta.\n\nMira la bandeja del sistema (junto al reloj) para usarla."
             .encode_utf16()
@@ -119,7 +117,7 @@ pub fn notify_second_instance() {
     }
 }
 
-/// Stub fuera de Windows (el aviso real es un `MessageBoxW`).
+/// Versión para otros sistemas (ahí el aviso de verdad es un `MessageBoxW`).
 #[cfg(not(target_os = "windows"))]
 pub fn notify_second_instance() {}
 
@@ -130,15 +128,15 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn la_segunda_adquisicion_ve_el_mutex_ocupado() {
-        // La primera llamada de este proceso de tests adquiere el mutex
-        // (si la app real estuviera abierta en esta sesión mientras se
-        // lanzan los tests, este test lo detectaría como falso positivo:
-        // ciérrala antes de `cargo test`).
+        // La primera llamada de este proceso de tests coge el mutex (si la
+        // app real estuviera abierta en esta sesión mientras se lanzan los
+        // tests, este test lo vería como falso positivo: ciérrala antes de
+        // `cargo test`).
         let first = acquire();
         assert!(first, "la primera adquisición del proceso de tests pasa");
-        // Una segunda creación con el MISMO nombre debe ver
-        // ERROR_ALREADY_EXISTS: es exactamente lo que sentirá la segunda
-        // instancia de la app (mismo mecanismo, mismo mutex).
+        // Una segunda creación con el MISMO nombre tiene que dar
+        // ERROR_ALREADY_EXISTS: es justo lo que verá la segunda copia de la app
+        // (mismo mecanismo, mismo mutex).
         assert!(
             !acquire(),
             "una segunda instancia no debe poder adquirir el guard"
@@ -147,8 +145,8 @@ mod tests {
 
     #[test]
     fn el_nombre_del_mutex_es_local_a_la_sesion() {
-        // Namespace Local\: dos sesiones de usuario distintas no se pisan,
-        // pero dentro de la misma sesión solo pasa una instancia.
+        // `Local\`: dos sesiones de usuario distintas no se pisan, pero dentro
+        // de la misma sesión solo pasa una copia.
         assert!(MUTEX_NAME.starts_with("Local\\"));
         assert!(MUTEX_NAME.contains("WhisprOpen"));
     }

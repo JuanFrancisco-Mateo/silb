@@ -1,40 +1,39 @@
-//! Bandeja del sistema (icono en el tray de Windows) con menú contextual:
+//! Icono de la bandeja del sistema (el área de iconos de Windows) con menú:
 //! «Mostrar/Ocultar ventana» y «Salir».
 //!
-//! Integración con Iced 0.13.1 / winit 0.30.13 — verificada leyendo el código
-//! real de los crates en Cargo.lock (nunca de memoria):
-//! - En Windows, `tray-icon` 0.24 crea una ventana oculta propia
-//!   (`tray_icon_app`, vía CreateWindowExW) en el HILO LLAMANTE y no lanza
-//!   hilos: los mensajes del shell (WM_TRAYICON, WM_COMMAND del menú) llegan
-//!   a esa ventana y los reparte el bucle de eventos win32 de winit, que corre
-//!   en el mismo hilo donde `iced_winit::program::run` crea la app. Por eso la
+//! Cómo encaja con Iced 0.13.1 / winit 0.30.13 — comprobado leyendo el código
+//! de los crates que fija Cargo.lock, no de memoria:
+//! - En Windows, `tray-icon` 0.24 crea su propia ventana oculta
+//!   (`tray_icon_app`, con CreateWindowExW) en el HILO QUE LA LLAMA y no abre
+//!   hilos: los mensajes del sistema (WM_TRAYICON, WM_COMMAND del menú) llegan
+//!   a esa ventana y los reparte el bucle de eventos de winit, que corre en el
+//!   mismo hilo donde `iced_winit::program::run` crea la app. Por eso la
 //!   bandeja se crea en `WhisprApp::new()` (hilo principal, antes de que
-//!   arranque el bucle): los eventos se encolan y se entregan en cuanto el
-//!   bucle corre.
-//! - Los clics de menú se reciben por canal global (`MenuEvent::receiver`,
-//!   canal crossbeam, relleno por muda 0.19 en su wndproc), exactamente el
-//!   mismo patrón que el atajo global (`GlobalHotKeyEvent::receiver`): la app
-//!   los drena en su Poll de 100 ms. No hace falta tocar el bucle de winit ni
-//!   usar `EventLoopProxy`.
-//! - El icono se genera en código (RGBA 32×32, círculo violeta #7C6CFF, el
-//!   mismo acento que la burbuja): `Icon::from_rgba` en Windows convierte
-//!   RGBA→BGRA y monta la AND-mask, sin premultiplicar; no necesita assets.
+//!   arranque el bucle): los mensajes se apuntan y se entregan en cuanto el
+//!   bucle empieza.
+//! - Los clics del menú llegan por un canal general (`MenuEvent::receiver`,
+//!   rellenado por muda 0.19), igual que el atajo global
+//!   (`GlobalHotKeyEvent::receiver`): la app los recoge en su `Poll` de 100 ms.
+//!   No hay que tocar el bucle de winit ni usar `EventLoopProxy`.
+//! - El icono se dibuja en código (RGBA 32×32, círculo violeta #7C6CFF, el
+//!   mismo acento que la burbuja): `Icon::from_rgba` en Windows pasa de RGBA a
+//!   BGRA y monta la máscara; no hacen falta ficheros.
 //!
-//! PORT LINUX (t_7ac526a3, estado «pendiente backend de sistema»):
-//! - `tray-icon` 0.24 soporta Linux SOLO vía AppIndicator/KSNI (docs.rs
-//!   0.24.2: «Linux (gtk Only)»): exige GTK3 + libappindicator/libayatana +
-//!   libxdo instaladas en el sistema Y un host de StatusNotifier (waybar con
-//!   soporte appindicator) que Hyprland no trae de fábrica.
-//! - Factor de fragilidad doble (deps GTK en build + host de tray en
-//!   runtime): decisión honesta del port es degradar a stub en Linux sin
-//!   compilar la dependencia (ver Cargo.toml, dependencia detrás de
-//!   `cfg(not(target_os = "linux"))`), dejar la ventana + atajo + Salir en la
-//!   UI como único camino, y dejar el backend real PENDIENTE. El stub cumple
-//!   el MISMO contrato (constantes, `SystemTray::new()` que devuelve `Err`
-//!   razonable, campos inoperantes) para que `app.rs` (fuera del reparto de
-//!   este port) no tenga que llevar cfg.
-//! - Cuando se quiera activar: instalar gtk3/libappindicator-gtk3/libxdo por
-//!   pacman, reactivar la dependencia y des-cfg las piezas marcadas abajo.
+//! PORT A LINUX (t_7ac526a3, estado «pendiente de la bandeja del sistema»):
+//! - `tray-icon` 0.24 solo soporta Linux con AppIndicator/KSNI (docs.rs
+//!   0.24.2: «Linux (gtk Only)»): pide GTK3 + libappindicator/libayatana +
+//!   libxdo instalados Y un programa que haga de bandeja (waybar con
+//!   appindicator), que Hyprland no trae de fábrica.
+//! - Son dos puntos frágiles (dependencias de GTK al compilar y un programa
+//!   de bandeja al ejecutar): el port decide, con honestidad, quedarse en un
+//!   modo sin bandeja en Linux sin compilar la dependencia (ver Cargo.toml,
+//!   detrás de `cfg(not(target_os = "linux"))`), dejar la ventana + el atajo +
+//!   «Salir» en la interfaz como único camino y dejar la bandeja real
+//!   PENDIENTE. El modo sin bandeja cumple lo mismo (las constantes,
+//!   `SystemTray::new()` que devuelve `Err` con sentido, campos que no hacen
+//!   nada) para que `app.rs` no tenga que llevar cfg.
+//! - Para activarla algún día: instalar gtk3/libappindicator-gtk3/libxdo con
+//!   pacman, volver a poner la dependencia y quitar los cfg de las piezas marcadas abajo.
 
 #[cfg(not(target_os = "linux"))]
 use crossbeam_channel::Receiver;
@@ -43,62 +42,63 @@ use tray_icon::menu::{Menu, MenuEvent, MenuItem, PredefinedMenuItem};
 #[cfg(not(target_os = "linux"))]
 use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
-/// Id estable del ítem «Mostrar/Ocultar ventana» (viaja en `MenuEvent.id`).
+/// Id fijo del ítem «Mostrar/Ocultar ventana» (viaja en `MenuEvent.id`).
 pub const MENU_TOGGLE_ID: &str = "toggle-main";
-/// Id estable del ítem «Salir».
+/// Id fijo del ítem «Salir».
 pub const MENU_QUIT_ID: &str = "quit";
-/// Id del ítem de estado (solo lectura; refleja el arranque de la app).
+/// Id del ítem de estado (solo lectura; enseña cómo va el arranque).
 pub const MENU_STATUS_ID: &str = "status";
 
 /// Texto del ítem según el estado de la ventana principal.
 pub const MENU_LABEL_HIDDEN: &str = "Mostrar ventana";
 pub const MENU_LABEL_VISIBLE: &str = "Ocultar ventana";
-/// Texto del ítem de estado según la fase de arranque (requisito UX
-/// 09/09/2026: el "listo" de la app debe verse también en el tray).
+/// Texto del ítem de estado según la fase de arranque (petición de UX del
+/// 09/09/2026: el «listo» de la app también se tiene que ver en la bandeja).
 pub const MENU_LABEL_LOADING: &str = "Estado: cargando…";
 pub const MENU_LABEL_READY: &str = "Estado: listo";
 pub const MENU_LABEL_READY_NO_LLM: &str = "Estado: listo · corrección IA desactivada";
 pub const MENU_LABEL_STARTUP_ERROR: &str = "Estado: error de arranque";
 
-/// Bandeja del sistema. Se mantiene viva mientras la app viva: si se suelta,
-/// el icono desaparece del tray.
+/// La bandeja. Tiene que vivir lo mismo que la app: si se suelta, el icono
+/// desaparece del área de iconos.
 #[cfg(not(target_os = "linux"))]
 pub struct SystemTray {
-    // El icono no se usa directamente; se conserva para que no se destruya.
+    // El icono no se usa directamente; se guarda para que no se destruya.
     _tray: TrayIcon,
-    /// Ítem de estado (deshabilitado): refleja el arranque (cargando/listo).
+    /// Ítem de estado (desactivado): enseña el arranque (cargando/listo).
     pub status_item: MenuItem,
     /// Ítem «Mostrar/Ocultar ventana», para cambiar su texto según el estado.
     pub toggle_item: MenuItem,
-    /// Canal global de eventos del menú contextual (se drena en la app).
+    /// Canal general de eventos del menú (la app los recoge).
     pub events: Receiver<MenuEvent>,
 }
 
-/// Stub Linux: la bandeja real queda PENDIENTE (AppIndicator + host de
-/// StatusNotifier). Cumple el contrato de Windows (los mismos campos
-/// públicos existen para que `app.rs` compile sin cfg) pero, al no haber
-/// icono, los ítems no van a ninguna parte y el canal de eventos está
-/// siempre vacío (el Poll de app.rs drena 0 mensajes y no cuesta nada).
+/// Modo sin bandeja en Linux: la bandeja de verdad queda PENDIENTE
+/// (AppIndicator + un programa de bandeja). Cumple lo mismo que en Windows
+/// (existen los mismos campos públicos para que `app.rs` compile sin cfg),
+/// pero, al no haber icono, los ítems no van a ningún sitio y el canal de
+/// eventos está siempre vacío (el `Poll` de app.rs no recibe nada y no cuesta
+/// nada).
 ///
-/// `SystemTray::new()` devuelve el stub y NO un `Err`: el arranque en
-/// Hyprland debe declarar «sin bandeja, todo lo demás funciona» con un log,
-/// no mostrar una fila de error permanente en Ajustes (esto ya lo decidía
-/// así el patrón de «degradación avisada en vez de silent failure» del repo).
+/// `SystemTray::new()` devuelve este modo y NO un `Err`: al arrancar en
+/// Hyprland hay que decir «sin bandeja, lo demás funciona» con un log, no
+/// enseñar una fila de error permanente en Ajustes (es la misma idea de
+/// «degradar avisando, no fallar en silencio» que usa el repo).
 #[cfg(target_os = "linux")]
 pub struct SystemTray {
-    /// Ítem de estado (deshabilitado): refleja el arranque (cargando/listo).
-    /// En el stub no existe un ítem real: es un marcador inoperante.
+    /// Ítem de estado (desactivado): enseña el arranque (cargando/listo).
+    /// Aquí no hay ítem de verdad: es un hueco que no hace nada.
     pub status_item: TrayMenuItem,
     /// Ítem «Mostrar/Ocultar ventana», para cambiar su texto según el estado.
     pub toggle_item: TrayMenuItem,
-    /// Canal global de eventos del menú contextual (siempre vacío en stub).
+    /// Canal general de eventos del menú (siempre vacío aquí).
     pub events: crossbeam_channel::Receiver<TrayMenuEvent>,
 }
 
 #[cfg(not(target_os = "linux"))]
 impl SystemTray {
-    /// Crea el icono y el menú. Llámalo desde el hilo principal (el mismo
-    /// donde corre el bucle de winit): ver doc del módulo.
+    /// Crea el icono y el menú. Llámalo desde el hilo principal (el mismo del
+    /// bucle de winit): ver la explicación del módulo.
     pub fn new() -> Result<Self, String> {
         let menu = Menu::new();
         let status_item = MenuItem::with_id(MENU_STATUS_ID, MENU_LABEL_LOADING, false, None);
@@ -139,8 +139,9 @@ impl SystemTray {
     }
 }
 
-/// Stub Linux de `SystemTray::new()`. NO falla (ver doc del módulo) y loguea
-/// el estado real: la pendiente es el backend del sistema, no la UI.
+/// Modo sin bandeja de `SystemTray::new()` en Linux. NO falla (ver el módulo)
+/// y deja en el log cómo está el tema: lo pendiente es la bandeja del sistema,
+/// no la interfaz.
 #[cfg(target_os = "linux")]
 impl SystemTray {
     pub fn new() -> Result<Self, String> {
@@ -158,32 +159,33 @@ impl SystemTray {
     }
 }
 
-/// Alias compilables solo para mantener la API: en el stub los ítems no
-/// existen. `set_text` es un no-op — el Poll de app.rs/set_tray_status lo
-/// llama sin tener cómo saber que el tray es simulado, y la llamada debe
-/// restar coste cero no compile-error.
+/// Nombres que existen solo para que la API siga igual: aquí no hay ítems de
+/// verdad. `set_text` no hace nada — el `Poll` de app.rs/set_tray_status lo
+/// llama sin saber que la bandeja es simulada, y la llamada tiene que costar
+/// cero y compilar.
 #[cfg(target_os = "linux")]
 pub struct TrayMenuItem;
 
 #[cfg(target_os = "linux")]
 impl TrayMenuItem {
-    /// No-op en el stub (conserva la API de `menu::MenuItem::set_text`).
+    /// No hace nada aquí (mantiene la forma de `menu::MenuItem::set_text`).
     pub fn set_text(&self, _text: impl Into<String>) {}
 }
 
-/// Marcador del evento de menú en el stub (el canal real está siempre vacío;
-/// existe para que `tray.events.try_recv()` compile).
+/// Hueco del evento de menú en el modo sin bandeja (el canal real está
+/// siempre vacío; existe para que `tray.events.try_recv()` compile).
 #[cfg(target_os = "linux")]
 pub struct TrayMenuEvent {
     pub id: &'static str,
 }
 
-/// Icono 32×32 RGBA generado en código: círculo violeta #7C6CFF (acento de la
-/// app) con borde suavizado de 1 px, sobre fondo transparente.
+/// Icono 32×32 RGBA dibujado en código: círculo violeta #7C6CFF (el acento de
+/// la app) con el borde suavizado 1 px, sobre fondo transparente.
 ///
-/// En Linux el stub NO lo usa (no hay icono que pintar), pero la función se
-/// mantiene en ambos targets: es pura, testable y es la pieza que reutilizará
-/// el backend real cuando se active (Icon::from_rgba la pinta igual).
+/// En Linux el modo sin bandeja no lo usa (no hay icono que pintar), pero la
+/// función se queda en los dos sistemas: no depende de nada, se puede probar y
+/// es la pieza que reaprovechará la bandeja real cuando se active
+/// (Icon::from_rgba lo pinta igual).
 #[cfg(not(target_os = "linux"))]
 fn circle_icon() -> Result<Icon, String> {
     let rgba = circle_rgba();
@@ -191,14 +193,14 @@ fn circle_icon() -> Result<Icon, String> {
 }
 #[cfg(target_os = "linux")]
 fn circle_icon() -> Result<Vec<u8>, String> {
-    // Sin icono nativo en Linux: devuelto tal cual el buffer (el backend
-    // real futuro lo envolvería en Icon::from_rgba aquí en el único sitio).
+    // En Linux no hay icono del sistema: se devuelve el búfer tal cual (la
+    // bandeja real, cuando llegue, lo envolvería en Icon::from_rgba aquí).
     Ok(circle_rgba())
 }
 
 const SIZE: u32 = 32;
 
-/// Buffer RGBA 32×32 del círculo (función pura, testeable sin plataforma).
+/// Búfer RGBA 32×32 del círculo (función suelta, se puede probar sin plataforma).
 fn circle_rgba() -> Vec<u8> {
     const ACCENT: [u8; 3] = [0x7C, 0x6C, 0xFF]; // theme::ACCENT
 
@@ -211,7 +213,7 @@ fn circle_rgba() -> Vec<u8> {
             let dx = x as f32 - center;
             let dy = y as f32 - center;
             let distance = (dx * dx + dy * dy).sqrt();
-            // Antialiasing: transición lineal de 1 px en el borde del círculo.
+            // Suavizado: el borde del círculo pasa de un color a otro en 1 px.
             let alpha = if distance <= radius - 0.5 {
                 255.0
             } else if distance >= radius + 0.5 {
@@ -238,7 +240,7 @@ mod tests {
         let center_idx = ((16 * SIZE + 16) * 4) as usize;
         assert_eq!(&rgba[center_idx..center_idx + 3], &[0x7C, 0x6C, 0xFF]);
         assert_eq!(rgba[center_idx + 3], 255);
-        // Esquina: transparente (fuera del círculo).
+        // Esquina: transparente (queda fuera del círculo).
         let corner_idx = 0usize;
         assert_eq!(rgba[corner_idx + 3], 0);
     }
@@ -251,20 +253,20 @@ mod tests {
         assert_ne!(MENU_TOGGLE_ID, MENU_QUIT_ID);
         assert_ne!(MENU_STATUS_ID, MENU_TOGGLE_ID);
         assert_ne!(MENU_STATUS_ID, MENU_QUIT_ID);
-        // Los labels de arranque son todos distintos (el tray los conmuta).
+        // Los textos del arranque son todos distintos (la bandeja los cambia).
         assert_ne!(MENU_LABEL_LOADING, MENU_LABEL_READY);
         assert_ne!(MENU_LABEL_READY, MENU_LABEL_READY_NO_LLM);
         assert_ne!(MENU_LABEL_LOADING, MENU_LABEL_READY_NO_LLM);
     }
 
-    // Test solo Windows/macOS: en Linux el stub no usa Icon::from_rgba
-    // (crítica del port: tray-icon no se compila ahí). El test original
-    // «circle_icon_builds» queda cubierto en el target Windows; en Linux
-    // la misma lógica la pinta el stub. Ver docs PORT-LINUX.
+    // Test solo para Windows/macOS: en Linux el modo sin bandeja no usa
+    // Icon::from_rgba (tray-icon no se compila ahí). El test original
+    // «circle_icon_builds» queda cubierto en Windows; en Linux la misma cuenta
+    // la hace el modo sin bandeja. Ver docs PORT-LINUX.
     #[cfg(not(target_os = "linux"))]
     #[test]
     fn circle_icon_builds() {
-        // from_rgba valida las dimensiones contra el buffer (32×32).
+        // from_rgba comprueba el tamaño contra el búfer (32×32).
         let _ = circle_icon().expect("el icono debe generarse sin error");
     }
 }

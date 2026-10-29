@@ -1,45 +1,45 @@
 //! Registro a archivo: `%APPDATA%/whispr-open/whispr-open.log`.
 //!
 //! Con `#![windows_subsystem = "windows"]` la app no abre consola, así que
-//! los `eprintln!` quedan mudos. Este módulo centraliza el log: siempre
-//! escribe a archivo (append, con timestamp) y, cuando la app corre desde
-//! una consola (debug / `cargo run`), también repite a stderr.
+//! los `eprintln!` no se ven. Este módulo se encarga del log: siempre escribe
+//! al archivo (añadiendo al final, con la hora) y, cuando la app corre desde
+//! una consola (debug / `cargo run`), lo repite también por stderr.
 //!
 //! Dos niveles (H2 del QA 24/09/2026):
 //!
-//! - **Normal** ([`write_log`] / `crate::log!`): lo que el usuario o el
-//!   soporte necesitan para entender una sesión.
-//! - **Depuración** ([`write_debug`] / `crate::log_debug!`): trazas de alta
-//!   frecuencia (p. ej. cada evento de ratón del arrastre de la burbuja).
-//!   Están apagadas por defecto y se encienden con `WHISPR_DEBUG=1`; antes
-//!   ensuciaban el 79 % del fichero y hacían ilegible el diagnóstico.
+//! - **Normal** ([`write_log`] / `crate::log!`): lo que el usuario o quien da
+//!   soporte necesita para entender una sesión.
+//! - **Depuración** ([`write_debug`] / `crate::log_debug!`): trazas de mucha
+//!   frecuencia (por ejemplo cada movimiento del ratón al arrastrar la
+//!   burbuja). Van apagadas por defecto y se encienden con `WHISPR_DEBUG=1`;
+//!   antes llenaban el 79 % del fichero y hacían ilegible el diagnóstico.
 //!
-//! Rotación por tamaño: al pasar de [`MAX_LOG_BYTES`] el fichero se
-//! renombra a `.1`, el `.1` anterior pasa a `.2` (tope: [`MAX_LOG_BACKUPS`]
-//! históricos) y se sigue escribiendo en el fichero actual. Todo con `std`,
-//! sin dependencias nuevas.
+//! Rotación por tamaño: al pasar de [`MAX_LOG_BYTES`] el fichero pasa a `.1`,
+//! el `.1` anterior pasa a `.2` (tope: [`MAX_LOG_BACKUPS`] históricos) y se
+//! sigue escribiendo en el fichero actual. Todo con `std`, sin dependencias
+//! nuevas.
 
 use std::fs::OpenOptions;
 use std::io::{IsTerminal, Write};
 use std::path::{Path, PathBuf};
 use std::sync::{Mutex, OnceLock};
 
-/// Serializa los writes: los logs llegan desde hilos distintos
-/// (audio, hotkey, transcribe, UI).
+/// Evita que dos hilos escriban a la vez: los logs llegan de hilos distintos
+/// (audio, atajo, transcripción, interfaz).
 static LOCK: Mutex<()> = Mutex::new(());
 
-/// Tamaño máximo del fichero de log antes de rotar (1 MiB, H2).
+/// Tamaño máximo del fichero antes de rotar (1 MiB, H2).
 pub const MAX_LOG_BYTES: u64 = 1_048_576;
 
-/// Ficheros históricos que se conservan: `.1` (el más reciente) y `.2`.
-/// Con el tope de 1 MiB por fichero, el registro nunca ocupa más de ~3 MiB.
+/// Ficheros viejos que se guardan: `.1` (el más reciente) y `.2`.
+/// Con el tope de 1 MiB por fichero, el log nunca ocupa más de ~3 MiB.
 pub const MAX_LOG_BACKUPS: u8 = 2;
 
 /// Variable de entorno que enciende el log de depuración.
 pub const DEBUG_ENV: &str = "WHISPR_DEBUG";
 
-/// Valor de `WHISPR_DEBUG` memoizado (leer el entorno en cada línea de
-/// arrastre sería un desperdicio: el arrastre emite ~1.000 líneas/s).
+/// Valor de `WHISPR_DEBUG` guardado la primera vez (leer el entorno en cada
+/// línea del arrastre sería un desperdicio: el arrastre suelta ~1.000 líneas/s).
 static DEBUG: OnceLock<bool> = OnceLock::new();
 
 /// Ruta del log: `%APPDATA%/whispr-open/whispr-open.log`.
@@ -47,9 +47,9 @@ pub fn log_path() -> PathBuf {
     log_dir().join("whispr-open.log")
 }
 
-/// Carpeta donde vive el log (y los assets de personalización):
-/// `%APPDATA%/whispr-open/` (Windows) o `~/.local/share/whispr-open/`
-/// (Linux, respeta `$XDG_DATA_HOME`). La UI la usa para «Abrir carpeta».
+/// Carpeta donde vive el log (y los ficheros de personalización):
+/// `%APPDATA%/whispr-open/` en Windows o `~/.local/share/whispr-open/` en
+/// Linux (respeta `$XDG_DATA_HOME`). La interfaz la usa para «Abrir carpeta».
 #[cfg(target_os = "windows")]
 pub fn log_dir() -> PathBuf {
     dirs::data_dir()
@@ -57,13 +57,13 @@ pub fn log_dir() -> PathBuf {
         .join("whispr-open")
 }
 
-/// Linux: log y assets en XDG data.
+/// Linux: el log y los assets van a la carpeta de datos XDG.
 #[cfg(not(target_os = "windows"))]
 pub fn log_dir() -> PathBuf {
     crate::paths::app_data_dir()
 }
 
-/// Macro de log con tag, mismo estilo que `eprintln!`:
+/// Macro de log con etiqueta, igual de fácil que `eprintln!`:
 ///
 /// ```ignore
 /// crate::log!("audio", "error creando stream: {e}");
@@ -76,9 +76,9 @@ macro_rules! log {
     };
 }
 
-/// Macro de log de **depuración** (H2): solo escribe si `WHISPR_DEBUG`
-/// está activada. Para trazas de alta frecuencia (cada evento de ratón,
-/// cada tick del poll…):
+/// Macro de log de **depuración** (H2): solo escribe si `WHISPR_DEBUG` está
+/// activada. Para trazas de mucha frecuencia (cada movimiento del ratón, cada
+/// vuelta del `Poll`…):
 ///
 /// ```ignore
 /// crate::log_debug!("bubble", "drag target=({x},{y})");
@@ -90,13 +90,13 @@ macro_rules! log_debug {
     };
 }
 
-/// ¿Está activado el log de depuración? (`WHISPR_DEBUG=1`, `true`, `on`,
-/// `yes`, `sí`). Cacheado tras la primera consulta.
+/// ¿Está encendido el log de depuración? (`WHISPR_DEBUG=1`, `true`, `on`,
+/// `yes`, `sí`). Se guarda tras la primera consulta.
 pub fn debug_enabled() -> bool {
     *DEBUG.get_or_init(|| debug_flag_from_value(std::env::var(DEBUG_ENV).ok().as_deref()))
 }
 
-/// Parser del valor de `WHISPR_DEBUG` (función pura, testeable).
+/// Interpreta el valor de `WHISPR_DEBUG` (función suelta, se puede probar).
 fn debug_flag_from_value(value: Option<&str>) -> bool {
     match value {
         Some(v) => matches!(
@@ -107,13 +107,13 @@ fn debug_flag_from_value(value: Option<&str>) -> bool {
     }
 }
 
-/// Escribe una línea con timestamp en el archivo de log y, si stderr apunta
-/// a una consola (padre con terminal → modo debug), también a stderr.
-/// Best-effort: un fallo de log nunca debe romper la app.
+/// Escribe una línea con la hora en el archivo de log y, si stderr va a una
+/// consola (hay terminal detrás → modo debug), también por stderr.
+/// Nunca rompe nada: un fallo al escribir el log no puede tumbar la app.
 pub fn write_log(tag: &str, msg: &str) {
     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
-    // El mensaje puede ser multi-línea (p. ej. print_system_info de CUDA):
-    // se indenta el cuerpo para que el log se lea bien.
+    // El mensaje puede traer varias líneas (por ejemplo print_system_info de
+    // CUDA): se mete sangría al cuerpo para que el log se lea bien.
     let body = msg.replace('\n', "\n    ");
     let line = format!("[{ts}] [{tag}] {body}");
 
@@ -125,17 +125,17 @@ pub fn write_log(tag: &str, msg: &str) {
     append_line(&log_path(), &line);
 }
 
-/// Igual que [`write_log`] pero solo si la depuración está activa. El tag
-/// se marca con `[debug]` en el cuerpo para que sea evidente que esa
-/// línea no está en el modo normal.
+/// Igual que [`write_log`], pero solo si la depuración está encendida. La
+/// etiqueta se marca con `[debug]` en el texto para que se vea que esa línea
+/// no sale en el modo normal.
 pub fn write_debug(tag: &str, msg: &str) {
     if debug_enabled() {
         write_log(tag, &format!("[debug] {msg}"));
     }
 }
 
-/// Añade una línea al fichero `path`, rotándolo antes si ya supera
-/// [`MAX_LOG_BYTES`]. Crea el directorio padre si falta.
+/// Añade una línea al fichero `path`, rotándolo antes si ya pasa de
+/// [`MAX_LOG_BYTES`]. Crea la carpeta si falta.
 fn append_line(path: &Path, line: &str) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
@@ -147,25 +147,25 @@ fn append_line(path: &Path, line: &str) {
     }
 }
 
-/// Ruta del histórico `n` (1 = el más reciente): `whispr-open.log.1`.
+/// Ruta del fichero viejo `n` (1 = el más reciente): `whispr-open.log.1`.
 fn backup_path(path: &Path, n: u8) -> PathBuf {
     let mut s = path.as_os_str().to_os_string();
     s.push(format!(".{n}"));
     PathBuf::from(s)
 }
 
-/// Rota `path` si su tamaño alcanza `max_bytes`:
+/// Rota `path` si su tamaño llega a `max_bytes`:
 ///
-/// 1. se borra el histórico más viejo (`.{backups}`),
-/// 2. cada histórico sube un puesto (`.1` → `.2`, …),
-/// 3. el fichero actual pasa a `.1` y se deja libre para seguir escribiendo.
+/// 1. se borra el más viejo (`.{backups}`),
+/// 2. cada uno sube un puesto (`.1` → `.2`, …),
+/// 3. el actual pasa a `.1` y queda libre para seguir escribiendo.
 ///
-/// Devuelve `true` si rotó. Best-effort: si el FS falla, se sigue
-/// escribiendo en el fichero actual (nunca se pierde el log del turno).
+/// Devuelve `true` si rotó. Si algo falla en el disco, se sigue escribiendo en
+/// el fichero actual (nunca se pierde el log del turno).
 fn rotate_if_needed(path: &Path, max_bytes: u64, backups: u8) -> bool {
     let size = match std::fs::metadata(path) {
         Ok(m) => m.len(),
-        // No existe todavía: no hay nada que rotar.
+        // Todavía no existe: no hay nada que rotar.
         Err(_) => return false,
     };
     if size < max_bytes {
@@ -175,7 +175,7 @@ fn rotate_if_needed(path: &Path, max_bytes: u64, backups: u8) -> bool {
         let _ = std::fs::remove_file(path);
         return true;
     }
-    // El histórico más viejo se descarta.
+    // El más viejo se tira.
     let _ = std::fs::remove_file(backup_path(path, backups));
     // Los demás suben un puesto, del más viejo al más nuevo.
     for n in (1..backups).rev() {
@@ -193,7 +193,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 
-    /// Contador para que cada test use su propio directorio temporal.
+    /// Contador para que cada test use su propia carpeta temporal.
     static TEMP_ID: AtomicUsize = AtomicUsize::new(0);
 
     struct TempDir(PathBuf);
@@ -223,7 +223,7 @@ mod tests {
         let p = log_path();
         assert!(p.to_string_lossy().contains("whispr-open"));
         assert!(p.to_string_lossy().contains("whispr-open.log"));
-        // El log vive junto al config, en la carpeta que ofrece «Abrir carpeta».
+        // El log vive junto al config, en la carpeta del botón «Abrir carpeta».
         assert!(p.starts_with(log_dir()));
     }
 
@@ -234,7 +234,7 @@ mod tests {
         assert!(debug_flag_from_value(Some("on")));
         assert!(debug_flag_from_value(Some("yes")));
         assert!(debug_flag_from_value(Some("sí")));
-        // Ausente o cualquier otro valor (incluido «0») → apagado.
+        // Si falta o pone otra cosa (incluido «0») → apagado.
         assert!(!debug_flag_from_value(None));
         assert!(!debug_flag_from_value(Some("")));
         assert!(!debug_flag_from_value(Some("0")));
@@ -257,7 +257,7 @@ mod tests {
     fn rota_al_superar_el_umbral_y_conserva_dos_historicos() {
         let dir = temp_dir("rota");
         let path = dir.0.join("whispr-open.log");
-        // Umbral diminuto: cada línea de ~30 bytes dispara una rotación.
+        // Umbral diminuto: cada línea de ~30 bytes lanza una rotación.
         let max = 16;
         for n in 1..=3 {
             append_line(&path, &format!("linea {n} con relleno suficiente"));
@@ -267,7 +267,7 @@ mod tests {
         let b2 = backup_path(&path, 2);
         assert!(b1.is_file(), "el histórico .1 debe existir");
         assert!(b2.is_file(), "el histórico .2 debe existir");
-        // El histórico .1 es MÁS RECIENTE que el .2.
+        // El .1 es MÁS RECIENTE que el .2.
         let t1 = std::fs::read_to_string(&b1).unwrap();
         let t2 = std::fs::read_to_string(&b2).unwrap();
         assert!(t1.contains("linea 3"), "el .1 lleva la línea más reciente: {t1}");
@@ -277,7 +277,7 @@ mod tests {
         assert!(std::fs::read_to_string(&path)
             .unwrap()
             .contains("linea final"));
-        // Nunca hay más de MAX_LOG_BACKUPS históricos.
+        // Nunca hay más de MAX_LOG_BACKUPS ficheros viejos.
         assert!(!backup_path(&path, 3).exists());
     }
 

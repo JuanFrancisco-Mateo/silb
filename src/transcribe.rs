@@ -1,20 +1,20 @@
-//! Transcripción con whisper-rs (whisper.cpp nativo, modelos GGML).
+//! Transcripción con whisper-rs (whisper.cpp dentro de la app, modelos GGML).
 //!
 //! Los modelos se descargan de HuggingFace (repo ggerganov/whisper.cpp,
-//! archivos ggml-*.bin) a `%APPDATA%/whispr-open/models/` en Windows y
+//! ficheros ggml-*.bin) a `%APPDATA%/whispr-open/models/` en Windows y
 //! `~/.local/share/whispr-open/models/` en Linux (ver `models_dir`).
 //!
-//! GPU/CUDA (port Linux t_7ac526a3): la feature `cuda` de whisper-rs pasa a
-//! ser una feature de Cargo del propio crate, OFF por defecto (ver
-//! Cargo.toml `[features] cuda`). Sin ella, whisper.cpp compila CPU-only y
-//! `TranscribeEngine` es el ÚNICO camino (no hay código de selección de
-//! dispositivo GPU en este módulo: whisper.cpp decide internamente; la
-//! feature solo activa compilar los kernels CUDA y el backend GPU).
-//! En Linux el build default del port es CPU-only — viable en el portátil
-//! de 12 hilos con modelo small (estimación honesta y referencias en
-//! docs/PORT-LINUX/AUDIO-RUNTIME.md; la medición real la deja el usuario).
-//! El código no cambia entre ambas: los mismos `FullParams` aplican con y
-//! sin CUDA (whisper.cpp hace la reserva GPU en el contexto).
+//! GPU/CUDA (port a Linux t_7ac526a3): la opción `cuda` de whisper-rs pasa a
+//! ser una opción de Cargo del crate, apagada por defecto (ver Cargo.toml
+//! `[features] cuda`). Sin ella, whisper.cpp se compila solo para CPU y
+//! `TranscribeEngine` es el ÚNICO camino (aquí no hay código que elija GPU:
+//! decide whisper.cpp por dentro; la opción solo hace que se compilen las
+//! piezas de CUDA y el soporte de GPU).
+//! En Linux lo que se compila por defecto es solo CPU — sirve en el portátil
+//! de 12 hilos con el modelo small (una estimación honesta, con referencias
+//! en docs/PORT-LINUX/AUDIO-RUNTIME.md; la medición real la hará el usuario).
+//! El código es el mismo con y sin CUDA: los mismos `FullParams` valen en los
+//! dos casos (whisper.cpp reserva la memoria de la GPU al crear el contexto).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -27,9 +27,9 @@ pub const BEAM_SIZE: i32 = 5;
 pub const VAD_MODEL_FILE: &str = "ggml-vad-q8.bin";
 const PROMPT_MAX_CHARS: usize = 256;
 
-/// Modelo de voz whisper disponible (tiny/base/small): trade-off
-/// velocidad ↔ calidad de transcripción. Tiny/Base cometen errores
-/// fonéticos en español («buscar»→«boscar»); Small es el mínimo fiable.
+/// Modelo de voz de whisper (tiny/base/small): se cambia velocidad por
+/// calidad. Tiny y Base se equivocan con sonidos del español («buscar» →
+/// «boscar»); Small es el mínimo que va bien.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Model {
     Tiny,
@@ -38,7 +38,7 @@ pub enum Model {
 }
 
 impl Model {
-    /// Identificador persistido en config.json (`"tiny"|"base"|"small"`).
+    /// Nombre que se guarda en config.json (`"tiny"|"base"|"small"`).
     pub fn id(&self) -> &'static str {
         match self {
             Model::Tiny => "tiny",
@@ -46,7 +46,7 @@ impl Model {
             Model::Small => "small",
         }
     }
-    /// Etiqueta en español para el selector de la UI.
+    /// Texto en español para el selector de la interfaz.
     pub fn label(&self) -> &'static str {
         match self {
             Model::Tiny => "Tiny (rápido)",
@@ -54,7 +54,7 @@ impl Model {
             Model::Small => "Small (preciso)",
         }
     }
-    /// Nombre del fichero GGML en disco (`ggml-*.bin`).
+    /// Nombre del fichero GGML en el disco (`ggml-*.bin`).
     pub fn file_name(&self) -> &'static str {
         match self {
             Model::Tiny => "ggml-tiny.bin",
@@ -62,7 +62,7 @@ impl Model {
             Model::Small => "ggml-small.bin",
         }
     }
-    /// Tamaño aproximado de descarga, en MB (para los avisos de la UI).
+    /// Peso aproximado de la descarga, en MB (para los avisos de la interfaz).
     pub fn approx_mb(&self) -> u32 {
         match self {
             Model::Tiny => 75,
@@ -70,11 +70,11 @@ impl Model {
             Model::Small => 466,
         }
     }
-    /// Los tres modelos ofrecidos en el selector.
+    /// Los tres modelos que ofrece el selector.
     pub fn all() -> [Model; 3] {
         [Model::Tiny, Model::Base, Model::Small]
     }
-    /// URL de descarga (HuggingFace, repo oficial de whisper.cpp).
+    /// De dónde se descarga (HuggingFace, el repo oficial de whisper.cpp).
     pub fn download_url(&self) -> String {
         format!(
             "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{}",
@@ -89,9 +89,9 @@ impl std::fmt::Display for Model {
     }
 }
 
-/// Carpeta de modelos bajo `%APPDATA%\whispr-open\models` (Windows) o
-/// `~/.local/share/whispr-open/models` (Linux, respeta `$XDG_DATA_HOME`);
-/// allí instalan los GGML descargados.
+/// Carpeta de modelos dentro de `%APPDATA%\whispr-open\models` (Windows) o
+/// `~/.local/share/whispr-open/models` (Linux, respeta `$XDG_DATA_HOME`); ahí
+/// se dejan los GGML descargados.
 #[cfg(target_os = "windows")]
 pub fn models_dir() -> PathBuf {
     dirs::data_dir()
@@ -100,7 +100,7 @@ pub fn models_dir() -> PathBuf {
         .join("models")
 }
 
-/// Linux: modelos en XDG data (ficheros grandes, no editables a mano).
+/// Linux: los modelos van a la carpeta de datos XDG (son grandes y no se editan a mano).
 #[cfg(not(target_os = "windows"))]
 pub fn models_dir() -> PathBuf {
     crate::paths::app_data_dir().join("models")
@@ -109,28 +109,28 @@ pub fn models_dir() -> PathBuf {
 pub fn model_path(model: Model) -> PathBuf {
     models_dir().join(model.file_name())
 }
-/// ¿El fichero del modelo existe ya en disco? (Existir ≠ ser válido: para
-/// eso está `model_file_is_valid`.)
+/// ¿El fichero del modelo ya está en el disco? (Que exista no es que valga:
+/// para eso está `model_file_is_valid`.)
 pub fn model_exists(model: Model) -> bool {
     model_path(model).is_file()
 }
 
-/// Magic de los ficheros GGML de whisper.cpp tal como queda EN DISCO: el
-/// u32 `0x67676d6c` escrito en little-endian se lee como los bytes
-/// `6c 6d 67 67` («lmgg»). Verificado contra un ggml-tiny.bin real
+/// Los primeros bytes de un GGML de whisper.cpp tal como quedan EN DISCO: el
+/// número `0x67676d6c` escrito en little-endian se lee como los bytes
+/// `6c 6d 67 67` («lmgg»). Comprobado con un ggml-tiny.bin de verdad
 /// descargado de ggerganov/whisper.cpp.
 const GGML_MAGIC: [u8; 4] = [0x6c, 0x6d, 0x67, 0x67];
 
-/// Tamaño mínimo plausible de un modelo whisper (todos ≥ 75 MB). Un fichero
-/// más pequeño con magic válido solo puede ser un truncado a medias.
+/// Tamaño mínimo que puede tener un modelo de whisper (todos pasan de 75 MB).
+/// Un fichero más pequeño con los bytes buenos solo puede estar a medias.
 const MIN_MODEL_BYTES: u64 = 1024 * 1024;
 
-/// Un GGML está sano si existe, supera el tamaño mínimo y empieza con el
-/// magic de whisper.cpp. Es la línea de defensa contra ficheros truncados
-/// (copias manuales a medias, corrupción de disco, descargas de versiones
-/// antiguas de la app que no usaban `.part`): sin esto, un modelo corrupto
-/// en el destino hace que «Reintentar» falle una y otra vez contra el mismo
-/// fichero sin re-descargarlo jamás.
+/// Un GGML está bien si existe, pasa del tamaño mínimo y empieza con los
+/// bytes de whisper.cpp. Es la defensa contra ficheros a medias (copias
+/// manuales cortadas, disco que falla, descargas de versiones viejas de la app
+/// que no usaban `.part`): sin esto, un modelo roto en su sitio hace que
+/// «Reintentar» falle una y otra vez contra el mismo fichero sin volver a
+/// descargarlo nunca.
 pub fn model_file_is_valid(path: &Path) -> bool {
     use std::io::Read;
     let Ok(meta) = std::fs::metadata(path) else {
@@ -149,22 +149,22 @@ pub fn model_file_is_valid(path: &Path) -> bool {
     }
 }
 
-/// Qué hacer con un posible modelo ya en disco antes de descargar nada.
-/// Separado como función pura para que la decisión (y su test) no dependa
-/// de la red: `ensure_model` la aplica tal cual.
+/// Qué hacer con un posible modelo que ya está en el disco antes de descargar
+/// nada. Va aparte, sin red, para poder probar la decisión: `ensure_model` la
+/// aplica tal cual.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExistingModelPlan {
-    /// Hay fichero y es un GGML sano: ni tocarlo ni descargar.
+    /// Hay fichero y está bien: ni tocarlo ni descargar.
     UseIt,
-    /// Hay fichero pero está dañado/truncado: borrar y re-descargar.
+    /// Hay fichero pero está roto o a medias: borrarlo y descargar otra vez.
     DeleteAndRedownload,
     /// No hay fichero: descarga normal.
     DownloadFresh,
 }
 
-/// Decisión pura (sin red ni disco) sobre un posible modelo ya presente:
-/// reutilizarlo, borrarlo y re-descargar, o descargar de cero. `ensure_model`
-/// la aplica tal cual; separarla permite testear la decisión sin red.
+/// Decisión (sin red ni disco) sobre un posible modelo que ya está: usarlo,
+/// borrarlo y volver a descargar, o descargar desde cero. `ensure_model` la
+/// aplica tal cual; tenerla aparte permite probarla sin red.
 pub fn existing_model_plan(exists: bool, valid: bool) -> ExistingModelPlan {
     match (exists, valid) {
         (true, true) => ExistingModelPlan::UseIt,
@@ -173,9 +173,9 @@ pub fn existing_model_plan(exists: bool, valid: bool) -> ExistingModelPlan {
     }
 }
 
-/// Borra los `.part` de descargas abortadas (la nuestra si falló a medias,
-/// o las de ejecuciones anteriores que murieron antes de limpiar). Un
-/// fallo de limpieza no es error: se intenta y sigue.
+/// Borra los `.part` de descargas cortadas (la nuestra si falló a medias, o
+/// las de ejecuciones anteriores que murieron sin limpiar). Si la limpieza
+/// falla no es un error: se intenta y se sigue.
 pub fn sweep_part_files(dir: &Path) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
@@ -193,9 +193,9 @@ pub fn sweep_part_files(dir: &Path) {
     }
 }
 
-/// Clasifica un error crudo de descarga (ureq / std::fs) en una causa corta
-/// y accionable para la UI. Requisito de robustez: nada de cadenas técnicas
-/// de la cadena de crates en la cara del usuario; el detalle queda en el log.
+/// Clasifica un error de descarga (ureq o std::fs) en una causa corta y útil
+/// para la interfaz. Nada de cadenas técnicas de las librerías en la cara del
+/// usuario; el detalle se queda en el log.
 pub fn friendly_download_error(raw: &str) -> &'static str {
     let r = raw.to_ascii_lowercase();
     if r.contains("dns")
@@ -218,32 +218,32 @@ pub fn friendly_download_error(raw: &str) -> &'static str {
         "error de red o de disco durante la descarga"
     }
 }
-/// Ruta del modelo de VAD (detección de actividad de voz) si se descargó.
+/// Ruta del modelo de VAD (detectar cuándo hay voz) si se descargó.
 pub fn vad_model_path() -> PathBuf {
     models_dir().join(VAD_MODEL_FILE)
 }
-/// ¿El fichero de VAD indicado existe? (La VAD es opcional: si falta,
+/// ¿Existe el fichero de VAD indicado? (La VAD es opcional: si falta,
 /// whisper transcribe sin ella.)
 pub fn vad_available_for(model_file: &Path) -> bool {
     model_file.is_file()
 }
-/// ¿Hay VAD disponible en la carpeta de modelos?
+/// ¿Hay VAD en la carpeta de modelos?
 pub fn vad_available() -> bool {
     vad_available_for(&vad_model_path())
 }
 
 static DOWNLOAD_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
-/// Garantiza que el modelo está en disco y ES un GGML sano, descargándolo
-/// si falta (o re-descargándolo si el fichero existente está truncado).
+/// Se asegura de que el modelo está en el disco y de que ES un GGML bueno,
+/// descargándolo si falta (o bajándolo otra vez si el que hay está a medias).
 ///
-/// Recibe `on_progress(downloaded, total)` con los bytes descargados y el
-/// total (0 si el servidor no lo declara) para la barra de progreso.
-/// Devuelve la ruta del fichero listo para cargar.
+/// Llama a `on_progress(downloaded, total)` con los bytes bajados y el total
+/// (0 si el servidor no lo dice) para la barra de progreso. Devuelve la ruta
+/// del fichero listo para cargar.
 ///
-/// Falla con un mensaje en español cuando: no hay red, no se puede escribir
-/// en la carpeta (permisos/disco), o el servidor no devuelve un GGML
-/// válido. Nunca deja un `.part` a medias tras un fallo.
+/// Falla con un mensaje en español cuando no hay red, no se puede escribir en
+/// la carpeta (permisos o disco) o el servidor no devuelve un GGML válido.
+/// Nunca deja un `.part` a medias después de un fallo.
 pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<PathBuf, String> {
     let lock = DOWNLOAD_LOCK.get_or_init(|| Mutex::new(()));
     let _guard = lock
@@ -251,13 +251,13 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
         .map_err(|e| format!("bloqueo de descarga envenenado: {e}"))?;
     let path = model_path(model);
 
-    // Limpieza de descargas a medias de ejecuciones anteriores (requisito:
-    // sin ficheros temporales huérfanos tras un fallo o cierre a medias).
+    // Limpia descargas a medias de ejecuciones anteriores (no pueden quedar
+    // ficheros temporales sueltos tras un fallo o un cierre brusco).
     sweep_part_files(&models_dir());
 
-    // Decisión sobre un posible fichero ya en disco (validado, no solo
-    // "existe"): un GGML truncado debe re-descargarse, no bloquear el
-    // arranque para siempre.
+    // Decisión sobre un posible fichero que ya está (comprobado, no solo
+    // «existe»): un GGML a medias hay que volver a descargarlo, no quedarse
+    // bloqueado en el arranque para siempre.
     let plan = existing_model_plan(path.is_file(), model_file_is_valid(&path));
     match plan {
         ExistingModelPlan::UseIt => return Ok(path),
@@ -276,12 +276,12 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
 
     std::fs::create_dir_all(models_dir())
         .map_err(|e| format!("no se pudo crear models dir: {e}"))?;
-    // Sin timeout GLOBAL: en ureq 2.x el `timeout()` de la petición abarca la
-    // lectura del cuerpo, así que en una línea lenta (cientos de MB a pocos
-    // MB/s) la descarga se cortaba a los 2 min, el `.part` se borraba y cada
-    // reintento volvía a empezar de cero. Con timeout de conexión y de lectura
-    // por bloque, una descarga lenta pero viva termina; una conexión colgada
-    // sigue cortando.
+    // Sin límite GLOBAL de tiempo: en ureq 2.x el `timeout()` de la petición
+    // también cuenta la lectura del cuerpo, así que en una línea lenta
+    // (cientos de MB a pocos MB/s) la descarga se cortaba a los 2 min, se
+    // borraba el `.part` y cada intento volvía a empezar. Con límite al
+    // conectar y al leer cada trozo, una descarga lenta pero viva termina; una
+    // conexión colgada se sigue cortando.
     let agent = ureq::AgentBuilder::new()
         .timeout_connect(Duration::from_secs(15))
         .timeout_read(Duration::from_secs(60))
@@ -295,9 +295,9 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
         .and_then(|v| v.parse::<u64>().ok())
         .unwrap_or(0);
     let tmp = path.with_file_name(format!("{}.{}.part", model.file_name(), std::process::id()));
-    // Toda la parte fallible va en una closure para que UN solo punto de
-    // limpieza quite el `.part` en cualquier error (read, write, sync o
-    // rename): nunca queda un temporal a medias tras un fallo.
+    // Toda la parte que puede fallar va dentro de un bloque para que UN solo
+    // sitio de limpieza quite el `.part` con cualquier error (leer, escribir,
+    // sincronizar o renombrar): nunca queda un temporal a medias tras un fallo.
     let outcome = (|| -> Result<(), String> {
         let mut file =
             std::fs::File::create(&tmp).map_err(|e| format!("no se pudo crear {tmp:?}: {e}"))?;
@@ -305,11 +305,12 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
         let mut buf = [0u8; 64 * 1024];
         let mut reader = resp.into_reader();
         use std::io::{Read, Write};
-        // El canal del arranque se drena a 10 Hz (un evento por tick), así que
-        // emitir progreso por cada bloque de 64 KB encolaba ~7.400 eventos en
-        // una descarga rápida: la UI se quedaba clavada en «5 / 465 MB · quedan
-        // más de 1 h» minutos después de haber terminado. Se emite como mucho
-        // un evento por 1 % (o por MB cuando el servidor no declara tamaño).
+        // El canal del arranque se lee 10 veces por segundo (un evento por
+        // vuelta), así que avisar del progreso por cada trozo de 64 KB metía
+        // ~7.400 eventos en una descarga rápida: la interfaz se quedaba clavada
+        // en «5 / 465 MB · quedan más de 1 h» minutos después de haber
+        // terminado. Se avisa como mucho una vez por 1 % (o por MB cuando el
+        // servidor no dice el tamaño).
         let step = if total > 0 { (total / 100).max(1) } else { 1 << 20 };
         let mut last_emit = 0u64;
         loop {
@@ -330,22 +331,22 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
         on_progress(downloaded, total);
         file.sync_all()
             .map_err(|e| format!("error sincronizando modelo: {e}"))?;
-        // Cerrar el handle ANTES del rename: en Windows mover un fichero
-        // abierto puede fallar según el share mode del handle.
+        // Cerrar el fichero ANTES de renombrarlo: en Windows mover un fichero
+        // abierto puede fallar según cómo se abrió.
         drop(file);
         std::fs::rename(&tmp, &path).map_err(|e| format!("no se pudo finalizar la descarga: {e}"))?;
         Ok(())
     })();
     if let Err(e) = outcome {
-        // Requisito de robustez: un fallo a mitad de descarga no deja
-        // basura en disco. El `.part` se quita siempre (best-effort).
+        // Un fallo a mitad de descarga no deja basura en el disco: el `.part`
+        // se quita siempre (si se puede).
         let _ = std::fs::remove_file(&tmp);
         return Err(e);
     }
 
-    // El servidor respondió 200 pero con contenido que no es un GGML (p. ej.
-    // una página HTML de error de un proxy): mejor detectarlo aquí y
-    // borrarlo que dejar un modelo imposible de cargar.
+    // El servidor respondió 200 pero lo que llegó no es un GGML (por ejemplo
+    // una página HTML de error de un proxy): mejor verlo aquí y borrarlo que
+    // dejar un modelo que no se va a poder cargar.
     if !model_file_is_valid(&path) {
         crate::log!(
             "transcribe",
@@ -364,10 +365,10 @@ pub fn ensure_model(model: Model, on_progress: impl Fn(u64, u64)) -> Result<Path
 /// `initial_prompt` de whisper a partir del diccionario personal (`entries`,
 /// usando `from`: la forma en que whisper los transcribe mal).
 ///
-/// `None` si no queda ningún término usable. Se deduplica y se corta en
-/// `PROMPT_MAX_CHARS`: el prompt sesga la decodificación hacia esos términos
-/// (nombres propios, jerga), pero uno largo ralentiza cada transcripción y
-/// puede dominar la decodificación del turno.
+/// `None` si no queda ninguna palabra que sirva. Se quitan repetidos y se
+/// corta en `PROMPT_MAX_CHARS`: el prompt empuja la transcripción hacia esas
+/// palabras (nombres propios, jerga), pero uno largo hace más lenta cada
+/// transcripción y puede mandar demasiado en la del turno.
 pub fn build_initial_prompt(
     entries: &[crate::domain::dictionary::DictionaryEntry],
 ) -> Option<String> {
@@ -390,8 +391,8 @@ pub fn build_initial_prompt(
     (!out.is_empty()).then_some(out)
 }
 
-/// Volcado de la decisión de parámetros de una transcripción (para el log:
-/// saber QUÉ se le pidió a whisper cuando algo suena raro).
+/// Vuelca los parámetros con los que se transcribió (para el log: saber QUÉ
+/// se le pidió a whisper cuando algo suena raro).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParamsDecision {
     pub strategy: &'static str,
@@ -404,9 +405,9 @@ pub struct ParamsDecision {
     pub vad: bool,
 }
 
-/// Parámetros de inferencia ajustables desde Ajustes avanzados: idioma
-/// (`None` = autodetección), beam size (calidad ↔ velocidad) y nº de
-/// hilos del decoder.
+/// Ajustes de la transcripción que se cambian en Ajustes avanzados: idioma
+/// (`None` = que lo detecte solo), beam size (calidad ↔ velocidad) y número de
+/// hilos del decodificador.
 #[derive(Debug, Clone)]
 pub struct InferenceParams {
     pub language: Option<String>,
@@ -423,14 +424,14 @@ impl Default for InferenceParams {
     }
 }
 
-/// Documentación de hilos recomendados (port Linux, t_7ac526a3): el default
-/// histórico es 4, razonable en un Ryzen 5 5650U (6C/12T) donde el resto de
-/// la app (UI iced, cpal) también corre; la velocidad de transcripción con
-/// small CPU-only se gana más subiendo n_threads a 6 que a 12 (el decoder
-/// de whisper.cpp escala de forma sublinear y el sistema lo comparte con la
-/// UI). El valor lo ajusta el usuario en Ajustes → Avanzado; este comentario
-/// documenta la recomendación, NO un benchmark medido (ninguno se ha
-/// ejecutado en el port: measurement pending, ver AUDIO-RUNTIME.md).
+/// Cuántos hilos conviene usar (port a Linux, t_7ac526a3): el valor de
+/// siempre es 4, razonable en un Ryzen 5 5650U (6 núcleos/12 hilos) donde
+/// también corren la interfaz y cpal; con el modelo small solo en CPU se gana
+/// más subiendo a 6 hilos que a 12 (el decodificador de whisper.cpp no escala
+/// en proporción y el sistema lo comparte con la interfaz). El valor lo pone
+/// el usuario en Ajustes → Avanzado; este comentario deja la recomendación,
+/// NO una medición (no se ha hecho ninguna en el port: measurement pending,
+/// ver AUDIO-RUNTIME.md).
 
 fn build_params<'a>(
     inference: &'a InferenceParams,
@@ -470,14 +471,14 @@ fn build_params<'a>(
     (params, decision)
 }
 
-/// Motor de transcripción: un contexto whisper.cpp protegido con un mutex
-/// (una transcripción a la vez; el hilo de UI nunca lo toca directamente).
+/// Motor de transcripción: un contexto de whisper.cpp protegido con un mutex
+/// (una transcripción cada vez; el hilo de la interfaz nunca lo toca).
 pub struct WhisperEngine {
     inner: Mutex<WhisperContext>,
 }
 impl WhisperEngine {
-    /// Carga el contexto del modelo desde disco. Falla si el fichero no
-    /// existe o no es un GGML válido (el mensaje nombra el modelo).
+    /// Carga el modelo del disco. Falla si el fichero no existe o no es un
+    /// GGML válido (el mensaje dice qué modelo).
     pub fn load(model: Model) -> Result<Self, String> {
         crate::log!("transcribe", "{}", whisper_rs::print_system_info());
         let ctx = WhisperContext::new_with_params(
@@ -489,11 +490,10 @@ impl WhisperEngine {
             inner: Mutex::new(ctx),
         })
     }
-    /// Transcribe `samples` (f32 mono 16 kHz) a texto plano. Recibe los
-    /// parámetros de inferencia y un `initial_prompt` opcional (los
-    /// términos del diccionario, para sesgar el reconocedor). Devuelve los
-    /// segmentos unidos por espacios. Falla si whisper no puede procesar
-    /// el audio (mensaje en español).
+    /// Pasa `samples` (mono a 16 kHz) a texto plano. Recibe los ajustes y un
+    /// `initial_prompt` opcional (las palabras del diccionario, para empujar al
+    /// reconocedor hacia ellas). Devuelve los trozos unidos con espacios. Falla
+    /// si whisper no puede con el audio (mensaje en español).
     pub fn transcribe(
         &self,
         samples: &[f32],
@@ -525,13 +525,13 @@ impl WhisperEngine {
     }
 }
 
-/// Carga el contexto del modelo en el cache SIN transcribir (prerroll de
-/// arranque, requisito UX 09/09/2026). La primera pulsación del atajo deja
-/// de pagar la carga del contexto (visible como 1-2 s de "Transcribiendo…"
-/// con el modelo aún en disco): con esto la carga ocurre en background
-/// mientras el usuario ve la pantalla de carga. Es idempotente y comparte
-/// el mismo `ENGINE_CACHE` que `transcribe_cached` (cambiar de modelo aquí
-/// o en transcripción reemplaza el contexto de forma segura).
+/// Carga el modelo en la caché SIN transcribir (adelanto al arrancar,
+/// petición de UX del 09/09/2026). Así la primera pulsación del atajo ya no
+/// paga la carga (esos 1-2 s de «Transcribiendo…» con el modelo todavía en
+/// disco): la carga ocurre mientras el usuario ve la pantalla de arranque.
+/// Se puede llamar varias veces sin problema y usa la misma `ENGINE_CACHE`
+/// que `transcribe_cached` (cambiar de modelo aquí o al transcribir sustituye
+/// el contexto sin riesgo).
 pub fn preload(model: Model) -> Result<(), String> {
     let cache = ENGINE_CACHE.get_or_init(|| Mutex::new(None));
     let mut slot = cache.lock().map_err(|e| e.to_string())?;
@@ -553,9 +553,9 @@ pub fn preload(model: Model) -> Result<(), String> {
 
 static ENGINE_CACHE: OnceLock<Mutex<Option<(Model, Arc<WhisperEngine>)>>> = OnceLock::new();
 
-/// Transcribe reutilizando el contexto cargado para el modelo activo. Solo se
-/// conserva un modelo para limitar memoria; cambiar de modelo reemplaza el
-/// contexto anterior de forma segura cuando no hay otro turno en curso.
+/// Transcribe reutilizando el contexto ya cargado del modelo activo. Solo se
+/// guarda un modelo para no gastar memoria; cambiar de modelo sustituye el
+/// contexto anterior sin riesgo cuando no hay otro turno en marcha.
 pub fn transcribe_cached(
     samples: &[f32],
     model: Model,
@@ -572,10 +572,9 @@ pub fn transcribe_cached(
         {
             *slot = Some((model, Arc::new(WhisperEngine::load(model)?)));
         }
-        // Sin expect() (requisito de robustez): el invariante «acabamos de
-        // poner Some» se comprueba con un Result, no con un pánico. Si un
-        // refactor futuro lo rompe, el turno falla con un error visible y
-        // el dictado siguiente sigue funcionando.
+        // Sin expect(): el «acabamos de poner Some» se comprueba con un
+        // Result, no con un pánico. Si un cambio futuro lo rompe, el turno
+        // falla con un error visible y el dictado siguiente sigue funcionando.
         slot.as_ref()
             .map(|(_, engine)| engine.clone())
             .ok_or_else(|| "cache de contexto vacío tras inicializarlo".to_string())?
@@ -622,31 +621,31 @@ mod tests {
     }
     #[test]
     fn ggml_sano_truncado_y_basura_se_distinguen() {
-        // Requisito de robustez: un GGML a medias en el destino no puede
-        // dejar a la app en un bucle de «Reintentar» que falla siempre.
+        // Un GGML a medias en el destino no puede dejar la app en un bucle de
+        // «Reintentar» que falla siempre.
         let dir = std::env::temp_dir().join(format!("whispr-valid-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
 
-        // Sano: magic correcto + tamaño por encima del mínimo.
+        // Bien: los bytes buenos y más del tamaño mínimo.
         let good = dir.join("good.bin");
         let mut content = vec![0u8; MIN_MODEL_BYTES as usize];
         content[0..4].copy_from_slice(&GGML_MAGIC);
         std::fs::write(&good, &content).unwrap();
         assert!(model_file_is_valid(&good));
 
-        // Truncado: magic correcto pero tamaño mínimo no alcanzado.
+        // A medias: los bytes buenos pero no llega al tamaño mínimo.
         let tiny = dir.join("tiny.bin");
         std::fs::write(&tiny, &GGML_MAGIC).unwrap();
         assert!(!model_file_is_valid(&tiny));
 
-        // Basura: bytes cualesquiera (una página HTML de error de proxy).
+        // Basura: bytes cualesquiera (una página HTML de error de un proxy).
         let junk = dir.join("junk.bin");
         let mut junk_bytes = vec![b'x'; MIN_MODEL_BYTES as usize];
         junk_bytes[0..4].copy_from_slice(b"<htm");
         std::fs::write(&junk, &junk_bytes).unwrap();
         assert!(!model_file_is_valid(&junk));
 
-        // Inexistente.
+        // No existe.
         assert!(!model_file_is_valid(&dir.join("no-hay.bin")));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -673,7 +672,7 @@ mod tests {
         assert!(!dir.join("ggml-tiny.bin.1234.part").exists());
         assert!(!dir.join("ggml-small.bin.999.part").exists());
         assert!(dir.join("ggml-base.bin").exists(), "el modelo no se toca");
-        // Idempotente y sin error si el directorio no existe.
+        // Si la carpeta no existe, no pasa nada: se llama otra vez y ya está.
         sweep_part_files(&dir.join("no-existe"));
         let _ = std::fs::remove_dir_all(&dir);
     }
