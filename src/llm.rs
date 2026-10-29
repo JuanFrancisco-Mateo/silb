@@ -58,7 +58,7 @@ impl Default for LlmConfig {
 /// quitarlo rompería el proveedor en la nube.
 pub fn api_base(base_url: &str) -> String {
     let mut base = base_url.trim().trim_end_matches('/');
-    // Colapsa `/v1/v1`, `/v1/v1/v1`… a un único `/v1`.
+    // Junta `/v1/v1`, `/v1/v1/v1`… en un solo `/v1`.
     while let Some(rest) = base.strip_suffix("/v1") {
         let rest = rest.trim_end_matches('/');
         if !rest.ends_with("/v1") {
@@ -69,27 +69,29 @@ pub fn api_base(base_url: &str) -> String {
     base.to_string()
 }
 
-/// URL completa de un endpoint OpenAI-compatible (`models`,
-/// `chat/completions`…) construida sobre `api_base`. `path` puede venir
-/// con barra inicial o sin ella.
+/// Dirección completa de una ruta OpenAI-compatible (`models`,
+/// `chat/completions`…) montada sobre `api_base`. `path` puede venir con barra
+/// delante o sin ella.
 pub fn api_url(base_url: &str, path: &str) -> String {
     format!("{}/{}", api_base(base_url), path.trim_start_matches('/'))
 }
 
-/// Nombre del ÚNICO ejecutable que la app acepta como server LLM: `llama-server.exe`
-/// en Windows y `llama-server` (binario de llama.cpp) en el resto.
+/// Nombre del ÚNICO ejecutable que la app acepta como servidor:
+/// `llama-server.exe` en Windows y `llama-server` (el binario de llama.cpp) en
+/// el resto.
 #[cfg(target_os = "windows")]
 pub const SERVER_EXE_NAME: &str = "llama-server.exe";
 #[cfg(not(target_os = "windows"))]
 pub const SERVER_EXE_NAME: &str = "llama-server";
 
-/// Release de llama.cpp del que la app descarga el server bajo demanda
-/// (sprint final: nada viene de serie). Se fija aquí para que la UI y los
-/// tests compartan la misma fuente (la descarga usa ureq como Whisper).
+/// Versión de llama.cpp de la que la app descarga el servidor cuando hace
+/// falta (sprint final: no viene nada puesto). Se fija aquí para que la interfaz
+/// y las pruebas usen la misma fuente (la descarga usa ureq, como la de
+/// Whisper).
 pub const LLAMA_RELEASE_URL: &str =
     "https://github.com/ggml-org/llama.cpp/releases/latest/download/llama-server.exe";
 
-/// Modelo IA pequeño para corrección local (rápido, <1 GB).
+/// Modelo de IA pequeño para corregir en local (rápido, menos de 1 GB).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct LocalLlmModel {
     pub id: &'static str,
@@ -99,8 +101,8 @@ pub struct LocalLlmModel {
     pub url: &'static str,
 }
 
-/// Catálogo de modelos de corrección (GGUF Q4_K_M, ultra-rápidos).
-/// Default: Qwen2.5-0.5B (491 MB). Nada se descarga sin clic explícito.
+/// Lista de modelos de corrección (GGUF Q4_K_M, muy rápidos).
+/// De serie: Qwen2.5-0.5B (491 MB). No se descarga nada sin pulsar.
 pub const SMALL_LLM_MODELS: &[LocalLlmModel] = &[
     LocalLlmModel {
         id: "qwen2.5-0.5b",
@@ -125,7 +127,7 @@ pub const SMALL_LLM_MODELS: &[LocalLlmModel] = &[
     },
 ];
 
-/// Carpeta de modelos LLM descargados bajo demanda
+/// Carpeta de los modelos de corrección descargados cuando se piden
 /// (`%APPDATA%/whispr-open/models-llm/`).
 pub fn llm_models_dir() -> std::path::PathBuf {
     dirs::data_dir()
@@ -134,7 +136,7 @@ pub fn llm_models_dir() -> std::path::PathBuf {
         .join("models-llm")
 }
 
-/// Carpeta del server descargado bajo demanda (`%APPDATA%/whispr-open/bin/`).
+/// Carpeta del servidor descargado cuando se pide (`%APPDATA%/whispr-open/bin/`).
 pub fn llama_bin_dir() -> std::path::PathBuf {
     dirs::data_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("."))
@@ -142,17 +144,17 @@ pub fn llama_bin_dir() -> std::path::PathBuf {
         .join("bin")
 }
 
-/// Ruta del server descargado por la app (si existe).
+/// Ruta del servidor que ha descargado la app (si está).
 pub fn downloaded_server_path() -> std::path::PathBuf {
     llama_bin_dir().join(SERVER_EXE_NAME)
 }
 
-/// ¿`path` es un `llama-server.exe`? La app SOLO arranca ese binario
-/// (regla de producto t_75732630): el server LLM es un proceso NATIVO de
-/// Windows —nunca `wsl.exe`— y con el nombre exacto para que
-/// `terminate_server_pid` pueda verificarlo por imagen al salir. El
-/// wrapper histórico `llama.exe` no casaba con esa validación → el
-/// proceso lanzado por la app quedaba huérfano en VRAM.
+/// ¿`path` es un `llama-server.exe`? La app SOLO arranca ese binario (regla de
+/// producto t_75732630): el servidor es un proceso NATIVO de Windows —nunca
+/// `wsl.exe`— y con ese nombre exacto para que `terminate_server_pid` pueda
+/// comprobarlo por imagen al salir. El envoltorio viejo `llama.exe` no encajaba
+/// con esa comprobación → el proceso que lanzaba la app se quedaba huérfano en
+/// VRAM.
 pub fn is_server_exe(path: &std::path::Path) -> bool {
     path.file_name()
         .and_then(|name| name.to_str())
@@ -160,8 +162,8 @@ pub fn is_server_exe(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Directorio del ejecutable REAL de la app (`std::env::current_exe()`): en
-/// dev es `target/<perfil>/`, instalada es la carpeta de `silb.exe` ({app}).
+/// Carpeta del ejecutable REAL de la app (`std::env::current_exe()`): en
+/// desarrollo es `target/<perfil>/`, instalada es la carpeta de `silb.exe`.
 /// Es el ancla de todo lo que VIAJA con la app (`vendor/`).
 pub fn exe_dir() -> Option<std::path::PathBuf> {
     std::env::current_exe()
@@ -169,27 +171,27 @@ pub fn exe_dir() -> Option<std::path::PathBuf> {
         .and_then(|exe| exe.parent().map(std::path::Path::to_path_buf))
 }
 
-/// Server LLM EMBARCADO en el paquete: `vendor/llama/llama-server.exe`,
-/// hermano del exe de la app. Candidato nº1 de `resolve_server_path`: el
-/// usuario no teclea ninguna ruta (requisito 14/10/2026).
+/// Servidor EMBARCADO en el paquete: `vendor/llama/llama-server.exe`, al lado
+/// del exe de la app. Es el candidato nº1 de `resolve_server_path`: el usuario
+/// no escribe ninguna ruta (requisito 14/10/2026).
 pub fn vendored_server_path_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let p = dir.join("vendor").join("llama").join(SERVER_EXE_NAME);
     p.is_file().then_some(p)
 }
 
-/// Runtime CUDA OPCIONAL del server vendado: `vendor/llama/cuda/`, si existe
-/// y hay driver NVIDIA. Con él el server se arranca con ese directorio como
-/// cwd — el cargador de backends de ggml busca `ggml-cuda*.dll` en el cwd
-/// (verificado con el binario real; el PATH NO sirve para el descubrimiento)
-/// — y con el directorio al frente del PATH, para las dependencias de
-/// `ggml-cuda.dll` (cudart/cublas). Sin pack, el server corre en CPU.
+/// Paquete CUDA OPCIONAL del servidor embarcado: `vendor/llama/cuda/`, si existe
+/// y hay driver NVIDIA. Con él el servidor se arranca con esa carpeta como cwd
+/// — el cargador de backends de ggml busca `ggml-cuda*.dll` en el cwd (probado
+/// con el binario real; el PATH NO le sirve para encontrarlo) — y con esa
+/// carpeta al frente del PATH, para lo que necesita `ggml-cuda.dll`
+/// (cudart/cublas). Sin paquete, el servidor va en CPU.
 pub fn vendored_cuda_dir_in(dir: &std::path::Path) -> Option<std::path::PathBuf> {
     let cuda = dir.join("vendor").join("llama").join("cuda");
     cuda.is_dir().then_some(cuda)
 }
 
-/// ¿Hay driver NVIDIA en la máquina? El pack CUDA solo se usa con él: cargar
-/// `ggml-cuda.dll` sin driver es un fallo de arranque, no una mejora.
+/// ¿Hay driver NVIDIA en la máquina? El paquete CUDA solo se usa con él:
+/// cargar `ggml-cuda.dll` sin driver es un fallo al arrancar, no una mejora.
 fn nvidia_driver_present() -> bool {
     let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
     std::path::Path::new(&root)
@@ -198,10 +200,10 @@ fn nvidia_driver_present() -> bool {
         .is_file()
 }
 
-/// Corrige una ruta de server LLM que no es `llama-server.exe` (p. ej. el
-/// wrapper `llama.exe` de la instalación histórica): si en el MISMO
-/// directorio existe `llama-server.exe`, devuelve esa ruta; si no, `None`
-/// (el caller cae a la autodetección por rutas comunes).
+/// Arregla una ruta de servidor que no es `llama-server.exe` (por ejemplo el
+/// envoltorio `llama.exe` de instalaciones viejas): si en la MISMA carpeta hay
+/// un `llama-server.exe`, devuelve esa ruta; si no, `None` (quien llama pasa a
+/// buscarlo en las rutas de siempre).
 pub fn sanitize_server_exe(path: &std::path::Path) -> Option<std::path::PathBuf> {
     if is_server_exe(path) {
         return Some(path.to_path_buf());
@@ -211,7 +213,7 @@ pub fn sanitize_server_exe(path: &std::path::Path) -> Option<std::path::PathBuf>
 }
 
 /// Prompt del contrato (§3.2): el modelo devuelve SOLO un JSON con
-/// `{find, replace}` sobre el texto actual. Si no localiza nada, vacío.
+/// `{find, replace}` sobre el texto actual. Si no encuentra nada, vacío.
 const SYSTEM_PROMPT: &str = r#"Eres el corrector de un dictado por voz en español. Se te da:
 |- TEXTO ACTUAL (el último turno dictado, ya limpio de muletillas).
 |- INSTRUCCIÓN (lo que el usuario dijo después, pidiendo una corrección).
@@ -227,38 +229,38 @@ Reglas:
 - Resuelve referencias: "lo último" apunta a la última frase o número de TEXTO ACTUAL.
 - Si la INSTRUCCIÓN no pide ninguna corrección clara, devuelve {"find": "", "replace": ""}."#;
 
-/// Prompt del modo in-turn (t_78d9e1fa, spec §3.5). A diferencia del modo
-/// cross-turn, el modelo recibe el TURNO COMPLETO y devuelve el TEXTO
-/// FINAL corregido (sin meta-lengua), no un diff. Esto cubre el caso
-/// canónico que motiva el cambio de diseño:
+/// Prompt del modo in-turn (t_78d9e1fa, spec §3.5). Al contrario que el modo
+/// cross-turn, el modelo recibe el TURNO ENTERO y devuelve el TEXTO FINAL ya
+/// corregido (sin hablar de sí mismo), no un cambio. Esto cubre el caso típico
+/// que motivó el cambio de diseño:
 ///
-///   input:  "que calor que hace en murcia digo cartagena"
-///   output: "que calor que hace en cartagena"
+///   entra:  "que calor que hace en murcia digo cartagena"
+///   sale:   "que calor que hace en cartagena"
 ///
-/// El usuario se corrige a sí mismo dentro del mismo chorro de voz
-/// («digo X», «quiero decir X», «no X sino Y», «en vez de», etc.). El
-/// modelo debe:
-///   1) Detectar el fragmento «anterior» al marcador correctivo.
-///   2) Detectar el fragmento «posterior» (la corrección misma).
-///   3) Reescribir el texto sustituyendo lo anterior por lo posterior.
-///   4) Eliminar TODA la meta-lengua («digo», «quiero decir», etc.).
-///   5) Si NO hay corrección real, devolver el texto tal cual.
+/// El usuario se corrige a sí mismo dentro del mismo chorro de voz («digo X»,
+/// «quiero decir X», «no X sino Y», «en vez de», etc.). El modelo debe:
+///   1) Detectar el trozo «anterior» a la marca de corrección.
+///   2) Detectar el trozo «posterior» (la corrección en sí).
+///   3) Reescribir el texto cambiando lo anterior por lo posterior.
+///   4) Quitar TODA la frase de corrección («digo», «quiero decir», etc.).
+///   5) Si NO hay corrección de verdad, devolver el texto tal cual.
 ///
-/// Devuelve SOLO el texto final (sin JSON, sin fences, sin explicaciones).
+/// Devuelve SOLO el texto final (sin JSON, sin bloques de código, sin
+/// explicaciones).
 ///
-/// REGLA DE PRESERVACIÓN (t_6b9348de): el modelo local es un 0.8B y
-/// responde a los turnos largos SIN corrección con un RESUMEN (evidencia
-/// del log 01:34:54: input de 73 palabras → output de 13). Se probaron 9
-/// variantes de prompt en runtime (server real, payload exacto) y NINGUNA
-/// consigue a la vez preservar los turnos largos y mantener las
-/// correcciones canónicas: todo refuerzo de "no resumas" rompe alguna
-/// auto-corrección («el cliente es Acme quiero decir Microsoft» devolvía
-/// «el cliente es Acme», perdiendo la corrección y engañando al guard por
-/// ratio). Por eso el prompt se mantiene TAL CUAL (correcciones fiables)
-/// y la anti-truncación es responsabilidad OBLIGATORIA del guard
-/// `guard_anti_truncacion` en `app.rs`: si el output queda <60% de las
-/// palabras sin auto-corrección inequívoca, se descarta y se inyecta el
-/// input original — nunca se pierde texto del dictado.
+/// REGLA DE PRESERVACIÓN (t_6b9348de): el modelo local es un 0.8B y contesta a
+/// los turnos largos SIN corrección con un RESUMEN (está en el log 01:34:54:
+/// entraron 73 palabras y salieron 13). Se probaron 9 variantes de prompt en
+/// ejecución (servidor real, petición exacta) y NINGUNA consigue a la vez
+/// conservar los turnos largos y mantener las correcciones de siempre: todo
+/// refuerzo de "no resumas" rompe alguna autocorrección («el cliente es Acme
+/// quiero decir Microsoft» devolvía «el cliente es Acme», perdiendo la
+/// corrección y engañando a la protección por proporción). Por eso el prompt se
+/// queda TAL CUAL (las correcciones salen bien) y lo de cortar los resúmenes es
+/// cosa OBLIGATORIA de la protección `guard_anti_truncacion` en `app.rs`: si lo
+/// que sale tiene menos del 60% de las palabras y no hay una autocorrección
+/// clara, se tira y se escribe el texto original — el dictado no se pierde
+/// nunca.
 const SYSTEM_PROMPT_IN_TURN: &str = r#"Eres el corrector de un dictado por voz en español. Recibes un turno completo dictado por el usuario.
 
 El usuario puede haberse corregido a sí mismo hablando ("auto-corrección"). Los marcadores típicos son: "digo X", "quiero decir X", "quise decir X", "mejor dicho X", "no X sino Y", "X en vez de Y", "X en lugar de Y", "dime X", "diga X".
@@ -280,23 +282,22 @@ Ejemplos:
 - input: "la reunión es el jueves" → output: "la reunión es el jueves" (sin cambios)
 - input: "tengo que llamar al médico mañana" → output: "tengo que llamar al médico mañana" (sin cambios)"#;
 
-/// Pide al LLM un diff de corrección para `target` (último turno dictado)
-/// según la `instruction` hablada después. Bloquea: llamarlo en un hilo
-/// (app.rs lo lanza con `std::thread::spawn` + canal mpsc).
+/// Pide al modelo un cambio de corrección para `target` (el último turno
+/// dictado) según la frase hablada que vino después. Bloquea: hay que llamarlo
+/// en un hilo (app.rs lo lanza con `std::thread::spawn` y un canal mpsc).
 pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff, String> {
     let url = api_url(&cfg.base_url, "chat/completions");
-    // max_tokens holgado (256): el contrato es un JSON corto, pero dejar
-    // margen evita truncamientos cuando el endpoint mete prefijos o el
-    // sistema añade tokens de control. El bug del Qwen3.5 reasoning era
-    // exactamente este: con 120-2048 tokens y thinking implícito, el
-    // modelo agotaba el presupuesto rellenando `reasoning_content` y
-    // dejaba `message.content` vacío.
+    // max_tokens holgado (256): lo que se espera es un JSON corto, pero conviene
+    // dejar margen por si el servidor mete prefijos o el sistema añade tokens de
+    // control. El fallo del Qwen3.5 con razonamiento era justo este: con 120-2048
+    // tokens y pensamiento implícito, el modelo se gastaba el presupuesto
+    // rellenando `reasoning_content` y dejaba `message.content` vacío.
     //
-    // chat_template_kwargs.enable_thinking=false desactiva el modo
-    // pensamiento de modelos Qwen reasoning (y cualquier otro que respete
-    // ese flag) para que la respuesta útil venga en `message.content`
-    // desde el primer token. Si el endpoint no lo entiende (modelos no
-    // reasoning) lo ignora silenciosamente — verificado contra llama.cpp.
+    // chat_template_kwargs.enable_thinking=false apaga el modo pensamiento de los
+    // modelos Qwen con razonamiento (y de cualquier otro que haga caso a esa
+    // marca), para que la respuesta útil venga en `message.content` desde el
+    // primer token. Si el servidor no la entiende (modelos sin razonamiento) la
+    // ignora sin decir nada — probado contra llama.cpp.
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [
@@ -319,7 +320,7 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
         request = request.set("Authorization", &format!("Bearer {key}"));
     }
 
-    // ureq 2.12: send_string espera &str; el cuerpo es JSON ya serializado.
+    // ureq 2.12: send_string pide &str; el cuerpo ya es JSON serializado.
     let response = request
         .send_string(&body.to_string())
         .map_err(|e| format!("HTTP: {e}"))?;
@@ -329,16 +330,15 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
     let value: serde_json::Value =
         serde_json::from_str(&body_raw).map_err(|e| format!("JSON de respuesta inválido: {e}"))?;
 
-    // Extrae el texto útil de la respuesta del LLM. Caso normal: viene en
-    // `message.content`. Fallback: en modelos de razonamiento (Qwen3.5,
-    // DeepSeek-R1, etc.) con thinking implícito activado, `content` puede
-    // llegar VACÍO y la respuesta útil aparece en `message.reasoning_content`
-    // al final del bloque de pensamiento. Si ni siquiera así hay JSON,
-    // devolvemos un error claro.
+    // Saca el texto útil de la respuesta. Lo normal: viene en `message.content`.
+    // Si no: en modelos con razonamiento (Qwen3.5, DeepSeek-R1, etc.) y
+    // pensamiento implícito encendido, `content` puede llegar VACÍO y lo útil
+    // aparece en `message.reasoning_content`, al final del bloque de pensamiento.
+    // Si ni así hay JSON, se devuelve un error claro.
     let content_opt = extract_message_text(&value);
     if content_opt.is_none() {
-        // Diagnóstico en el log: ayuda a distinguir un modelo roto de un
-        // payload mal formado cuando Juanfri reproduzca el bug en vivo.
+        // Se anota en el log para saber distinguir un modelo roto de una petición
+        // mal montada cuando alguien reproduzca el fallo en vivo.
         crate::log!(
             "llm",
             "la respuesta del LLM no trae content ni reasoning_content: payload={}",
@@ -349,28 +349,28 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
     parse_diff(content)
 }
 
-/// Modo in-turn (t_78d9e1fa, spec §3.5): el LLM recibe el turno
-/// COMPLETO (que contiene la auto-corrección hablada) y devuelve el
-/// TEXTO FINAL corregido (sin meta-lengua, sin JSON). Es el modo
-/// PRINCIPAL desde el 10/09/2026: cuando el usuario dice
-/// «que calor en murcia digo cartagena» en un único chorro, esta función
-/// devuelve «que calor en cartagena».
+/// Modo in-turn (t_78d9e1fa, spec §3.5): el modelo recibe el turno ENTERO (que
+/// lleva dentro la autocorrección hablada) y devuelve el TEXTO FINAL corregido
+/// (sin la frase de corrección, sin JSON). Es el modo PRINCIPAL desde el
+/// 10/09/2026: si el usuario dice «que calor en murcia digo cartagena» de un
+/// tirón, esta función devuelve «que calor en cartagena».
 ///
-/// Diferencias con `correct()`:
-/// - Prompt distinto (`SYSTEM_PROMPT_IN_TURN`): el modelo NO devuelve un
-///   JSON `{find, replace}`, devuelve el texto final directo.
-/// - `max_tokens` mayor (1024) porque devolvemos el turno COMPLETO
-///   corregido (un párrafo dictado puede superar 512 tokens de salida y
-///   un 0.8B que resuma el turno necesita margen; t_6b9348de subió el
-///   tope de 512 a 1024). El guard anti-truncación en `app.rs` es quien
-///   descarta los resúmenes, no el tope de tokens.
-/// - Sin parsing de JSON: solo se limpia de fences markdown y se hace
-///   trim. Si el modelo mete comillas o fences, se eliminan; si mete
-///   texto adicional, se descarta la respuesta y se devuelve un error
-///   para que el caller inyecte el texto bruto (fallback seguro, spec §3.5.4).
+/// En qué se diferencia de `correct()`:
+/// - Prompt distinto (`SYSTEM_PROMPT_IN_TURN`): el modelo NO devuelve un JSON
+///   `{find, replace}`, devuelve el texto final tal cual.
+/// - `max_tokens` mayor (1024) porque devolvemos el turno ENTERO corregido (un
+///   párrafo dictado puede pasar de 512 tokens de salida, y un 0.8B que resume
+///   el turno necesita margen; t_6b9348de subió el tope de 512 a 1024). Quien
+///   tira los resúmenes es la protección anti-truncación de `app.rs`, no el
+///   tope de tokens.
+/// - Sin leer JSON: solo se quitan los bloques de código de markdown y se
+///   recortan los espacios de los extremos. Si el modelo mete comillas o
+///   bloques, se quitan; si mete texto de más, se tira la respuesta y se
+///   devuelve un error para que quien llama escriba el texto bruto (lo seguro,
+///   spec §3.5.4).
 ///
-/// Bloquea: se llama desde un hilo (app.rs lo lanza con
-/// `std::thread::spawn` + canal mpsc, mismo patrón que `correct`).
+/// Bloquea: se llama desde un hilo (app.rs lo lanza con `std::thread::spawn` y
+/// un canal mpsc, igual que `correct`).
 pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
     let url = api_url(&cfg.base_url, "chat/completions");
     let body = serde_json::json!({
@@ -404,9 +404,9 @@ pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
     let value: serde_json::Value =
         serde_json::from_str(&body_raw).map_err(|e| format!("JSON de respuesta inválido: {e}"))?;
 
-    // Mismo extractor que `correct()`: preferimos `message.content`,
-    // caemos a `message.reasoning_content` si el primero está vacío
-    // (Qwen3.5 y otros modelos de razonamiento con thinking implícito).
+    // El mismo extractor que `correct()`: se prefiere `message.content` y si
+    // está vacío se baja a `message.reasoning_content` (Qwen3.5 y otros modelos
+    // con razonamiento implícito).
     let content_opt = extract_message_text(&value);
     if content_opt.is_none() {
         crate::log!(
