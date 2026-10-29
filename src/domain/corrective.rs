@@ -1,34 +1,34 @@
-//! Corrección hablada con LLM — capa v2 de docs/CORRECCION-VOZ.md.
+//! Corrección hablada con un modelo de lenguaje — capa v2 de docs/CORRECCION-VOZ.md.
 //!
 //! La capa v1 (`correction.rs`) resuelve por reglas los turnos tipo
 //! «no, quería decir X». Este módulo decide cuándo un turno NO lo resuelven
-//! las reglas y huele a corrección («no no lo último está mal, es 2 en vez
-//! de 4») → `NeedsLlm`: el LLM recibe el último turno dictado + la
-//! instrucción y devuelve un diff `{find, replace}` que aquí se valida y
-//! aplica. Lógica 100% pura (sin I/O, sin red): el cliente HTTP vive en
+//! las reglas y suena a corrección («no no lo último está mal, es 2 en vez
+//! de 4») → `NeedsLlm`: el modelo recibe el último turno dictado y la
+//! instrucción, y devuelve un cambio `{find, replace}` que aquí se comprueba
+//! y se aplica. Nada de red ni de ficheros: el cliente HTTP está en
 //! `src/llm.rs`.
 //!
-//! Contrato de aplicación (§3.3 de la spec): `find` debe ser subcadena
-//! literal del texto objetivo; si no lo es, la corrección se descarta y el
-//! turno se trata como dictado normal (nunca se muta ni se pierde texto).
+//! Cómo se aplica (punto 3.3 del documento): `find` tiene que aparecer tal
+//! cual en el texto; si no aparece, la corrección se tira y el turno se trata
+//! como un dictado normal (nunca se cambia ni se pierde texto).
 
 use fancy_regex::Regex;
 
-/// Decisión del clasificador barato (§2 de la spec).
+/// Lo que decide el clasificador barato (punto 2 del documento).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CorrectiveDecision {
     /// Dictado normal → `append_transcript` como siempre.
     Plain,
-    /// Intención correctiva que las reglas no cubren → pipeline LLM.
+    /// Corrección que las reglas no cubren → pasa por el modelo.
     NeedsLlm,
 }
 
-/// Diff de sustitución devuelto por el LLM (contrato §3.2).
+/// Cambio de sustitución que devuelve el modelo (contrato del punto 3.2).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diff {
-    /// Subcadena literal (tal cual) que debe existir en el texto a corregir.
+    /// Trozo de texto (tal cual) que tiene que estar en el texto a corregir.
     pub find: String,
-    /// Texto que sustituye a `find` (vacío = quitar).
+    /// Texto que entra en lugar de `find` (vacío = quitarlo).
     pub replace: String,
 }
 
@@ -36,68 +36,68 @@ fn rx(pattern: &str) -> Regex {
     Regex::new(pattern).expect("patrón correctivo inválido")
 }
 
-// Señales §2. Regla de decisión (nivel B): (negación | verbo correctivo |
-// marcador de sustitución) Y (numeral | referencia anafórica). Peso por
-// diseño: precisión > recall — un falso positivo cuesta una llamada al LLM
-// que devolverá `find` vacío y el turno se conserva; un falso negativo solo
-// significa no corregir.
+// Señales (punto 2). Regla de decisión (nivel B): (negación | verbo de
+// corrección | marca de sustitución) Y (número | referencia a algo ya dicho).
+// Se prefiere no equivocarse a acertar siempre: un falso positivo cuesta una
+// llamada al modelo que devolverá `find` vacío y el turno se queda igual; un
+// falso negativo solo significa no corregir.
 //
-// `SUBSTITUTION_MARKER` cubre la construcción «X en vez de Y», «X en lugar
-// de Y», «X en su lugar», «sustituir X por Y», «cambiar X por Y» sin verbo
-// independiente. Son correcciones habladas por sí solas: «2 en vez de 4»
-// ya pide cambiar un 4 por un 2, sin necesidad de un «no» previo. Si no
-// las contáramos como neg/verb, el caso de uso cotidiano que motiva la
-// corrección IA (spec §5) se queda en `Plain` y nunca llega al LLM.
+// `SUBSTITUTION_MARKER` cubre «X en vez de Y», «X en lugar de Y», «X en su
+// lugar», «sustituir X por Y» y «cambiar X por Y» sin verbo aparte. Son
+// correcciones por sí solas: «2 en vez de 4» ya pide cambiar un 4 por un 2,
+// sin un «no» antes. Si no las contáramos como negación o verbo, el caso del
+// día a día que motiva la corrección IA (punto 5) se quedaría en `Plain` y
+// nunca llegaría al modelo.
 const NEGATION: &str = r"(?i)\b(no|mal|me equivoqu[eé]|equivocad[oa]|est[aá] mal|as[ií] no)\b";
 const CORRECTIVE_VERB: &str = r"(?i)\b(corr[ií]ge|corrig[eé]|corr[ií]geme|cambia|cambie|pon|quita|qu[ií]tame|borra|elimina|sustituye|sustituir|di que|sea)\b";
 const SUBSTITUTION_MARKER: &str = r"(?i)\b(en vez de|en lugar de|en su lugar|cambia por|cámbialo por|sustitúyelo por|reemplaza con)\b";
 const NUMERAL: &str = r"(?i)(\b\d+(?:[.,]\d+)?\b|dos|tres|cuatro|cinco|seis|siete|ocho|nueve|diez|once|doce|trece|veinte|treinta|cuarenta|cincuenta|sesenta|setenta|ochenta|noventa|cien|mil)\b";
 const REFERENCE: &str = r"(?i)\b(lo [úu]ltimo|la [úu]ltima palabra|la [úu]ltima frase|eso|esto|lo otro|esta palabra|esta frase|esa palabra|ese n[uú]mero|el n[uú]mero ese|lo que acabo de decir|aquello)\b";
 
-/// Clasificador de dos niveles (§2): solo enruta al LLM los turnos con
-/// (negación o verbo correctivo) Y (numeral o referencia al texto previo).
+/// Clasificador de dos niveles (punto 2): solo manda al modelo los turnos con
+/// (negación o verbo de corrección) Y (número o referencia a lo ya dictado).
 ///
-/// El parámetro `threshold` (0..=100) modula la sensibilidad: una vez que
-/// un turno pasa la regla de los dos niveles, se puntúa por el número de
-/// señales presentes (neg/verb/num/reference) sobre 4. Como la regla de
-/// los dos niveles exige mínimo 2 señales, el `ratio` resultante vive
-/// en `[50, 100]`. El umbral decide si se enruta: default 50 (todo lo
-/// que pasa la regla va al LLM, igual que la conducta previa); subir =
-/// más conservador (precision > recall, spec §2). 0 = pasivo (no enruta
-/// nada; equivalente a desactivar la corrección IA sin tocar el toggle).
+/// `threshold` (0..=100) regula lo sensible que es: cuando un turno pasa la
+/// regla de los dos niveles, se puntúa por las señales que lleva
+/// (negación/verbo/número/referencia) sobre 4. Como la regla pide mínimo 2
+/// señales, el resultado queda entre 50 y 100. El umbral decide si se manda:
+/// 50 por defecto (todo lo que pasa la regla va al modelo, como antes); más
+/// alto = más prudente (mejor no pasarse que corregir de más, punto 2). 0 =
+/// apagado (no manda nada; es como desactivar la corrección IA sin tocar el
+/// interruptor).
 pub fn classify(turn: &str) -> CorrectiveDecision {
     classify_with(turn, 50)
 }
 
-/// Variante con umbral explícito (la usa `app.rs` con el valor de
-/// `Config::llm_classifier_threshold`). Misma regla de los dos niveles;
-/// añade el gate de confianza por encima.
+/// Versión con el umbral a mano (la usa `app.rs` con el valor de
+/// `Config::llm_classifier_threshold`). La misma regla de dos niveles,
+/// más el filtro de confianza por encima.
 pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
     let neg = rx(NEGATION).is_match(turn).unwrap_or(false);
     let verb = rx(CORRECTIVE_VERB).is_match(turn).unwrap_or(false);
-    // `subst` cubre la construcción «X en vez de Y» / «sustituir X por Y»
-    // SIN verbo independiente. Equivale a un verbo correctivo a efectos
-    // de la regla de los dos niveles: el turno ya ES una corrección.
+    // `subst` cubre «X en vez de Y» / «sustituir X por Y» SIN verbo
+    // aparte. Para la regla de los dos niveles cuenta como verbo de
+    // corrección: el turno ya ES una corrección.
     let subst = rx(SUBSTITUTION_MARKER).is_match(turn).unwrap_or(false);
     let num = rx(NUMERAL).is_match(turn).unwrap_or(false);
     let reference = rx(REFERENCE).is_match(turn).unwrap_or(false);
 
-    // Regla de los dos niveles (spec §2): sin (neg|verb|subst) o sin
-    // (num|reference) NO se enruta al LLM — falso positivo es peor que
-    // falso negativo (un acierto casual nos cuesta una llamada al LLM y
-    // un `find` vacío).
+    // Regla de los dos niveles (punto 2): sin (negación|verbo|subst) o sin
+    // (número|referencia) NO se manda al modelo, porque un falso positivo es
+    // peor que un falso negativo (un acierto por casualidad nos cuesta una
+    // llamada y un `find` vacío).
     //
-    // Excepción para el marcador de sustitución: «X en vez de Y» ya ES
-    // la sustitución por construcción, así que la presencia del subst +
-    // numeral/referencia satisface el segundo nivel sin requerir un neg/verb
-    // explícito. Sin numeral/referencia ni neg/verb, el turno es solo
-    // un «en vez de» coloquial (p. ej. «en vez de descansar prefiero
-    // esto») — NO es una corrección, sigue siendo Plain.
+    // Excepción para la marca de sustitución: «X en vez de Y» ya es la
+    // sustitución en sí, así que con la marca más número o referencia se
+    // cumple el segundo nivel sin necesidad de negación o verbo explícito.
+    // Sin número ni referencia ni negación ni verbo, el turno es solo un
+    // «en vez de» coloquial (por ejemplo «en vez de descansar prefiero
+    // esto»), que NO es una corrección: sigue siendo Plain.
     if !(neg || verb || subst) {
         return CorrectiveDecision::Plain;
     }
     if subst && !neg && !verb && !(num || reference) {
-        // Substituto aislado sin objetivo: NO enrutar.
+        // Sustitución suelta sin objetivo: NO mandar.
         return CorrectiveDecision::Plain;
     }
     if !(num || reference) {
@@ -107,13 +107,12 @@ pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
         return CorrectiveDecision::Plain;
     }
 
-    // Puntuación (spec §2): nº de señales presentes
-    // (neg/verb/subst/num/reference). Mínimo 2 (regla de los dos
-    // niveles). Bonus de +1 cuando el «subst» es la única señal
-    // correctiva y viene acompañado de numeral/referencia: «X en vez de
-    // Y» cuenta como si fueran 3 señales → ratio 75, lo que pasa el
-    // default 50 (preservando la conducta previa para el caso de uso «2
-    // en vez de 4»). Subir el umbral = más conservador (precision > recall).
+    // Puntuación (punto 2): cuántas señales hay
+    // (negación/verbo/subst/número/referencia). Mínimo 2 (la regla de los
+    // dos niveles). Se suma 1 cuando el «subst» es la única señal de
+    // corrección y viene con número o referencia: «X en vez de Y» cuenta
+    // como si fueran 3 señales → 75, que pasa el 50 por defecto (y así el
+    // caso «2 en vez de 4» sigue como antes). Subir el umbral = más prudente.
     let base_score = [neg, verb, subst, num, reference]
         .iter()
         .filter(|x| **x)
@@ -136,22 +135,21 @@ pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
     }
 }
 
-// ── Auto-corrección IN-TURNO (t_78d9e1fa) ────────────────────────────────
+// ── Auto-corrección DENTRO del mismo turno (t_78d9e1fa) ──────────────────
 //
-// Caso canónico que motiva esta capa: el usuario dicta TODO en un único
-// chorro y se corrige sobre la marcha:
+// El caso que dio pie a esta capa: el usuario dicta TODO de un tirón y se
+// corrige sobre la marcha:
 //
 //   «que calor que hace en murcia digo cartagena»
 //
-// El clasificador cross-turn (`classify`) NO lo detecta: no hay referencia
-// al texto previo (no hay «lo último», no hay «eso»), no hay negación
-// inicial. Sin self-correction awareness, queda como `Plain` y la app
-// escribe textualmente «que calor que hace en murcia digo cartagena»,
-// incluyendo la meta-lengua («digo cartagena») que NO debe aparecer en el
-// texto final.
+// El clasificador de un turno a otro (`classify`) NO lo ve: no hay
+// referencia a lo dicho antes (no hay «lo último», no hay «eso») ni una
+// negación al principio. Sin darse cuenta de la autocorrección, el turno se
+// queda en `Plain` y la app escribe tal cual «que calor que hace en murcia
+// digo cartagena», con el «digo cartagena» que NO debe salir en el texto.
 //
-// `classify_in_turn` reconoce los marcadores típicos de auto-corrección
-// dentro del mismo turno:
+// `classify_in_turn` reconoce las marcas típicas de autocorrección dentro
+// del mismo turno:
 //
 //   - «digo X» / «digo: X» / «diga X» / «dime X»
 //   - «quiero decir X» / «quise decir X» / «mejor dicho X»
@@ -159,47 +157,47 @@ pub fn classify_with(turn: &str, threshold: u8) -> CorrectiveDecision {
 //   - «mejor X» / «mejor: X»
 //   - «X en vez de Y» / «X en lugar de Y»
 //
-// A diferencia de `classify`, NO exige numeral ni referencia anafórica:
-// el «antes» y el «después» viven en el mismo turno. La señal
-// correctiva basta por sí sola; el LLM se encarga de resolver qué se
-// sustituye (el texto anterior al marcador) y por qué (el texto posterior).
+// A diferencia de `classify`, NO pide número ni referencia: el «antes» y el
+// «después» están en el mismo turno. La marca de corrección basta por sí
+// sola; el modelo se encarga de ver qué se sustituye (el texto anterior a
+// la marca) y por qué (el texto posterior).
 //
-// Filtros de seguridad: la frase debe tener una longitud mínima
-// razonable (un turno de menos de 6 caracteres nunca es una corrección:
-// «digo sí», «no no», etc.). Además se exige un mínimo de contenido
-// «anterior» al marcador (al menos 3 caracteres) y un mínimo de
-// contenido «posterior» (al menos 1 carácter) para que el LLM tenga
-// material sobre el que trabajar.
+// Filtros de seguridad: el turno tiene que tener una longitud mínima
+// razonable (con menos de 6 caracteres nunca es una corrección: «digo sí»,
+// «no no», etc.). Además tiene que quedar algo de contenido «anterior» a la
+// marca (al menos 3 caracteres) y algo «posterior» (al menos 1 carácter)
+// para que el modelo tenga con qué trabajar.
 //
 // Esta capa es el modo PRINCIPAL desde el 10/09/2026 (decisión de
-// Juanfri). El modo cross-turn (`classify`) se mantiene como fallback
-// para frases como «no no lo último está mal, es 2 en vez de 4», donde
+// Juanfri). El modo de un turno a otro (`classify`) se queda para frases
+// como «no no lo último está mal, es 2 en vez de 4», donde la corrección
+// apunta a un turno anterior.
 // la corrección apunta a un turno anterior.
 const IN_TURN_MARKERS: &str = r"(?i)\b(digo\b|diga\b|dime\b|mejor dicho\b|quiero decir\b|quise decir\b|no,?\s*sino\b|mejor:|mejor\b.+?\bque\b|en vez de\b|en lugar de\b)\b";
 
-/// ¿El turno contiene una auto-corrección que se resuelve DENTRO del
-/// propio turno (no apunta a un turno anterior)? Si devuelve `true`,
-/// el LLM recibe el turno completo y devuelve el texto final corregido
-/// (sin meta-lengua). Si devuelve `false`, se cae al clasificador
-/// cross-turn (`classify`/`classify_with`) que es el flujo anterior.
+/// ¿El turno trae una autocorrección que se resuelve DENTRO del propio
+/// turno (no apunta a uno anterior)? Si devuelve `true`, el modelo recibe
+/// el turno entero y devuelve el texto final ya corregido (sin la
+/// meta-lengua). Si devuelve `false`, se pasa al clasificador de un turno
+/// a otro (`classify`/`classify_with`), que es el camino de antes.
 ///
-/// Reglas (spec del task t_78d9e1fa):
-/// - El turno debe contener un marcador de auto-corrección (regex arriba).
-/// - Longitud mínima 6 chars (un «digo sí» no es corrección, es respuesta).
-/// - Antes del primer marcador debe haber ≥ 3 chars de contenido (el
-///   «antes» que se va a sustituir).
-/// - Después del último marcador debe haber ≥ 1 char de contenido (el
-///   «después» que sustituye).
+/// Reglas (documento del task t_78d9e1fa):
+/// - El turno tiene que llevar una marca de autocorrección (la regla de arriba).
+/// - Longitud mínima 6 caracteres (un «digo sí» no es corrección, es respuesta).
+/// - Antes de la primera marca tiene que haber ≥ 3 caracteres (el «antes»
+///   que se va a sustituir).
+/// - Después de la última marca tiene que haber ≥ 1 carácter (el «después»
+///   que sustituye).
 ///
-/// Tests en `tests`: caso canónico de Juanfri + variantes coloquiales.
+/// Tests en `tests`: el caso de Juanfri y variantes coloquiales.
 pub fn classify_in_turn(turn: &str) -> bool {
     classify_in_turn_with(turn, true)
 }
 
-/// Variante con toggle explícito para que `app.rs` pueda preguntar al
-/// config si el modo in-turn está activo (default true desde 10/09/2026;
-/// si en el futuro queremos dar al usuario un kill-switch, será este
-/// parámetro y NO un cambio de comportamiento silencioso).
+/// Versión con el interruptor a mano para que `app.rs` pregunte al config si
+/// el modo dentro del turno está activo (sí por defecto desde el 10/09/2026;
+/// si algún día queremos dejar apagarlo, será este parámetro y NO un cambio
+/// de comportamiento por la cara).
 pub fn classify_in_turn_with(turn: &str, enabled: bool) -> bool {
     if !enabled {
         return false;
@@ -215,14 +213,14 @@ pub fn classify_in_turn_with(turn: &str, enabled: bool) -> bool {
     };
     let start = m.start();
     let end = m.end();
-    // Antes del marcador: texto ya dicho, candidato a para ser sustituido.
-    // Sin al menos 3 chars, no hay nada útil que corregir.
+    // Antes de la marca: lo ya dicho, candidato a que lo sustituyan.
+    // Con menos de 3 caracteres no hay nada útil que corregir.
     let before = trimmed[..start].trim();
     if before.len() < 3 {
         return false;
     }
-    // Después del marcador: la corrección misma. 1 char basta para
-    // marcar la presencia («digo 5» ya tiene «5»).
+    // Después de la marca: la corrección en sí. Con 1 carácter basta para
+    // saber que está («digo 5» ya lleva «5»).
     let after = trimmed[end..].trim();
     if after.is_empty() {
         return false;
@@ -230,33 +228,32 @@ pub fn classify_in_turn_with(turn: &str, enabled: bool) -> bool {
     true
 }
 
-/// ¿El texto contiene todavía un marcador in-turn (meta-lengua)? Usado
-/// por `app.rs` como red de seguridad tras la llamada al LLM: si el
-/// corrector no limpió la meta-lengua, devolvemos el input bruto y
-/// evitamos inyectar texto que incluye «digo X» literalmente (lo que
-/// frustraría la corrección y confundiría al usuario).
+/// ¿El texto lleva todavía una marca dentro del turno (meta-lengua)? Lo usa
+/// `app.rs` como red de seguridad después de llamar al modelo: si el
+/// corrector no limpió la meta-lengua, devolvemos el texto de entrada y
+/// evitamos escribir algo que lleve «digo X» tal cual (eso estropearía la
+/// corrección y liaría al usuario).
 ///
-/// Diferencia con `classify_in_turn`: este helper es más laxo, solo
-/// busca el marcador en cualquier posición del texto (sin exigir
-/// contenido antes/después). Suficiente para validar que el LLM ha
-/// eliminado la meta-lengua.
+/// Se diferencia de `classify_in_turn` en que este ayudante es más flojo:
+/// solo busca la marca en cualquier parte del texto (sin pedir contenido
+/// antes ni después). Con eso basta para comprobar que el modelo ha
+/// quitado la meta-lengua.
 pub fn contains_in_turn_marker(text: &str) -> bool {
     rx(IN_TURN_MARKERS).is_match(text).unwrap_or(false)
 }
 
-/// Elimina del texto la meta-lengua correctiva, dejando solo el
-/// contenido «útil» (la frase ya corregida). Usado por `app.rs` para
-/// mostrar el antes en el feedback de UI («Auto-corregido IA: «X» → «Y»»)
-/// cuando el turno original llevaba un marcador in-turn.
+/// Quita del texto la meta-lengua de la corrección y deja solo lo útil
+/// (la frase ya corregida). Lo usa `app.rs` para enseñar el antes en el
+/// aviso de la interfaz («Auto-corregido IA: «X» → «Y»») cuando el turno
+/// original llevaba una marca dentro.
 ///
-/// Implementación: busca el primer marcador y devuelve todo lo que va
-/// ANTES. Si el LLM ya aplicó la corrección, el turno original tenía
-/// la forma «A digo B»: aquí se extrae «A» como el «antes» a mostrar.
-/// Si por lo que sea no hay marcador, devuelve el texto tal cual.
+/// Cómo funciona: busca la primera marca y devuelve todo lo que va ANTES.
+/// Si el modelo ya aplicó la corrección, el turno original tenía la forma
+/// «A digo B»: aquí se saca «A» como el «antes» que se enseña. Si por lo
+/// que sea no hay marca, devuelve el texto tal cual.
 ///
-/// NOTA: esta función NO es la inversa del corrector — solo sirve
-/// para presentar el cambio de forma legible. El corrector real vive
-/// en el LLM.
+/// OJO: esto no deshace lo que hizo el corrector, solo sirve para enseñar
+/// el cambio de forma legible. Quien corrige de verdad es el modelo.
 pub fn strip_in_turn_meta(text: &str) -> String {
     let trimmed = text.trim();
     let marker_re = rx(IN_TURN_MARKERS);
@@ -272,10 +269,9 @@ pub fn strip_in_turn_meta(text: &str) -> String {
     }
 }
 
-/// Aplica el diff al texto (normalmente `last_turn`): sustituye la PRIMERA
-/// ocurrencia de la subcadena literal `find`. Devuelve `None` si `find` está
-/// vacío o no es subcadena literal → corrección descartada, el texto NO se
-/// muta (§3.3.1).
+/// Aplica el cambio al texto (normalmente `last_turn`): sustituye la PRIMERA
+/// aparición de `find` tal cual. Devuelve `None` si `find` está vacío o no
+/// aparece → corrección descartada y el texto NO se toca (punto 3.3.1).
 pub fn apply_diff(text: &str, diff: &Diff) -> Option<String> {
     if diff.find.is_empty() {
         return None;
@@ -288,8 +284,8 @@ pub fn apply_diff(text: &str, diff: &Diff) -> Option<String> {
     Some(out)
 }
 
-/// El transcript siempre termina con «… {last_turn}»: sustituye la ÚLTIMA
-/// ocurrencia de `old_turn` (la recién dictada y ya corregida) por
+/// El texto dictado siempre acaba en «… {last_turn}»: sustituye la ÚLTIMA
+/// aparición de `old_turn` (el recién dictado y ya corregido) por
 /// `new_turn`. Devuelve `None` si `old_turn` está vacío o ya no aparece.
 pub fn replace_last_turn(transcript: &str, old_turn: &str, new_turn: &str) -> Option<String> {
     if old_turn.is_empty() {
@@ -308,7 +304,7 @@ pub fn replace_last_turn(transcript: &str, old_turn: &str, new_turn: &str) -> Op
 mod tests {
     use super::*;
 
-    // ── Clasificador: dictado normal nunca se marca como corrección (≥5) ──
+    // ── Clasificador: un dictado normal nunca se marca como corrección (≥5) ──
 
     #[test]
     fn dictado_normal_no_se_marca_como_correccion() {
@@ -330,7 +326,7 @@ mod tests {
 
     #[test]
     fn numera_por_si_solo_es_dictado_normal() {
-        // §2: el numeral solo no basta — hace falta negación o verbo correctivo.
+        // Punto 2: el número solo no basta, hace falta negación o verbo.
         for turn in ["a las 4 en punto", "son las 9 y media", "el informe 2026"] {
             assert_eq!(classify(turn), CorrectiveDecision::Plain, "{turn:?}");
         }
@@ -338,7 +334,7 @@ mod tests {
 
     #[test]
     fn negacion_sin_objetivo_es_dictado_normal() {
-        // «no» idiomático en dictado cotidiano, sin numeral ni referencia.
+        // «no» de relleno en el habla diaria, sin número ni referencia.
         for turn in [
             "no me gusta el café",
             "no sé si vendrá mañana",
@@ -348,21 +344,21 @@ mod tests {
         }
     }
 
-    // ── Clasificador: intención correctiva → LLM (≥5) ─────────────────────
+    // ── Clasificador: intención de corregir → modelo (≥5) ───────────────────
 
     #[test]
     fn intencion_correctiva_se_envia_al_llm() {
         for turn in [
-            // Caso canónico de la spec (§5).
+            // El caso de ejemplo del documento (punto 5).
             "no no lo último está mal es 2 en vez de 4",
-            // Negación + referencia anafórica.
+            // Negación más referencia a lo dicho.
             "esto no, era lo otro",
             "eso no, quería decir el otro día",
-            // Verbo correctivo + numeral/referencia.
+            // Verbo de corrección más número o referencia.
             "quita la última palabra",
             "cambia eso",
             "pon dos en vez de cuatro",
-            // Negación + numeral.
+            // Negación más número.
             "me equivoqué, ese número no es",
             "no era 4, era 2",
         ] {
@@ -385,19 +381,19 @@ mod tests {
         }
     }
 
-    // ── Sustitución sin verbo independiente (bug Juanfri 09/09/2026) ─────
+    // ── Sustitución sin verbo aparte (fallo de Juanfri, 09/09/2026) ─────────
     //
-    // Antes del fix, «2 en vez de 4» se evaluaba como (subst NO matcheaba,
-    // no había verb) → (false || false) → Plain. La frase cotidiana que
-    // motiva la corrección IA (spec §5) nunca llegaba al LLM. El nuevo
-    // marcador `SUBSTITUTION_MARKER` cubre la construcción «X en vez de Y»
-    // (y variantes) como señal correctiva suficiente para la regla de los
-    // dos niveles. Estos tests blindan esa conducta: si alguien recorta el
-    // regex a su forma original, fallan al instante.
+    // Antes del arreglo, «2 en vez de 4» se veía como (subst no encajaba y
+    // no había verbo) → (false || false) → Plain. La frase de todos los días
+    // que motiva la corrección IA (punto 5) nunca llegaba al modelo. La marca
+    // nueva `SUBSTITUTION_MARKER` cubre «X en vez de Y» (y variantes) como
+    // señal suficiente para la regla de los dos niveles. Estos tests protegen
+    // esa conducta: si alguien recorta la regla a como estaba, fallan al
+    // momento.
 
     #[test]
     fn correccion_minima_con_en_vez_de_llega_al_llm() {
-        // Caso reportado por Juanfri como «no llama al LLM». Ahora va.
+        // El caso que reportó Juanfri como «no llama al modelo». Ahora va.
         for turn in [
             "2 en vez de 4",
             "cinco en vez de seis",
@@ -417,16 +413,15 @@ mod tests {
 
     #[test]
     fn en_vez_de_sin_numeral_o_referencia_no_es_correccion() {
-        // «X en vez de Y» sin numeral explícito ni referencia anafórica
-        // no tiene ancla sobre la que el LLM pueda buscar `find`: el
-        // clasificador la trata como Plain. Esto filtra casos coloquiales
-        // («lo hice en vez de descansar») que NO son corrección del
-        // último turno.
+        // «X en vez de Y» sin número ni referencia a lo dicho no tiene de
+        // dónde agarrarse para buscar `find`: el clasificador lo trata como
+        // Plain. Así se filtran frases coloquiales («lo hice en vez de
+        // descansar») que NO corrigen el último turno.
         //
-        // «en vez de eso prefiero callar» SÍ matchea REFERENCE («eso»)
-        // y por tanto va al LLM: el usuario está apuntando a algo del
-        // turno anterior. Lo excluimos del grupo Plain (es la conducta
-        // correcta, no un bug).
+        // «en vez de eso prefiero callar» SÍ encaja en REFERENCE («eso») y por
+        // tanto va al modelo: el usuario está señalando algo del turno
+        // anterior. Lo dejamos fuera del grupo Plain (es la conducta correcta,
+        // no un fallo).
         for turn in ["lo hice en vez de descansar"] {
             assert_eq!(
                 classify(turn),
@@ -434,7 +429,7 @@ mod tests {
                 "debe ser Plain: {turn:?}"
             );
         }
-        // Sanity check: la variante con referencia sí va al LLM.
+        // Comprobación: la variante con referencia sí va al modelo.
         assert_eq!(
             classify("en vez de eso prefiero callar"),
             CorrectiveDecision::NeedsLlm,
@@ -444,8 +439,8 @@ mod tests {
 
     #[test]
     fn correccion_con_solo_negacion_y_numeral_llega_al_llm() {
-        // Variantes coloquiales que ya estaban en los tests previos pero
-        // que conviene blindar con su forma exacta.
+        // Variantes coloquiales que ya estaban en los tests de antes pero que
+        // conviene dejar fijadas con su forma exacta.
         for turn in ["no, es 3", "no es 4", "no, era 5"] {
             assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
         }
@@ -453,8 +448,8 @@ mod tests {
 
     #[test]
     fn correccion_con_cambia_por_y_verb_llega_al_llm() {
-        // «cambia X por Y» tiene verbo correctivo + marcador de sustitución
-        // + numerales: ratio alto, va seguro al LLM.
+        // «cambia X por Y» lleva verbo + marca de sustitución + números:
+        // puntúa alto y va seguro al modelo.
         for turn in ["cambia 5 por 6", "cambia cuatro por cinco"] {
             assert_eq!(classify(turn), CorrectiveDecision::NeedsLlm, "{turn:?}");
         }
@@ -462,9 +457,9 @@ mod tests {
 
     #[test]
     fn por_aislado_no_es_marcador_de_sustitucion() {
-        // «por» es demasiado común en español («voy por el pan», «gracias
-        // por», «por la mañana»). El marcador exige la construcción
-        // completa «cambia por» / «en vez de» / etc.
+        // «por» se usa demasiado en español («voy por el pan», «gracias por»,
+        // «por la mañana»). La marca pide la construcción entera
+        // «cambia por» / «en vez de» / etc.
         for turn in [
             "voy por el pan",
             "gracias por todo",
@@ -481,16 +476,15 @@ mod tests {
 
     #[test]
     fn marcador_sustitucion_sin_objetivo_es_dictado_normal() {
-        // «en vez de» sin numeral ni referencia: falla la regla de los
-        // dos niveles (no hay a qué sustituir). Sirve de red de seguridad
-        // para frases coloquiales en las que «en vez de» aparece como
-        // construcción narrativa, no como corrección.
+        // «en vez de» sin número ni referencia: no pasa la regla de los dos
+        // niveles (no hay qué sustituir). Sirve de red para frases
+        // coloquiales donde «en vez de» es narrativo y no corrige nada.
         for turn in ["lo hice en vez de descansar", "lo prefiero en vez de eso"] {
-            // «lo prefiero en vez de eso» lleva referencia («eso»), así
-            // que en realidad SÍ pasa la regla y va al LLM (por
-            // construcción). Lo excluimos del grupo Plain para no mentir
-            // sobre la conducta: si el usuario tiene contexto y dice
-            // «eso» refiriendose al último turno, sí queremos enrutar.
+            // «lo prefiero en vez de eso» lleva referencia («eso»), así que en
+            // realidad SÍ pasa la regla y va al modelo (por construcción). Lo
+            // dejamos fuera del grupo Plain para no mentir sobre la conducta:
+            // si el usuario tiene contexto y dice «eso» refiriéndose al turno
+            // anterior, sí queremos mandarlo.
             if turn.contains("eso") || turn.contains("esto") {
                 continue;
             }
@@ -500,8 +494,8 @@ mod tests {
 
     #[test]
     fn umbral_cero_tambien_apaga_la_correccion_por_sustitucion() {
-        // Aunque la nueva señal «subst» pase la regla de los dos niveles,
-        // threshold=0 sigue siendo el atajo «corrección IA off».
+        // Aunque la señal «subst» pase la regla de los dos niveles, un
+        // umbral de 0 sigue siendo el atajo «corrección IA apagada».
         for turn in ["2 en vez de 4", "5 en lugar de 4", "cambia 5 por 6"] {
             assert_eq!(
                 classify_with(turn, 0),
@@ -513,9 +507,9 @@ mod tests {
 
     #[test]
     fn umbral_alto_puede_filtrar_la_sustitucion_minima() {
-        // «2 en vez de 4» puntúa 3/5 (ratio 75) gracias al bonus. Con
-        // threshold 80 cae; con threshold 70 pasa. Test bidireccional para
-        // detectar cambios accidentales en la puntuación.
+        // «2 en vez de 4» saca 3/5 (75) gracias al extra. Con umbral 80 no
+        // pasa; con 70 sí. El test va en los dos sentidos para pillar
+        // cambios de puntuación sin querer.
         let minimal = "2 en vez de 4";
         assert_eq!(
             classify_with(minimal, 50),
@@ -532,7 +526,7 @@ mod tests {
             CorrectiveDecision::Plain,
             "80 cae (ratio 75 < 80)"
         );
-        // El canónico de la spec puntúa más alto (4 señales) y aguanta más.
+        // El caso del documento saca más (4 señales) y aguanta más.
         let canonico = "no no lo último está mal es 2 en vez de 4";
         assert_eq!(
             classify_with(canonico, 80),
@@ -541,13 +535,13 @@ mod tests {
         );
     }
 
-    // ── Umbral del clasificador (spec §2): modula sensibilidad ────────────
+    // ── Umbral del clasificador (punto 2): regula la sensibilidad ───────────
 
     #[test]
     fn clasificador_default_thresholds_son_consistentes() {
-        // classify(turn) == classify_with(turn, 50) por contrato: el
-        // default preserva la conducta previa (todo lo que pasa la regla
-        // de los dos niveles va al LLM).
+        // classify(turn) == classify_with(turn, 50) por contrato: el valor
+        // por defecto deja la conducta de antes (todo lo que pasa la regla
+        // de los dos niveles va al modelo).
         for turn in [
             "no no lo último está mal es 2 en vez de 4",
             "esto no, era lo otro",
@@ -561,7 +555,7 @@ mod tests {
 
     #[test]
     fn umbral_cero_apaga_la_correccion() {
-        // §2: threshold 0 = clasificador pasivo (atajo equivalente al toggle off).
+        // Punto 2: umbral 0 = clasificador apagado (atajo igual que quitar la corrección).
         for turn in [
             "no no lo último está mal es 2 en vez de 4",
             "esto no, era lo otro",
@@ -578,33 +572,32 @@ mod tests {
 
     #[test]
     fn umbral_alto_filtra_los_casos_de_2_senales() {
-        // Con threshold > 50 (3/5=75, 4/5=90) los casos de solo 2 señales
-        // (ratio 50) caen. Subir el umbral = más conservador (precision
-        // > recall, spec §2).
+        // Con umbral > 50 (3/5=75, 4/5=90) los casos de solo 2 señales (50) se
+        // quedan fuera. Subir el umbral = más prudente (mejor no pasarse,
+        // punto 2).
         let ambiguo = "no era 4, era 2"; // neg + num = 2/5 → ratio 50
         assert_eq!(classify(ambiguo), CorrectiveDecision::NeedsLlm);
-        // Con threshold 60, ratio 50 < 60 → NO se enruta.
+        // Con umbral 60, 50 < 60 → NO se manda.
         assert_eq!(classify_with(ambiguo, 60), CorrectiveDecision::Plain);
-        // Con threshold 80 (muy conservador) tampoco.
+        // Con umbral 80 (muy prudente) tampoco.
         assert_eq!(classify_with(ambiguo, 80), CorrectiveDecision::Plain);
-        // El caso canónico (4/5 → ratio 90) sigue pasando con 80: solo
-        // muy conservador (≥ 95) lo filtra. Antes (sin marcador de
-        // sustitución) era 3/4 → ratio 75 → caía con 80. Ahora el bonus
-        // del subst lo hace más resistente — sigue la lógica de spec §2
-        // (precision > recall: si el turno huele a varias señales,
-        // conservamos la corrección).
+        // El caso del documento (4/5 → 90) sigue pasando con 80: solo un umbral
+        // muy alto (≥ 95) lo filtra. Antes (sin la marca de sustitución) era
+        // 3/4 → 75 → se quedaba fuera con 80. Ahora el extra del subst lo hace
+        // más resistente, siguiendo la lógica del punto 2 (mejor no pasarse:
+        // si el turno huele a varias señales, nos quedamos con la corrección).
         let canonico = "no no lo último está mal es 2 en vez de 4";
         assert_eq!(classify_with(canonico, 60), CorrectiveDecision::NeedsLlm);
         assert_eq!(classify_with(canonico, 80), CorrectiveDecision::NeedsLlm);
-        // Solo el threshold máximo (≥ 95) lo descarta.
+        // Solo el umbral máximo (≥ 95) lo descarta.
         assert_eq!(classify_with(canonico, 95), CorrectiveDecision::Plain);
     }
 
     #[test]
     fn umbral_bajo_no_relaja_la_regla_de_los_dos_niveles() {
-        // Aunque el umbral sea bajo, sigue vigente la regla base: sin
-        // (neg|verb) o sin (num|reference) NO se enruta (spec §2:
-        // «opción más segura es tratar el turno como dictado normal»).
+        // Aunque el umbral sea bajo, sigue valiendo la regla base: sin
+        // (negación|verbo) o sin (número|referencia) NO se manda (punto 2:
+        // «lo más seguro es tratar el turno como dictado normal»).
         for turn in [
             "no me gusta el café",
             "tengo dos reuniones",
@@ -622,9 +615,9 @@ mod tests {
 
     #[test]
     fn clasificador_default_es_el_50_que_preserva_la_conducta_previa() {
-        // El contrato: classify(t) == classify_with(t, 50). Verificamos
-        // contra un mix realista: el caso canónico y el «borra la última
-        // frase» que la v1 ya enrutaba.
+        // El contrato: classify(t) == classify_with(t, 50). Lo comprobamos con
+        // una mezcla realista: el caso del documento y el «borra la última
+        // frase» que la v1 ya mandaba.
         for turn in [
             "no no lo último está mal es 2 en vez de 4",
             "borra la última frase",
@@ -640,7 +633,7 @@ mod tests {
         }
     }
 
-    // ── apply_diff: sustitución correcta (≥5) ─────────────────────────────
+    // ── apply_diff: sustitución correcta (≥5) ───────────────────────────────
 
     #[test]
     fn apply_diff_sustituye_numerales() {
@@ -696,9 +689,9 @@ mod tests {
 
     #[test]
     fn apply_diff_sustituye_la_primera_ocurrencia() {
-        // §3.3: primera ocurrencia; el prompt pide que find sea único para
-        // numerales («lo último» suele ser la última, pero el contrato puede
-        // pedir una subcadena más larga que la haga única).
+        // Punto 3.3: primera aparición; el prompt pide que find sea único para
+        // los números («lo último» suele ser lo último, pero el contrato puede
+        // pedir un trozo más largo que lo haga único).
         let diff = Diff {
             find: "4".into(),
             replace: "2".into(),
@@ -709,7 +702,7 @@ mod tests {
         );
     }
 
-    // ── apply_diff: diff inválido → None, nunca muta ──────────────────────
+    // ── apply_diff: cambio inválido → None, nunca toca el texto ─────────────
 
     #[test]
     fn diff_invalido_no_muta_texto() {
@@ -723,11 +716,11 @@ mod tests {
             replace: "X".into(),
         };
         assert_eq!(apply_diff("la reunión es a las 4", &vacio), None);
-        // El texto original queda intacto tras los intentos.
+        // El texto original queda intacto después de los intentos.
         assert_eq!(apply_diff("la reunión es a las 4", &ausente), None);
     }
 
-    // ── replace_last_turn: última ocurrencia del turno en el transcript ───
+    // ── replace_last_turn: última aparición del turno en el texto dictado ────
 
     #[test]
     fn replace_last_turn_actualiza_el_final_del_transcript() {
@@ -754,7 +747,7 @@ mod tests {
         assert_eq!(replace_last_turn("Hola", "no está", "X"), None);
     }
 
-    // ── Caso canónico de la spec (§7) ─────────────────────────────────────
+    // ── Caso de ejemplo del documento (punto 7) ─────────────────────────────
 
     #[test]
     fn caso_canonico_completo_cuatro_a_dos() {
@@ -776,7 +769,7 @@ mod tests {
         assert_eq!(fixed, "La reunión es a las 2");
     }
 
-    // ── Undo (spec §4.3): restaura `before` tras `after` ──────────────────
+    // ── Deshacer (punto 4.3): vuelve a `before` después de `after` ──────────
 
     #[test]
     fn undo_restaura_el_estado_anterior() {
@@ -792,15 +785,15 @@ mod tests {
         .unwrap();
         let fixed = replace_last_turn(transcript, turn, &after).unwrap();
 
-        // Deshacer = reemplazar el turno corregido por el original.
+        // Deshacer = cambiar el turno corregido por el original.
         let undone = replace_last_turn(&fixed, &after, turn).unwrap();
         assert_eq!(undone, transcript);
     }
 
     #[test]
     fn apply_diff_preserva_el_resto_del_texto() {
-        // Solo cambia el fragmento objetivo; ni prefijo ni sufijo se tocan
-        // (importante para el undo de 1 nivel en app.rs).
+        // Solo cambia el trozo en cuestión; ni el principio ni el final se
+        // tocan (importante para deshacer un solo paso en app.rs).
         let diff = Diff {
             find: "4".into(),
             replace: "2".into(),
@@ -818,18 +811,18 @@ mod tests {
         assert_eq!(restored, "la reunión es a las 4 en punto");
     }
 
-    // ── Auto-corrección IN-TURNO (t_78d9e1fa) ─────────────────────────────
+    // ── Auto-corrección DENTRO del turno (t_78d9e1fa) ──────────────────────
     //
     // Modo principal desde el 10/09/2026. El usuario dicta y se corrige
     // sobre la marcha en el MISMO turno («que calor en murcia digo
-    // cartagena»). El clasificador cross-turn NO lo detecta porque no hay
-    // referencia al texto previo: la «corrección» apunta al fragmento
-    // ANTERIOR del propio turno. `classify_in_turn` lo reconoce por
-    // marcadores típicos de meta-lengua correctiva hablada.
+    // cartagena»). El clasificador de un turno a otro NO lo ve porque no hay
+    // referencia a lo dicho antes: la corrección apunta al trozo ANTERIOR del
+    // propio turno. `classify_in_turn` lo reconoce por las marcas típicas de
+    // meta-lengua hablada.
 
     #[test]
     fn caso_canonico_in_turn_murcia_a_cartagena() {
-        // El caso que motivó la task t_78d9e1fa, transcrito verbatim.
+        // El caso que dio pie al task t_78d9e1fa, transcrito tal cual.
         assert!(classify_in_turn(
             "que calor que hace en murcia digo cartagena"
         ));
@@ -838,27 +831,27 @@ mod tests {
     #[test]
     fn in_turn_detecta_marcadores_tipicos_de_auto_correccion() {
         for turn in [
-            // «digo X» — la forma más natural de corregirse sobre la marcha.
+            // «digo X»: la forma más natural de corregirse sobre la marcha.
             "el informe es de enero digo febrero",
             "voy a ir a madrid digo a barcelona",
-            // «quiero decir X» — variante formal.
+            // «quiero decir X»: variante formal.
             "el plazo es mañana quiero decir el viernes",
-            // «quise decir X» — pasado.
+            // «quise decir X»: en pasado.
             "nací en el 80 quise decir en el 85",
             // «mejor dicho X».
             "la reunión es en sala 3 mejor dicho sala 5",
-            // «mejor X» — esta construcción NO la cubrimos en in-turn porque es
+            // «mejor X»: esta NO la cubrimos dentro del turno porque es
             // demasiado ambigua («mejor libro», «mejórate», «el mejor de
-            // todos»). El LLM la maneja vía prompt si aparece con un
-            // sustantivo después, pero el clasificador no la usa como
-            // señal porque dispara demasiados falsos positivos. Si en
-            // el futuro se quiere cobertura, añadir un marcador explícito
-            // tipo «mejor: X» o «es mejor X» en el regex.
-            // «X en vez de Y» in-turn (no referencia anafórica).
+            // todos»). El modelo la maneja por el prompt si aparece con un
+            // sustantivo detrás, pero el clasificador no la usa como señal
+            // porque da demasiados falsos positivos. Si algún día se quiere
+            // cubrir, añadir una marca clara tipo «mejor: X» o «es mejor X»
+            // a la regla.
+            // «X en vez de Y» dentro del turno (sin referencia a lo anterior).
             "el presupuesto es 1000 en vez de 500",
             // «dime X» coloquial.
             "nos vemos el lunes dime el martes",
-            // «diga X» / «diga: X» (variante, p.ej. eco de una instrucción).
+            // «diga X» / «diga: X» (variante, por ejemplo el eco de una instrucción).
             "el password es 1234 diga 5678",
         ] {
             assert!(
@@ -870,8 +863,8 @@ mod tests {
 
     #[test]
     fn in_turn_no_detecta_dictado_normal_sin_meta_lengua() {
-        // Turnos cotidianos sin marcadores correctivos: SIEMPRE Plain.
-        // Estos son los falsos positivos que tenemos que blindar.
+        // Turnos del día a día sin marcas de corrección: SIEMPRE Plain.
+        // Estos son los falsos positivos que hay que blindar.
         for turn in [
             "la reunión es el jueves a las cuatro",
             "tengo que llamar al médico mañana",
@@ -894,9 +887,9 @@ mod tests {
 
     #[test]
     fn in_turn_respeta_longitud_minima_y_contenido_anterior() {
-        // Turnos demasiado cortos no son corrección (un «digo sí» es
-        // respuesta, no rectificación). El clasificador exige ≥ 6 chars y
-        // ≥ 3 chars antes del marcador.
+        // Los turnos demasiado cortos no son corrección (un «digo sí» es
+        // respuesta, no rectificación). El clasificador pide ≥ 6 caracteres y
+        // ≥ 3 antes de la marca.
         assert!(!classify_in_turn("digo 5"), "demasiado corto");
         assert!(!classify_in_turn("no, 5"), "sin 'antes' suficiente");
         assert!(!classify_in_turn("si digo 5"), "solo 2 chars antes");
@@ -904,23 +897,22 @@ mod tests {
 
     #[test]
     fn in_turn_detecta_diga_idiomático_para_que_el_llm_decida() {
-        // «que diga lo que quiera» contiene «diga», un marcador. Antes
-        // hay 3 chars («que»), después 12 («lo que quiera»): pasa los
-        // filtros. El clasificador lo marca como candidato a redacción;
-        // el LLM (no el clasificador) decide si hay corrección real o
-        // no. Si no la hay, devuelve el texto sin cambios — el coste es
-        // una llamada al LLM por cada «diga» coloquial. Es un trade-off
-        // aceptable: mejor una llamada extra en falso positivo que
-        // perder la auto-corrección legítima «el informe es de enero
-        // digo febrero». El clasificador debe ser PERMISIVO con la
-        // detección; el LLM es quien tiene la última palabra sobre si
-        // realmente hay que reescribir.
+        // «que diga lo que quiera» lleva «diga», que es una marca. Antes hay 3
+        // caracteres («que»), después 12 («lo que quiera»): pasa los filtros.
+        // El clasificador lo marca como candidato a reescribir; el modelo (no
+        // el clasificador) decide si de verdad hay corrección. Si no la hay,
+        // devuelve el texto sin cambios: el coste es una llamada al modelo por
+        // cada «diga» del habla diaria. Es un precio aceptable: mejor una
+        // llamada de más que perder la autocorrección legítima «el informe es
+        // de enero digo febrero». El clasificador debe ser PERMISIVO al
+        // detectar; el modelo tiene la última palabra sobre si hay que
+        // reescribir.
         assert!(classify_in_turn("que diga lo que quiera"));
     }
 
     #[test]
     fn in_turn_exige_contenido_despues_del_marcador() {
-        // «digo» / «mejor» sin nada después NO es corrección (el LLM no
+        // «digo» / «mejor» sin nada después NO es corrección (el modelo no
         // tendría con qué sustituir).
         assert!(!classify_in_turn("el informe es de enero digo"));
         assert!(!classify_in_turn("el plazo es mañana mejor"));
@@ -929,10 +921,10 @@ mod tests {
 
     #[test]
     fn in_turn_disabled_desactiva_la_deteccion() {
-        // El kill-switch del modo in-turn: si enabled=false, siempre
-        // devuelve false (cae al flujo cross-turn / Plain). Esto permite
-        // al usuario desactivar este modo en el futuro sin tocar el
-        // clasificador cross-turn.
+        // El interruptor del modo dentro del turno: si enabled=false, siempre
+        // devuelve false (se va al camino de un turno a otro / Plain). Así se
+        // puede apagar este modo en el futuro sin tocar el clasificador de un
+        // turno a otro.
         assert!(!classify_in_turn_with(
             "que calor en murcia digo cartagena",
             false
@@ -941,17 +933,17 @@ mod tests {
 
     #[test]
     fn in_turn_no_se_solapa_con_cross_turn_en_casos_conocidos() {
-        // El clasificador in-turn detecta el caso de Juanfri (sin
-        // referencia previa) que cross-turn NO detecta. Y un caso
-        // puramente cross-turn (sin «digo» ni «quiero decir», solo
-        // referencia anafórica) NO lo detecta in-turn.
+        // El clasificador dentro del turno pilla el caso de Juanfri (sin
+        // referencia previa) que el de un turno a otro NO pilla. Y un caso puro
+        // de un turno a otro (sin «digo» ni «quiero decir», solo referencia a
+        // lo dicho) NO lo pilla el de dentro del turno.
         //
-        // Caso mixto: «no no lo último está mal es 2 en vez de 4» lo
-        // detecta TANTO cross-turn (referencia + subst) COMO in-turn
-        // («en vez de» es marcador in-turn). En `app.rs` el orden de
-        // decisión es in-turn primero (t_78d9e1fa), así que ese turno
-        // entra por el camino de redacción. Aquí solo documentamos el
-        // solapamiento: ambas detecciones son válidas.
+        // Caso mixto: «no no lo último está mal es 2 en vez de 4» lo pillan LOS
+        // DOS, el de un turno a otro (referencia + subst) y el de dentro del
+        // turno («en vez de» es una marca de dentro). En `app.rs` el orden de
+        // decisión es primero el de dentro del turno (t_78d9e1fa), así que ese
+        // turno entra por el camino de reescritura. Aquí solo dejamos apuntado
+        // el solapamiento: las dos detecciones valen.
         let in_turn_only = "que calor en murcia digo cartagena";
         let cross_turn_only = "no no lo último está mal es 4";
         let both = "no no lo último está mal es 2 en vez de 4";
@@ -962,25 +954,26 @@ mod tests {
         assert!(!classify_in_turn(cross_turn_only));
         assert_eq!(classify(cross_turn_only), CorrectiveDecision::NeedsLlm);
 
-        // Solapamiento esperado: ambos clasificadores lo ven, y eso es OK.
+        // Solapamiento esperado: los dos clasificadores lo ven, y está bien.
         assert!(classify_in_turn(both));
         assert_eq!(classify(both), CorrectiveDecision::NeedsLlm);
     }
 
     #[test]
     fn in_turn_murcia_a_cartagena_es_la_redaccion_correcta() {
-        // Spec completa del task t_78d9e1fa, no solo el clasificador:
-        // verifica que el FLUJO completo (in-turn → redact LLM →
-        // texto limpio) produce el resultado esperado. La parte del LLM
-        // se mockea devolviendo directamente el texto corregido
-        // (simulando el output del corrector); el contrato es que
-        // `redact()` hace trim y devuelve exactamente ese texto.
+        // Documento entero del task t_78d9e1fa, no solo el clasificador:
+        // comprueba que el FLUJO completo (dentro del turno → reescritura con
+        // el modelo → texto limpio) da lo que se espera. La parte del modelo se
+        // simula devolviendo directamente el texto corregido; el contrato es
+        // que `redact()` quita espacios sobrantes y devuelve exactamente ese
+        // texto.
         //
-        // El test formal del redact real vive en src/llm.rs (`redact`
-        // trim + fallback). Aquí validamos la lógica de orquestación.
+        // El test de verdad de `redact` está en src/llm.rs (quita espacios y
+        // usa el texto de entrada si no hay nada). Aquí se prueba la lógica de
+        // coordinación.
         let raw_turn = "que calor que hace en murcia digo cartagena";
         assert!(classify_in_turn(raw_turn));
-        // Lo que el LLM debería devolver (contrato del prompt redact):
+        // Lo que el modelo debería devolver (contrato del prompt de reescritura):
         let expected_clean = "que calor que hace en cartagena";
         assert_ne!(
             raw_turn, expected_clean,
@@ -992,15 +985,15 @@ mod tests {
         );
     }
 
-    // ── contains_in_turn_marker / strip_in_turn_meta (t_78d9e1fa) ─────────
+    // ── contains_in_turn_marker / strip_in_turn_meta (t_78d9e1fa) ──────────
     //
-    // Helpers que usa `app.rs` como red de seguridad tras el LLM:
+    // Ayudantes que usa `app.rs` como red de seguridad después del modelo:
     // si la respuesta del corrector todavía lleva meta-lengua, no la
-    // inyectamos (sería peor que el input original).
+    // escribimos (sería peor que el texto de entrada).
 
     #[test]
     fn contains_in_turn_marker_detecta_meta_lengua() {
-        // Caso canónico: el LLM «no hizo nada» y dejó el marcador.
+        // Caso típico: el modelo «no hizo nada» y dejó la marca.
         assert!(contains_in_turn_marker(
             "que calor en murcia digo cartagena"
         ));
@@ -1011,9 +1004,8 @@ mod tests {
 
     #[test]
     fn contains_in_turn_marker_no_falsa_alarma_en_texto_limpio() {
-        // Si el LLM aplicó correctamente la corrección, NO debe
-        // quedar ningún marcador en el output. La función debe
-        // distinguir limpiamente.
+        // Si el modelo aplicó bien la corrección, NO debe quedar ninguna marca
+        // en el resultado. La función tiene que distinguirlo sin dudas.
         for clean in [
             "que calor en cartagena",
             "la reunión es a las 4",
@@ -1029,11 +1021,10 @@ mod tests {
 
     #[test]
     fn contains_in_turn_marker_es_mas_laxo_que_classify_in_turn() {
-        // El detector valida SOLO que el marcador esté, sin exigir
-        // contenido antes/después. Esto cubre el caso límite en el
-        // que el LLM deja solo el fragmento de meta-lengua suelto.
-        // `classify_in_turn` rechazaría estos por su filtro mínimo;
-        // `contains_in_turn_marker` los detecta como residuo.
+        // El detector solo mira que la marca esté, sin pedir contenido antes ni
+        // después. Así cubre el caso límite en el que el modelo deja solo el
+        // trozo de meta-lengua suelto. `classify_in_turn` los rechazaría por su
+        // filtro mínimo; `contains_in_turn_marker` los ve como sobrante.
         assert!(!classify_in_turn("digo"));
         assert!(contains_in_turn_marker("digo"));
     }
@@ -1055,8 +1046,8 @@ mod tests {
 
     #[test]
     fn strip_in_turn_meta_devuelve_el_input_si_no_hay_marcador() {
-        // Sin marcador, el helper es no-op: devuelve el texto tal
-        // cual (no hay nada que extraer).
+        // Sin marca, el ayudante no hace nada: devuelve el texto tal cual (no
+        // hay nada que sacar).
         let normal = "la reunión es a las 4";
         assert_eq!(strip_in_turn_meta(normal), normal);
     }
