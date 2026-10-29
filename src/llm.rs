@@ -853,7 +853,7 @@ const NUM_WORDS: &[&str] = &[
 /// decisión correcta: el guard es pequeño, surgical, y auto-contenido.
 const NUMERIC_MARKER_REGEX: &str = r"(?i)\b(?:no\s+(.+?)\s+sino\b|(digo\b|diga\b|dime\b|quiero decir\b|quise decir\b|mejor dicho\b|en vez de\b|en lugar de\b))";
 
-/// Regex compilada perezosamente (fancy-regex tiene coste).
+/// Expresión regular ya compilada y guardada (fancy-regex cuesta compilarla).
 fn numeric_marker_regex() -> &'static fancy_regex::Regex {
     use std::sync::OnceLock;
     static RE: OnceLock<fancy_regex::Regex> = OnceLock::new();
@@ -863,7 +863,7 @@ fn numeric_marker_regex() -> &'static fancy_regex::Regex {
     })
 }
 
-/// ¿`token` es un numeral simple (dígito o palabra de la lista)?
+/// ¿`token` es un número simple (un dígito o una palabra de la lista)?
 fn is_numeric_token(token: &str) -> bool {
     let t = token.to_lowercase();
     if t.parse::<u64>().is_ok() {
@@ -872,8 +872,8 @@ fn is_numeric_token(token: &str) -> bool {
     NUM_WORDS.contains(&t.as_str())
 }
 
-/// ¿`text` contiene `token` como palabra completa (separada por
-/// whitespace o puntuación)?
+/// ¿`text` lleva `token` como palabra entera (separado por espacio o
+/// puntuación)?
 fn contains_token(text: &str, token: &str) -> bool {
     if token.is_empty() {
         return false;
@@ -882,15 +882,15 @@ fn contains_token(text: &str, token: &str) -> bool {
         .any(|t| t == token)
 }
 
-/// Quita la ÚLTIMA aparición de `token` (como palabra completa) de
-/// `text` y devuelve el resultado con los espacios saneados. Si no
-/// aparece, devuelve `None` (el caller decide el fallback).
+/// Quita la ÚLTIMA aparición de `token` (como palabra entera) de `text` y
+/// devuelve el resultado con los espacios arreglados. Si no aparece, devuelve
+/// `None` (quien llama decide qué hacer).
 fn strip_last_token(text: &str, token: &str) -> Option<String> {
     if token.is_empty() {
         return None;
     }
-    // Tokenizamos conservando los separadores para poder reconstruir
-    // los espacios correctamente.
+    // Se parte en palabras y se guardan también los separadores, para poder
+    // montar los espacios tal como estaban.
     let mut tokens: Vec<(String, bool)> = Vec::new();
     let mut current = String::new();
     let mut current_is_word = false;
@@ -910,7 +910,7 @@ fn strip_last_token(text: &str, token: &str) -> Option<String> {
     if !current.is_empty() {
         tokens.push((current, current_is_word));
     }
-    // Buscamos la última posición donde hay un token que coincide (case-insensitive).
+    // Se busca la última posición de una palabra que coincida (sin mirar mayúsculas).
     let mut last_idx: Option<usize> = None;
     for (i, (tok, is_word)) in tokens.iter().enumerate() {
         if *is_word && tok.to_lowercase() == token.to_lowercase() {
@@ -918,8 +918,8 @@ fn strip_last_token(text: &str, token: &str) -> Option<String> {
         }
     }
     let idx = last_idx?;
-    // Eliminamos el token y los separadores inmediatamente anteriores
-    // (espacios) para dejar el texto limpio.
+    // Se quita la palabra y los espacios que tiene justo delante, para dejar el
+    // texto limpio.
     let mut remove_from = idx;
     while remove_from > 0 {
         let (ref s, is_word) = tokens[remove_from - 1];
@@ -939,24 +939,23 @@ fn strip_last_token(text: &str, token: &str) -> Option<String> {
     Some(out)
 }
 
-/// Parsea el input buscando el patrón inequívoco «NUM_A [marker] NUM_B».
+/// Busca en el texto el patrón inequívoco «NUM_A [marca] NUM_B».
 ///
-/// Caso A (marcador simple: digo, en vez de, …):
-///   - `start` = inicio del marcador (ej. «digo»)
-///   - `end` = fin del marcador
-///   - `before` = input[..start] (NUM_A es el último NUMERAL de `before`,
-///     no necesariamente el último token: en habla natural el numeral
-///     lleva detrás sintagma nominal y/o verbo — «a tres personas, digo
-///     cuatro» — y el último token sería «personas»)
+/// Caso A (marca simple: digo, en vez de, …):
+///   - `start` = dónde empieza la marca (por ejemplo «digo»)
+///   - `end` = dónde acaba
+///   - `before` = input[..start] (NUM_A es el último NÚMERO de `before`, no
+///     necesariamente la última palabra: al hablar, el número lleva detrás
+///     sintagma nominal y/o verbo — «a tres personas, digo cuatro» — y la
+///     última palabra sería «personas»)
 ///   - `after` = input[end..] (NUM_B está al principio de `after`)
 ///
 /// Caso B («no X sino»):
-///   - el grupo 1 del regex captura X, que es la «pieza incorrecta»
-///     que el usuario sustituye. NUM_A = last_token(X).
-///   - `before` = input[..start_of_match] (lo que va antes del «no»,
-///     p.ej. en «no voy a las tres sino…» antes del «no» no hay
-///     nada útil; pero en frases más largas como «el precio es 4 no
-///     5 sino 6» antes del «no» sí hay contexto que mantener).
+///   - el grupo 1 de la expresión regular coge X, que es la «pieza equivocada»
+///     que el usuario cambia. NUM_A = last_token(X).
+///   - `before` = input[..start_of_match] (lo que va antes del «no»; en «no voy
+///     a las tres sino…» antes del «no» no hay nada útil, pero en frases más
+///     largas como «el precio es 4 no 5 sino 6» sí hay contexto que conservar).
 ///   - `after` = input[end_of_match..] (NUM_B está al principio).
 fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
     let re = numeric_marker_regex();
@@ -966,21 +965,20 @@ fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
     let end = m.end();
     let marker_text = m.as_str();
 
-    // NUM_B: primer numeral en `input[end..]`, saltando tokens de
-    // función. Igual para ambos casos.
+    // NUM_B: el primer número de `input[end..]`, saltando palabras de enlace.
+    // Igual en los dos casos.
     let after = input[end..].trim();
     let num_b = first_numeric_token(after)?;
     if count_numeric_tokens(after) != 1 {
         return None;
     }
 
-    // NUM_A depende del tipo de marcador:
-    // - Caso B («no X sino»): X está capturado en el grupo 1 y ES el
-    //   «antes» que se sustituye. NUM_A es el último numeral de X.
-    //   Pero además hay que mantener la parte de X que va ANTES de
-    //   NUM_A (p.ej. «no voy a las tres sino …» → conservamos «voy a
-    //   las» y solo sustituimos «tres»).
-    // - Caso A: NUM_A es el último token de `input[..start]`.
+    // NUM_A depende del tipo de marca:
+    // - Caso B («no X sino»): X está cogido en el grupo 1 y ES el «antes» que se
+    //   cambia. NUM_A es el último número de X. Pero además hay que conservar la
+    //   parte de X que va ANTES de NUM_A (por ejemplo «no voy a las tres sino …»
+    //   → se conserva «voy a las» y solo se cambia «tres»).
+    // - Caso A: NUM_A es el último número de `input[..start]`.
     let (before, num_a) = if let Some(x_match) = caps.get(1) {
         // Caso B: «no X sino».
         let x = x_match.as_str();
@@ -988,8 +986,8 @@ fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
         if !is_numeric_token(&last) {
             return None;
         }
-        // El «antes» final: lo que va antes del «no» + la parte de X
-        // que precede a NUM_A (sin incluir el numeral).
+        // El «antes» definitivo: lo que va antes del «no» + la parte de X que
+        // precede a NUM_A (sin el número).
         let prefix_before_no = input[..start].trim_end();
         let x_without_num = strip_last_token(x, &last).unwrap_or_default();
         let combined = if prefix_before_no.is_empty() {
@@ -1001,19 +999,18 @@ fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
         };
         (combined, last)
     } else {
-        // Caso A: NUM_A = el numeral RELEVANTE del «antes», es decir el
-        // ÚLTIMO numeral que aparece antes del marcador. NO exigimos que
-        // sea el último TOKEN: en habla natural el numeral va seguido de
-        // sintagma nominal y/o verbo («a tres personas, digo cuatro»,
-        // «a 23 personas que iban, digo, a 24»), así que el último token
-        // era «personas»/«iban», no el numeral, y el patrón no se
-        // detectaba (H1 del QA-REPORT-DEPURACION, log 14/09 03:19 y
-        // 13/09 01:37). Se toleran, por tanto, tokens funcionales y de
-        // contenido entre NUM_A y el marcador.
+        // Caso A: NUM_A = el número RELEVANTE del «antes», o sea el ÚLTIMO
+        // número que sale antes de la marca. NO se exige que sea la última
+        // PALABRA: al hablar, el número va seguido de sintagma nominal y/o verbo
+        // («a tres personas, digo cuatro», «a 23 personas que iban, digo, a 24»),
+        // así que la última palabra era «personas»/«iban» y el patrón no se
+        // detectaba (H1 del QA-REPORT-DEPURACION, log 14/09 03:19 y 13/09 01:37).
+        // Se admiten, por tanto, palabras de enlace y de contenido entre NUM_A y
+        // la marca.
         //
-        // Precisión > recall: el «antes» debe tener EXACTAMENTE un
-        // numeral. Con dos o más candidatos no se puede saber cuál es el
-        // que el usuario rectifica → no tocamos nada.
+        // Mejor no tocar que tocar mal: el «antes» tiene que llevar EXACTAMENTE
+        // un número. Con dos o más candidatos no hay forma de saber cuál
+        // rectifica el usuario → no se toca nada.
         let before_str = input[..start].trim();
         let last = last_numeric_token(before_str)?;
         if count_numeric_tokens(before_str) != 1 {
@@ -1022,8 +1019,8 @@ fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
         (before_str.trim_end().to_string(), last)
     };
 
-    // El «después» (todo lo que va tras el marcador): en el caso B hay
-    // que descontar X y «sino» (que ya están en el match, dentro de
+    // El «después» (todo lo que va tras la marca): en el caso B hay que
+    // descontar X y «sino» (que ya están dentro del trozo encontrado, así que en
     // `input[end..]` solo queda «Y …»).
     let _ = marker_text; // sólo documenta
 
@@ -1036,9 +1033,8 @@ fn parse_numeric_correction(input: &str) -> Option<NumericCorrection> {
     })
 }
 
-/// Primer token NUMÉRICO de un texto, saltando tokens de función
-/// («a», «las», «los», «el», «la», «de», «del», «al»). Devuelve `None`
-/// si no hay ningún numeral.
+/// Primer número de un texto, saltando palabras de enlace («a», «las», «los»,
+/// «el», «la», «de», «del», «al»). Devuelve `None` si no hay ningún número.
 fn first_numeric_token(s: &str) -> Option<String> {
     const FUNCTION_WORDS: &[&str] = &[
         "a", "al", "de", "del", "el", "la", "las", "lo", "los", "y", "o", "u",
@@ -1053,10 +1049,10 @@ fn first_numeric_token(s: &str) -> Option<String> {
                 return Some(current);
             }
             if !FUNCTION_WORDS.contains(&lower.as_str()) {
-                // Encontramos un token que no es numeral ni function
-                // word: el numeral real (si existe) viene DESPUÉS. Si
-                // ya pasamos tokens no-numéricos no-numerales, este
-                // turno no encaja en el patrón «NUM_B inmediato».
+                // Se ha encontrado una palabra que no es número ni palabra de
+                // enlace: el número de verdad (si está) viene DESPUÉS. Si ya han
+                // pasado palabras que no son ni una cosa ni la otra, este turno no
+                // encaja en el patrón «NUM_B seguido».
                 return None;
             }
             current.clear();
@@ -1069,7 +1065,7 @@ fn first_numeric_token(s: &str) -> Option<String> {
     }
 }
 
-/// Último token «palabra» de un texto (alfanumérico).
+/// Última palabra (alfanumérica) de un texto.
 fn last_token(s: &str) -> Option<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty())
@@ -1077,13 +1073,13 @@ fn last_token(s: &str) -> Option<String> {
         .map(|t| t.to_string())
 }
 
-/// Último token NUMÉRICO de un texto (dígito o palabra de `NUM_WORDS`),
-/// ignorando el resto de tokens. `None` si no hay ningún numeral.
+/// Último número de un texto (un dígito o una palabra de `NUM_WORDS`),
+/// saltándose el resto. `None` si no hay ninguno.
 ///
-/// Es la pieza que permite que NUM_A sea «tres» en «a tres personas,
-/// digo cuatro»: el numeral relevante no es el último TOKEN del
-/// fragmento anterior al marcador, sino el último NUMERAL de ese
-/// fragmento (H1 del QA-REPORT-DEPURACION).
+/// Es la pieza que permite que NUM_A sea «tres» en «a tres personas, digo
+/// cuatro»: el número que importa no es la última PALABRA del trozo anterior a
+/// la marca, sino el último NÚMERO de ese trozo (H1 del
+/// QA-REPORT-DEPURACION).
 fn last_numeric_token(s: &str) -> Option<String> {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty() && is_numeric_token(t))
@@ -1091,20 +1087,20 @@ fn last_numeric_token(s: &str) -> Option<String> {
         .map(|t| t.to_string())
 }
 
-/// Cuenta cuántos tokens numéricos hay en `s`.
+/// Cuenta cuántos números hay en `s`.
 fn count_numeric_tokens(s: &str) -> usize {
     s.split(|c: char| !c.is_alphanumeric())
         .filter(|t| !t.is_empty() && is_numeric_token(t))
         .count()
 }
 
-/// Extrae el texto a parsear de la respuesta JSON del LLM. Preferentemente
-/// `choices[0].message.content`; si está vacío cae a
-/// `choices[0].message.reasoning_content` (modelos de razonamiento con
-/// thinking implícito, p. ej. Qwen3.5-0.8B antes de aplicar
-/// `enable_thinking=false` en el body, o cualquier modelo que ignore el
-/// flag). Devuelve `None` solo si ambos están vacíos o faltan — el caller
-/// lo convierte en el error «la respuesta del LLM no trae content».
+/// Saca el texto que hay que leer de la respuesta JSON del modelo. Se prefiere
+/// `choices[0].message.content`; si está vacío se baja a
+/// `choices[0].message.reasoning_content` (modelos con razonamiento implícito,
+/// por ejemplo Qwen3.5-0.8B antes de mandar `enable_thinking=false` en la
+/// petición, o cualquiera que ignore esa marca). Devuelve `None` solo si los dos
+/// están vacíos o no vienen — quien llama lo convierte en el error «la respuesta
+/// del LLM no trae content».
 fn extract_message_text(value: &serde_json::Value) -> Option<&str> {
     let message = value
         .get("choices")
@@ -1123,9 +1119,9 @@ fn extract_message_text(value: &serde_json::Value) -> Option<&str> {
     None
 }
 
-/// Extrae `{find, replace}` del contenido generado, tolerante a fences
-/// ```json … ```, texto alrededor del JSON y comas finales. Si falta una
-/// clave, queda vacía (la validación real la hace `apply_diff`).
+/// Saca `{find, replace}` del texto generado, aguantando bloques ```json …
+/// ```, texto alrededor del JSON y comas de más al final. Si falta una clave, se
+/// queda vacía (quien valida de verdad es `apply_diff`).
 fn parse_diff(content: &str) -> Result<Diff, String> {
     let mut s = content.trim();
     for fence in ["```json", "```"] {
@@ -1137,16 +1133,15 @@ fn parse_diff(content: &str) -> Result<Diff, String> {
         s = rest.trim();
     }
 
-    // Localizar el objeto JSON a parsear. Caso simple: hay un único {...}
-    // en el texto → se toma directamente. Caso difícil (modelos de
-    // razonamiento): el bloque de pensamiento puede contener varios
-    // objetos JSON intermedios (planes, ejemplos, decisiones) antes del
-    // JSON final válido. El «primer `{` … último `}`» deja basura entre
-    // medias y serde falla; hay que encontrar el ÚLTIMO objeto
-    // balanceado.
+    // Localizar el objeto JSON que hay que leer. Caso fácil: hay un solo {...}
+    // en el texto → se coge tal cual. Caso difícil (modelos con razonamiento): el
+    // bloque de pensamiento puede llevar varios objetos JSON por el medio (planes,
+    // ejemplos, decisiones) antes del JSON bueno del final. Coger «del primer `{`
+    // al último `}`» deja basura por medio y serde falla; hay que encontrar el
+    // ÚLTIMO objeto con las llaves bien cerradas.
     let slice = last_balanced_json_object(s).unwrap_or(s);
     if slice != s {
-        // El caller puede inspeccionar el log si quiere; no es fatal.
+        // Quien llama puede mirarlo en el log si quiere; no es grave.
     }
 
     let value: serde_json::Value =
@@ -1165,25 +1160,25 @@ fn parse_diff(content: &str) -> Result<Diff, String> {
     })
 }
 
-/// Encuentra el último objeto `{…}` con llaves balanceadas en `s`. Ignora
-/// las llaves que aparezcan dentro de strings JSON (comillas escapadas o
-/// no). Si no encuentra ninguno, devuelve `None` y el caller cae al
-/// slice por defecto (que probablemente falle, pero mantiene el
-/// comportamiento previo). Pensado para razonamientos multiparte donde
-/// hay varios objetos JSON sueltos antes de la respuesta final.
+/// Encuentra el último objeto `{…}` con las llaves bien cerradas en `s`. Ignora
+/// las llaves que salgan dentro de cadenas JSON (con comillas escapadas o no).
+/// Si no encuentra ninguno, devuelve `None` y quien llama usa el trozo de antes
+/// (que probablemente falle, pero así se comporta igual que antes). Está pensado
+/// para razonamientos en varias partes, donde hay varios objetos JSON sueltos
+/// antes de la respuesta buena.
 fn last_balanced_json_object(s: &str) -> Option<&str> {
     let bytes = s.as_bytes();
     let mut i = bytes.len();
-    // Recorremos de derecha a izquierda buscando el inicio del último
-    // bloque {...} que serde_json pueda digerir.
+    // Se recorre de derecha a izquierda buscando dónde empieza el último bloque
+    // {...} que serde_json pueda tragarse.
     while i > 0 {
-        // Busca la próxima '}' que cierre un objeto de nivel 0.
+        // Se busca el siguiente '}' que cierre un objeto del primer nivel.
         if bytes[i - 1] != b'}' {
             i -= 1;
             continue;
         }
-        // Cuenta llaves desde esta '}' hacia atrás, ignorando las que
-        // estén dentro de strings.
+        // Se cuentan las llaves desde ese '}' hacia atrás, saltándose las que van
+        // dentro de cadenas.
         let mut depth: i32 = 0;
         let mut j = i;
         let mut in_string = false;
@@ -1208,8 +1203,8 @@ fn last_balanced_json_object(s: &str) -> Option<&str> {
                 b'{' => {
                     depth -= 1;
                     if depth == 0 {
-                        // j apunta al '{' de apertura, i a la '}' de
-                        // cierre (uno más allá del último char).
+                        // j apunta al '{' de apertura e i a la '}' de cierre
+                        // (uno más allá del último carácter).
                         return Some(&s[j..i]);
                     }
                 }
@@ -1217,34 +1212,35 @@ fn last_balanced_json_object(s: &str) -> Option<&str> {
                 _ => {}
             }
         }
-        // No encontró apertura para esta '}' — pasa a la anterior.
+        // No hubo apertura para ese '}' — se pasa al anterior.
         i -= 1;
     }
     None
 }
 
 // ---------------------------------------------------------------------------
-// Auto-inicio del servidor LLM local (requisito UX 09/09/2026: la app levanta
-// todo por sí misma). Detecta un llama-server ya corriendo, o lo lanza con el
-// modelo configurado, y espera a que /v1/models responda antes de declarar
-// «listo». Todo best-effort: si el server no puede levantarse, la corrección
-// IA se desactiva con aviso visible pero el dictado sigue funcionando.
+// Arranque automático del servidor local (requisito UX 09/09/2026: la app
+// levanta todo por sí misma). Detecta un llama-server que ya esté corriendo, o
+// lo lanza con el modelo configurado, y espera a que /v1/models conteste antes
+// de dar el «listo». Todo va a lo seguro: si el servidor no sale, la corrección
+// IA se apaga con aviso a la vista pero el dictado sigue funcionando.
 // ---------------------------------------------------------------------------
 
-/// ¿Responde el endpoint OpenAI-compatible? Llama al `GET {base}/models`
-/// (llama.cpp lo sirve en /v1/models) con timeout corto: es la señal «server
-/// vivo y modelo cargado». Un servidor que aún está cargando el GGUF responde
-/// 503 en /health pero /models solo responde cuando la carga acabó — usar
-/// /models es la forma fiable de esperar a que el modelo esté listo.
+/// ¿Contesta la dirección OpenAI-compatible? Hace `GET {base}/models` (llama.cpp
+/// lo sirve en /v1/models) con poco tiempo de espera: esa es la señal de
+/// «servidor vivo y modelo cargado». Un servidor que todavía está cargando el
+/// GGUF contesta 503 en /health, pero en /models solo contesta cuando la carga
+/// ha terminado — preguntar a /models es la forma fiable de esperar a que el
+/// modelo esté listo.
 pub fn server_alive(base_url: &str) -> bool {
     server_alive_auth(base_url, None)
 }
 
-/// Igual que `server_alive` pero enviando `Authorization: Bearer` cuando hay
-/// api_key. Los endpoints remotos (Custom/Cloud) suelen exigirla — sin la
-/// cabecera un 401 haría parecer «caído» un endpoint perfectamente sano —
-/// y llama.cpp la ignora si llega, así que es seguro mandarla siempre que
-/// el usuario la haya configurado.
+/// Igual que `server_alive`, pero manda `Authorization: *** cuando hay
+/// api_key. Las direcciones remotas (Custom/Cloud) suelen pedirla — sin la
+/// cabecera, un 401 haría parecer «caído» un servidor que está perfecto — y
+/// llama.cpp la ignora si llega, así que no pasa nada por mandarla siempre que
+/// el usuario la haya puesto.
 pub fn server_alive_auth(base_url: &str, api_key: Option<&str>) -> bool {
     let url = api_url(base_url, "models");
     let started = std::time::Instant::now();
@@ -1264,16 +1260,17 @@ pub fn server_alive_auth(base_url: &str, api_key: Option<&str>) -> bool {
     ok
 }
 
-/// ¿La base_url apunta al loopback? Solo para un endpoint local tiene sentido
-/// que la app arranque el servidor: cloud/custom remoto nunca se «levantan»
-/// desde aquí (los errores de conexión ya se muestran al dictar).
+/// ¿La dirección apunta a la propia máquina (loopback)? Solo tiene sentido que
+/// la app arranque el servidor para una dirección local: las remotas (nube o
+/// propias) nunca se «levantan» desde aquí (los errores de conexión ya se ven al
+/// dictar).
 pub fn is_local_endpoint(base_url: &str) -> bool {
     let rest = base_url
         .trim_start_matches("http://")
         .trim_start_matches("https://");
     let authority = rest.split('/').next().unwrap_or("");
-    // Extrae el host de la autoridad: quitando ":puerto" si lo hay (rsplit
-    // por ':' con el último segmento numérico) y los corchetes de IPv6.
+    // Se saca el host de la autoridad: quitando el «:puerto» si lo hay (el último
+    // trozo detrás de ':') y los corchetes de IPv6.
     let host = match authority.rfind(':') {
         Some(pos) if authority[pos + 1..].parse::<u16>().is_ok() => &authority[..pos],
         _ => authority,
@@ -1282,8 +1279,8 @@ pub fn is_local_endpoint(base_url: &str) -> bool {
     host.is_empty() || host == "127.0.0.1" || host == "localhost" || host == "::1"
 }
 
-/// Puerto del server local extraído de la base_url. Sin puerto explícito
-/// (o URL remota) → 8081, el default histórico de Silb.
+/// Puerto del servidor local sacado de la dirección. Sin puerto puesto (o con
+/// dirección remota) → 8081, el de siempre en Silb.
 pub fn port_from_base_url(base_url: &str) -> u16 {
     let rest = base_url
         .trim_start_matches("http://")
@@ -1296,31 +1293,31 @@ pub fn port_from_base_url(base_url: &str) -> u16 {
         .unwrap_or(8081)
 }
 
-/// Lanza el servidor LLM local como proceso NATIVO de Windows. El binario
-/// es `llama-server.exe` (D:\LlamaCPP, o la ruta configurada en Ajustes):
-/// build Clang 20/CUDA 13 con cublas64_13.dll junto al exe.
+/// Lanza el servidor local como proceso NATIVO de Windows. El binario es
+/// `llama-server.exe` (D:\LlamaCPP, o la ruta puesta en Ajustes): build Clang
+/// 20/CUDA 13 con cublas64_13.dll junto al exe.
 ///
-/// REGLA DE PRODUCTO (t_75732630): el server LLM se arranca SIEMPRE con el
-/// binario NATIVO de Windows, NUNCA vía `wsl.exe`. Un server WSL lanzado
-/// con la app queda huérfano al salir (bug t_9fbc886f), no es matable por
-/// nombre de imagen y atar el ciclo de vida de un server de escritorio a
-/// WSL es frágil. Este es el ÚNICO camino de arranque: cualquier otra ruta
-/// (WSL, wrapper `llama.exe`) se rechaza aquí.
+/// REGLA DE PRODUCTO (t_75732630): el servidor se arranca SIEMPRE con el binario
+/// NATIVO de Windows, NUNCA con `wsl.exe`. Un servidor en WSL lanzado con la app
+/// se queda huérfano al salir (fallo t_9fbc886f), no se puede matar por nombre
+/// de imagen y atar la vida de un servidor de escritorio a WSL es frágil. Este
+/// es el ÚNICO camino de arranque: cualquier otra ruta (WSL, el envoltorio
+/// `llama.exe`) se rechaza aquí.
 ///
-/// Detalles críticos del spawn (verificados con el binario real):
-/// - `current_dir` = directorio del exe (o `cuda/` si hay pack CUDA): el
-///   binario es un stub que carga `llama-server-impl.dll` y sus dependencias
-///   (cublas64_13.dll, ggml-*) desde ese directorio; lanzarlo con otro cwd
-///   puede fallar en la carga (STATUS_ENTRYPOINT_NOT_FOUND).
-/// - `CREATE_NO_WINDOW`: server sin consola (la app es GUI).
-/// - stdout/stderr redirigidos a `llama-server.log` junto a la config: sin
-///   consola los writes a stdout fallarían y el log permite diagnosticar
-///   arranques fallidos del server.
+/// Detalles del lanzamiento que importan (probados con el binario real):
+/// - `current_dir` = la carpeta del exe (o `cuda/` si hay paquete CUDA): el
+///   binario es un envoltorio que carga `llama-server-impl.dll` y sus
+///   dependencias (cublas64_13.dll, ggml-*) desde esa carpeta; lanzarlo desde
+///   otro cwd puede fallar al cargar (STATUS_ENTRYPOINT_NOT_FOUND).
+/// - `CREATE_NO_WINDOW`: servidor sin consola (la app es una ventana).
+/// - stdout/stderr van a `llama-server.log`, junto a la config: sin consola, lo
+///   que escriben a stdout fallaría, y el log permite mirar arranques que salen
+///   mal.
 ///
-/// El PID del proceso lanzado se registra en un global atómico
-/// (`LAUNCHED_SERVER_PID`): al salir, la app termina SOLO ese PID
-/// (`kill_launched_server`), nunca un server ajeno que ya escuchara en el
-/// puerto antes de abrir la app. Devuelve el PID del proceso lanzado.
+/// El PID del proceso lanzado se guarda en una variable global atómica
+/// (`LAUNCHED_SERVER_PID`): al salir, la app cierra SOLO ese PID
+/// (`kill_launched_server`), nunca un servidor ajeno que ya estuviera escuchando
+/// en el puerto antes de abrir la app. Devuelve el PID del proceso lanzado.
 #[cfg(target_os = "windows")]
 pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) -> Result<u32, String> {
     use std::os::windows::process::CommandExt;
@@ -1341,12 +1338,12 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
         ));
     }
     let cwd = exe.parent().map(|p| p.to_path_buf()).unwrap_or_default();
-    // Pack CUDA opcional junto al server vendado (`vendor/llama/cuda/`): el
-    // cwd pasa a ser ese directorio porque el cargador de backends de ggml
-    // busca los `ggml-*.dll` en el cwd y en el directorio del exe — y sus
-    // dependencias (cudart/cublas) se resuelven por PATH, así que el pack va
-    // al frente. Sin pack (o sin driver NVIDIA) se arranca desde el
-    // directorio del exe: CPU, y sin avisos.
+    // Paquete CUDA opcional junto al servidor embarcado (`vendor/llama/cuda/`):
+    // el cwd pasa a ser esa carpeta porque el cargador de backends de ggml busca
+    // los `ggml-*.dll` en el cwd y en la carpeta del exe — y lo que necesitan
+    // (cudart/cublas) se busca por PATH, así que el paquete va al frente. Sin
+    // paquete (o sin driver NVIDIA) se arranca desde la carpeta del exe: CPU y
+    // sin avisos.
     let cuda_dir = cwd.join("cuda");
     let use_cuda = cuda_dir.is_dir() && nvidia_driver_present();
     if cuda_dir.is_dir() && !use_cuda {
