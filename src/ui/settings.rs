@@ -1,22 +1,21 @@
-//! Espacio de trabajo de Ajustes: el frame `3:604` de Figma.
+//! Espacio de trabajo de Ajustes: la pantalla `3:604` de Figma.
 //!
-//! Fuente de verdad de medidas y colores: `design/openwhispr-figma/raw/
+//! Medidas y colores salen de `design/openwhispr-figma/raw/
 //! ajustes-design-context.txt` (capa a capa), `metadata-arbol-capas.txt`
-//! (coordenadas) y `raw/ajustes.png` (render). Todo el tono sale de
-//! [`crate::theme`]: aquí no hay literales de color.
+//! (coordenadas) y `raw/ajustes.png` (el dibujo). Todo el color sale de
+//! [`crate::theme`]: aquí no hay colores sueltos.
 //!
-//! Composición (1200×820): cabecera de página, navegación de pestañas (43 px,
-//! subrayado de 2 px en la activa), contenido de la pestaña activa con scroll y
-//! el pie con el atajo en keycaps. Las tarjetas de sección y sus filas de
-//! preferencia son los primitivos del diseño ([`section_block`],
-//! [`design_card`], [`preference_row`], [`wide_row`]).
+//! Cómo está montada (1200×820): cabecera de página, pestañas (43 px, con raya
+//! de 2 px en la activa), contenido de la pestaña con scroll y pie con el atajo
+//! en teclas. Las tarjetas de sección y sus filas son las piezas del diseño
+//! ([`section_block`], [`design_card`], [`preference_row`], [`wide_row`]).
 //!
 //! El estado sigue en [`WhisprApp`] (`settings_open`, `settings_section`,
-//! `palette_inputs`, …); este módulo solo dibuja. Las claves y los valores de
-//! `config` no cambian respecto a la UI anterior: es capa visual y orden.
+//! `palette_inputs`, …); este módulo solo dibuja. Las claves y valores del
+//! `config` no cambian respecto a la interfaz anterior: es capa visual y orden.
 //!
-//! Nota sobre las pestañas: el frame trae `Transcripción · Diccionario
-//! personal · Muletillas · General`; la app conserva sus cinco secciones
+//! Nota sobre las pestañas: el diseño trae `Transcripción · Diccionario
+//! personal · Muletillas · General`; la app mantiene sus cinco secciones
 //! (`General · Apariencia · Dictado · Corrección IA · Avanzado`) porque el
 //! reparto de contenido es el de siempre — el diseño aporta la forma, la altura
 //! y los estados (ver el cierre de la tarjeta).
@@ -41,13 +40,13 @@ use crate::theme::{self, Chrome, DesignType, UiPalette};
 use crate::transcribe::Model;
 use crate::ui::icons;
 
-/// Ancho de la columna de control (nodo `3:660`, el `Selection` de 250 px del
-/// frame Ajustes). Sale de [`theme::GRID_CONTROL_WIDTH`]: en esta vista no se
+/// Ancho de la columna de control (nodo `3:660`, los 250 px del marco de
+/// Ajustes). Sale de [`theme::GRID_CONTROL_WIDTH`]: en esta vista no se
 /// escribe ni una medida a mano.
 const CONTROL_WIDTH: f32 = theme::GRID_CONTROL_WIDTH;
 
-/// Rótulo de sección del diseño (12 px, secundario) + su tarjeta, separados
-/// por los 10 px que mide el frame (nodo `3:654`).
+/// Rótulo de sección del diseño (12 px, secundario) más su tarjeta, separados
+/// por los 10 px del diseño (nodo `3:654`).
 fn section_block<'a>(
     label: &str,
     card: Element<'a, Message>,
@@ -66,9 +65,9 @@ fn section_block<'a>(
     .into()
 }
 
-/// Tarjeta del diseño (`#1d1e24` + borde `#303139` + radio 12 = [`theme::card`])
-/// con sus filas separadas por el hairline interno del frame (entre filas, ni
-/// antes de la primera ni tras la última).
+/// Tarjeta del diseño (`#1d1e24` + borde `#303139` + esquina 12 = [`theme::card`])
+/// con sus filas separadas por la línea fina del diseño (entre filas, ni antes
+/// de la primera ni después de la última).
 fn design_card<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
     let mut card = Column::new().width(Length::Fill);
     for (i, row) in rows.into_iter().enumerate() {
@@ -84,10 +83,10 @@ fn design_card<'a>(rows: Vec<Element<'a, Message>>) -> Element<'a, Message> {
 }
 
 /// Columna de control de la rejilla: ancho FIJO (nodo `3:660`, 250 px) con el
-/// control pegado a su borde derecho. Es lo que hace que selects, campos,
-/// botones, interruptores e iconos de acción terminen en la MISMA x en las 5
-/// pestañas (el `Selection` de `3:667` comparte borde derecho con el switch de
-/// `3:692` y con el botón `Action` de `3:682`).
+/// control pegado a su borde derecho. Gracias a eso los desplegables, campos,
+/// botones, interruptores e iconos acaban en la MISMA x en las 5 pestañas (el
+/// `Selection` de `3:667` comparte borde derecho con el interruptor de `3:692`
+/// y con el botón `Action` de `3:682`).
 fn control_slot<'a>(control: Element<'a, Message>) -> Element<'a, Message> {
     container(control)
         .width(Length::Fixed(CONTROL_WIDTH))
@@ -97,11 +96,11 @@ fn control_slot<'a>(control: Element<'a, Message>) -> Element<'a, Message> {
         .into()
 }
 
-/// Interruptor de la rejilla: el switch pegado al borde derecho de la columna
-/// (nodo `3:692`: 36×22 con su borde derecho en la misma x que los selects) y,
-/// si lo hay, el texto de estado a su izquierda (nodo `3:691`, borde derecho a
-/// 20 px del switch). La fila es de ancho propio y la alinea `control_slot`, así
-/// que un estado más largo («Desactivada») NO desplaza el switch.
+/// Interruptor de la rejilla: pegado al borde derecho de la columna (nodo
+/// `3:692`: 36×22, con su borde derecho en la misma x que los desplegables) y,
+/// si lo hay, el texto de estado a su izquierda (nodo `3:691`, a 20 px del
+/// interruptor). La fila tiene ancho propio y la alinea `control_slot`, así que
+/// un estado más largo («Desactivada») NO mueve el interruptor.
 fn toggle_control<'a>(
     state: Option<&str>,
     value: bool,
@@ -113,7 +112,7 @@ fn toggle_control<'a>(
         .on_toggle(on_toggle)
         .size(theme::GRID_TOGGLE_SIZE)
         // iced reserva `spacing`/2 = 8 px para su etiqueta interna aunque no la
-        // use: sin ponerlo a 0, el switch dibujado queda 8 px antes del borde
+        // use: si no se pone a 0, el interruptor queda 8 px antes del borde
         // derecho de la columna.
         .spacing(0.0)
         .style(theme::toggler);
@@ -133,16 +132,16 @@ fn toggle_control<'a>(
 }
 
 /// Hueco de la columna de control para las filas informativas (sin control):
-/// el rótulo conserva los 606 px de la rejilla (nodo `3:657`).
+/// el rótulo se queda con los 606 px de la rejilla (nodo `3:657`).
 fn no_control<'a>() -> Element<'a, Message> {
     Space::new(0.0, 0.0).into()
 }
 
-/// Alto de una fila de preferencia: 68 px del diseño con el factor 1.0, pero
-/// escalado con la tipografía. La app permite subir el tamaño de fuente
-/// (Ajustes → Apariencia → Fuente) y una fila de 68 px FIJA recortaba la ayuda
-/// de 12 px: con factor 1.15 solo se veía el rótulo. Se calcula con las líneas
-/// reales (line-height 1.3 de iced) más los 15 px de inset de arriba y abajo.
+/// Alto de una fila de preferencia: 68 px del diseño con factor 1.0, pero
+/// escalado con la letra. La app deja subir el tamaño (Ajustes → Apariencia →
+/// Fuente) y una fila de 68 px FIJA recortaba la ayuda de 12 px: con factor
+/// 1.15 solo se veía el rótulo. Se calcula con las líneas reales (alto de línea
+/// 1.3 de iced) más los 15 px de margen de arriba y abajo.
 fn preference_row_height(ty: DesignType, has_help: bool) -> f32 {
     let line = |size: u16| size as f32 * 1.3;
     let content = if has_help {
@@ -164,9 +163,9 @@ fn model_row_height(ty: DesignType) -> f32 {
 
 /// Fila de preferencia de la rejilla (nodo `3:656`, 68 px): rótulo de 14 px
 /// medium con su ayuda de 12 px tenue a la izquierda y el control en la columna
-/// fija de la derecha, centrado verticalmente. Alto DERIVADO del tamaño de
-/// fuente (ver [`preference_row_height`]): la ayuda es de UNA línea; las
-/// explicaciones largas van en [`note_row`].
+/// fija de la derecha, centrado en vertical. El alto sale del tamaño de letra
+/// (ver [`preference_row_height`]): la ayuda es de UNA línea; las explicaciones
+/// largas van en [`note_row`].
 fn preference_row<'a>(
     label: &str,
     help: Option<&str>,
@@ -196,20 +195,20 @@ fn preference_row<'a>(
     .into()
 }
 
-/// Explicación larga de la app (el diseño no las trae): mismo inset horizontal
-/// que las filas (nodo `3:656`, x=20) y alto del contenido, para que el texto
-/// pueda ocupar las líneas que necesite sin recortarse en una fila de 68 px.
+/// Explicación larga (el diseño no las trae): el mismo margen lateral que las
+/// filas (nodo `3:656`, x=20) y alto del contenido, para que el texto use las
+/// líneas que necesite sin recortarse en una fila de 68 px.
 fn note_row<'a>(content: &str, color: Color, ty: DesignType) -> Element<'a, Message> {
     // `ui_text` (Shaping::Advanced): las notas llevan símbolos («⚠», «·»,
-    // «→») que necesitan el fallback por codepoint; con el shaping básico
-    // salían como cajas.
+    // «→») que se buscan en otras fuentes; con el dibujo básico salían como
+    // cajas.
     container(ui_text(content.to_string()).size(ty.body).color(color))
         .width(Length::Fill)
         .padding(row_padding())
         .into()
 }
 
-/// Inset de una fila de tarjeta: 15 px arriba y abajo, 20 a los lados (nodo
+/// Margen de una fila de tarjeta: 15 px arriba y abajo, 20 a los lados (nodo
 /// `3:656`: rótulo en x=20, y=15). Uno solo para todas las filas de las 5
 /// pestañas.
 fn row_padding() -> Padding {
@@ -222,7 +221,7 @@ fn row_padding() -> Padding {
 }
 
 /// Fila de tarjeta sin control a la derecha: el contenido ocupa todo el ancho
-/// (listas, formularios y compuestos) con el mismo inset que las filas de
+/// (listas, formularios y mezclas) con el mismo margen que las filas de
 /// preferencia.
 fn wide_row<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
     container(content)
@@ -232,9 +231,9 @@ fn wide_row<'a>(content: Element<'a, Message>) -> Element<'a, Message> {
 }
 
 impl WhisprApp {
-    /// Espacio de trabajo de Ajustes (frame `3:604` de Figma): cabecera de
-    /// página, navegación de pestañas, contenido de la pestaña activa (con
-    /// scroll) y pie con el atajo y el estado de guardado.
+    /// Espacio de trabajo de Ajustes (pantalla `3:604` de Figma): cabecera de
+    /// página, pestañas, contenido de la pestaña activa (con scroll) y pie con el
+    /// atajo y el estado de guardado.
     pub(crate) fn settings_view(
         &self,
         c: Chrome,
@@ -253,8 +252,8 @@ impl WhisprApp {
         .spacing(6.0)
         .width(Length::Fill);
 
-        // Solo el contenido de la pestaña activa hace scroll: la cabecera, la
-        // navegación y el pie del diseño quedan siempre a la vista.
+        // Solo hace scroll el contenido de la pestaña activa: la cabecera, las
+        // pestañas y el pie quedan siempre a la vista.
         let body = container(
             scrollable(self.settings_body(c, ty, t))
                 .style(theme::scrollable)
@@ -276,8 +275,7 @@ impl WhisprApp {
     }
 
     /// Contenido de la pestaña activa. Cada sección es una función privada: si
-    /// en el futuro se mueve un control, se mueve a la sección correcta sin
-    /// tocar las demás.
+    /// algún día se mueve un control, se mueve a su sección sin tocar las demás.
     fn settings_body(&self, c: Chrome, ty: DesignType, t: &UiPalette) -> Element<'_, Message> {
         match self.settings_section {
             SettingsSection::General => self.settings_section_general(c, ty, t),
@@ -288,8 +286,8 @@ impl WhisprApp {
         }
     }
 
-    /// `Settings footer` del diseño: atajo de dictado en keycaps a la izquierda
-    /// y el estado de guardado a la derecha.
+    /// `Settings footer` del diseño: el atajo de dictado en teclas a la
+    /// izquierda y el estado de guardado a la derecha.
     fn settings_footer(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let mut keys = row![].spacing(4.0).align_y(Alignment::Center);
         for key in self.hotkey_label.split('+').map(str::trim) {
@@ -319,10 +317,10 @@ impl WhisprApp {
     }
 
     /// ── Sección «General» ────────────────────────────────────────────────
-    /// Contenido del frame Ajustes de Figma (la pestaña de transcripción):
-    /// «Audio e idioma», «Modelo de voz» y «Al terminar el dictado», más los
-    /// bloques que la app tiene aquí desde siempre (diccionario y muletillas).
-    /// Solo capa visual: mismas claves y valores de config, mismos mensajes.
+    /// Contenido de la pantalla de Ajustes de Figma (la pestaña de
+    /// transcripción): «Audio e idioma», «Modelo de voz» y «Al terminar el
+    /// dictado», más los bloques que la app tiene aquí desde siempre (diccionario
+    /// y muletillas). Solo capa visual: mismas claves y valores, mismos mensajes.
     pub(crate) fn settings_section_general(
         &self,
         c: Chrome,
@@ -353,17 +351,17 @@ impl WhisprApp {
             .style(theme::pick_list)
             .into()
         };
-        // El hint de idioma ("default: es", "whisper decide") cuelga del campo
-        // como ayuda de la fila: el frame de Ajustes no lo trae, pero es
-        // información que la app ya daba.
+        // La pista del idioma ("default: es", "whisper decide") va como ayuda
+        // de la fila: el diseño no la trae, pero es información que la app ya
+        // daba.
         let lang_hint = language_hint(&self.config.language);
         let lang_help = if lang_hint.is_empty() {
             None
         } else {
             Some(lang_hint.as_str())
         };
-        // Idioma: el getter traduce "auto" a None y cualquier otro valor a
-        // Some(BCP-47) que se pasa a whisper.
+        // Idioma: el getter pasa "auto" a None y cualquier otro valor a
+        // Some(código) que se le da a whisper.
         let lang_control: Element<'_, Message> = pick_list(
             crate::app::LANGUAGE_OPTIONS
                 .iter()
@@ -394,10 +392,9 @@ impl WhisprApp {
             ty,
         ));
 
-        // ── Modelo de voz ───────────────────────────────────────────────
-        // Divergencia con el frame: el diseño muestra el modelo instalado y un
-        // botón «Cambiar modelo»; aquí el control sigue siendo el selector de
-        // modelos de siempre (no se inventa un flujo de instalación).
+        // Se separa del diseño: él enseña el modelo instalado y un botón
+        // «Cambiar modelo»; aquí el control sigue siendo el selector de modelos
+        // de siempre (no se inventa un flujo de instalación).
         let model = self.config.selected_model();
         let model_label = model.label().to_string();
         let model_size = model.approx_mb();
@@ -423,9 +420,9 @@ impl WhisprApp {
                 },
                 ..container::Style::default()
             });
-        // Nombre del modelo + badge «Instalado» (nodo `3:676`/`3:678`): solo
-        // si el GGML ya está en disco. Es información que el diseño muestra y
-        // que aquí además evita que el usuario se pregunte si está descargado.
+        // Nombre del modelo + etiqueta «Instalado» (nodo `3:676`/`3:678`): solo
+        // si el GGML ya está en el disco. Es lo que enseña el diseño y además
+        // evita que el usuario se pregunte si está descargado.
         let mut name_row = row![text(model_label)
             .size(ty.nav)
             .font(fonts::medium())
@@ -442,9 +439,9 @@ impl WhisprApp {
                 .align_y(Alignment::Center),
             );
         }
-        // Fila del modelo instalado (nodo `3:672`): 82 px = icono de 42 px + 20
-        // arriba y abajo; el botón/selector de la derecha acaba en el mismo
-        // borde que la columna de control de la rejilla (`3:682` x=770 → 896).
+        // Fila del modelo instalado (nodo `3:672`): 82 px = icono de 42 px más
+        // 20 arriba y abajo; el botón o selector de la derecha acaba en el mismo
+        // borde que la columna de control (`3:682` x=770 → 896).
         let model_row = container(
             row![
                 model_tile,
@@ -480,9 +477,9 @@ impl WhisprApp {
 
         // ── Al terminar el dictado ──────────────────────────────────────
         let ai_enabled = self.config.ai_correction_enabled();
-        // Interruptores de la rejilla: el switch siempre en la columna de
-        // control y el estado («Activada»/«Desactivada») a su izquierda, que
-        // no lo desplaza (nodos `3:691` y `3:692`).
+        // Interruptores de la rejilla: el interruptor siempre en la columna de
+        // control y el estado («Activada»/«Desactivada») a su izquierda, que no
+        // lo mueve (nodos `3:691` y `3:692`).
         let ai_control = toggle_control(
             Some(if ai_enabled {
                 "Activada"
@@ -537,10 +534,10 @@ impl WhisprApp {
             ty,
         ));
 
-        // ── Atajo de dictado (sprint final: editable, antes solo config.json)
-        // El campo va en la columna de control (250 px) y los botones en una
-        // fila propia alineada a la derecha: meter input + 2 botones en 250 px
-        // aplastaba el campo («Ctrl+S…» no se leía).
+        // ── Atajo de dictado (editable desde el sprint final; antes solo en
+        // config.json). El campo va en la columna de control (250 px) y los
+        // botones en una fila aparte a la derecha: meter el campo y 2 botones en
+        // 250 px aplastaba el campo («Ctrl+S…» no se leía).
         let shortcut_value = self
             .shortcut_input
             .clone()
@@ -625,8 +622,8 @@ impl WhisprApp {
                 .into(),
             ),
         ];
-        // Feedback de import/export: vive aquí para que sea visible
-        // mientras la sección General esté abierta.
+        // Aviso de importar/exportar: va aquí para que se vea mientras la
+        // sección General esté abierta.
         if let Some(corr) = &self.last_correction {
             if corr.contains("Diccionario") {
                 dict_rows.push(wide_row(text(corr).size(fs.sm).color(t.ok).into()));
@@ -664,8 +661,8 @@ impl WhisprApp {
             wide_row(filler_row.into()),
             wide_row(filler_lists(&self.config.fillers(), fs)),
         ];
-        // Botón «Por defecto»: solo aparece si el usuario ha personalizado las
-        // listas (config.fillers = Some).
+        // Botón «Por defecto»: solo sale si el usuario ha cambiado las listas
+        // (config.fillers = Some).
         if self.config.fillers.is_some() {
             filler_rows.push(wide_row(
                 row![button("Por defecto")
@@ -681,8 +678,8 @@ impl WhisprApp {
     /// ── Sección «Apariencia» ────────────────────────────────────────────
     /// Tema, burbuja flotante, imágenes propias y paleta editable, con la MISMA
     /// rejilla que General (columna de control de 250 px, filas de 68 px,
-    /// tarjetas con el mismo radio, borde e inset). Es la pestaña que se había
-    /// quedado con las medidas viejas: controles a lo ancho de la fila y
+    /// tarjetas con la misma esquina, borde y márgenes). Es la pestaña que se
+    /// había quedado con las medidas viejas: controles a lo ancho de la fila y
     /// ayudas sueltas fuera de la columna del rótulo.
     pub(crate) fn settings_section_appearance(
         &self,
@@ -696,8 +693,8 @@ impl WhisprApp {
             .width(Length::Fill);
 
         // ── Tema ────────────────────────────────────────────────────────
-        // El aviso «sigue a Windows» y el factor de fuente eran textos sueltos
-        // tras el select: pasan a la ayuda de su fila (nodo `3:659`), que es
+        // El aviso «sigue a Windows» y el factor de letra eran textos sueltos
+        // tras el desplegable: pasan a la ayuda de su fila (nodo `3:659`), que es
         // donde el diseño pone la descripción.
         let theme_help = if self.config.theme_mode() == ThemeMode::Auto {
             Some("sigue a Windows")
@@ -754,9 +751,9 @@ impl WhisprApp {
         ));
 
         // ── Burbuja flotante ────────────────────────────────────────────
-        // Los controles ya no ocupan la fila entera: van en la columna de
-        // control (los selects) o dentro de ella (los sliders), con el valor
-        // en el rótulo.
+        // Los controles ya no ocupan la fila entera: van en la columna de control
+        // (los desplegables) o dentro de ella (los deslizadores), con el valor en
+        // el rótulo.
         let op = u32::from(self.config.bubble_opacity());
         col = col.push(section_block(
             "Burbuja flotante",
@@ -818,8 +815,8 @@ impl WhisprApp {
                     c,
                     ty,
                 ),
-                // Opacidad: slider 20–100 %; el getter clampea aunque el slider
-                // nunca emita fuera de rango.
+                // Opacidad: control de 20–100 %; el getter lo limita aunque el
+                // control nunca emita fuera de rango.
                 preference_row(
                     &format!("Opacidad: {op}%"),
                     None,
@@ -876,18 +873,18 @@ impl WhisprApp {
         col.into()
     }
 
-    /// Filas de la tarjeta «Imágenes» dentro de Apariencia (Personalización
-    /// III): el usuario puede elegir su propia imagen de fondo de la ventana y
-    /// un sprite (estático o animado por frames) para la burbuja. Las rutas se
-    /// persisten como dato (nunca hardcoded); si fallan al renderizar, el
-    /// getter correspondiente devuelve `None` y la app pinta el render por
-    /// defecto (sin ventana negra ni crash). El botón «Quitar» de cada control
-    /// limpia la ruta en `config.json` y deja el aspecto original.
+    /// Filas de la tarjeta «Imágenes» de Apariencia (Personalización III): el
+    /// usuario puede elegir su imagen de fondo de la ventana y una imagen (fija
+    /// o animada por fotogramas) para la burbuja. Las rutas se guardan como
+    /// dato (nunca escritas en el código); si fallan al dibujar, el getter
+    /// devuelve `None` y la app pinta el aspecto de siempre (sin ventana negra
+    /// ni cierre). El botón «Quitar» de cada control borra la ruta del
+    /// `config.json` y deja el aspecto original.
     ///
-    /// Devuelve FILAS de tarjeta (no un `Element`): la rejilla de las 5
-    /// pestañas las coloca con el mismo inset que todas las demás, y las rutas
-    /// y explicaciones largas van en `note_row` (una fila de 68 px solo aguanta
-    /// una línea de ayuda).
+    /// Devuelve FILAS de tarjeta (no un `Element`): la rejilla de las 5 pestañas
+    /// las coloca con el mismo margen que las demás, y las rutas y explicaciones
+    /// largas van en `note_row` (una fila de 68 px solo aguanta una línea de
+    /// ayuda).
     pub(crate) fn settings_section_images(
         &self,
         c: Chrome,
@@ -917,10 +914,10 @@ impl WhisprApp {
         ));
         rows.push(note_row(&format!("Ruta actual: {bg_label}"), t.dim, ty));
 
-        // ── Imagen de la burbuja: UN solo archivo (sprint final) ─────────
-        // PNG/JPG/WebP = estática; GIF = animada (se decodifica en memoria).
-        // Las carpetas de frames legacy siguen funcionando si ya estaban
-        // configuradas, pero la UI ya no ofrece elegirlas (muy lioso).
+        // ── Imagen de la burbuja: UN solo fichero (sprint final) ─────────
+        // PNG/JPG/WebP = fija; GIF = animada (se saca a memoria). Las carpetas
+        // de imágenes de antes siguen funcionando si ya estaban configuradas,
+        // pero la interfaz ya no deja elegirlas (liaba mucho).
         let bubble_img_label = match self.config.bubble_image_path() {
             Some(p) => p,
             None => "(sin imagen; usando el render vectorial)",
@@ -975,9 +972,9 @@ impl WhisprApp {
         rows
     }
 
-    /// Control de una fila de imagen: «Elegir…» + «Quitar», pegados al borde
-    /// derecho de la columna de control (el mismo borde que los selects y los
-    /// interruptores).
+    /// Control de una fila de imagen: «Elegir…» y «Quitar», pegados al borde
+    /// derecho de la columna de control (el mismo borde que los desplegables y
+    /// los interruptores).
     fn image_controls<'a>(
         &self,
         abrir_label: &str,
@@ -1000,15 +997,15 @@ impl WhisprApp {
         .into()
     }
 
-    /// Tarjeta «Paleta» de Apariencia (R7-II). Muestra presets de un clic, una
-    /// fila por campo editable (hex + swatch + «Aplicar»/«Restaurar») y las
+    /// Tarjeta «Paleta» de Apariencia (R7-II). Enseña presets de un clic, una
+    /// fila por campo editable (hex + muestra + «Aplicar»/«Restaurar») y las
     /// acciones de Importar/Exportar/Restaurar todo. El aviso de contraste WCAG
     /// sale como nota bajo el campo cuando texto/principal baja de 3:1 sobre el
     /// fondo activo (no bloquea: solo avisa).
     ///
-    /// Es la única sub-tabla de la app (el frame Ajustes no trae paleta): sus
-    /// filas alinean el compuesto de controles al MISMO borde derecho que la
-    /// columna de control de la rejilla, y el rótulo va a la izquierda.
+    /// Es la única sub-tabla de la app (el diseño de Ajustes no trae paleta):
+    /// sus filas alinean los controles al MISMO borde derecho que la columna de
+    /// control de la rejilla, y el rótulo va a la izquierda.
     pub(crate) fn settings_palette_card(
         &self,
         c: Chrome,
@@ -1048,8 +1045,8 @@ impl WhisprApp {
     }
 
     /// Botonera horizontal con los 5 presets. Cada botón aplica la paleta
-    /// resuelta del preset sobre el modo activo (DARK o LIGHT según el
-    /// `ThemeMode` del usuario en este momento).
+    /// resuelta del preset sobre el modo activo (oscuro o claro según el
+    /// `ThemeMode` del usuario en ese momento).
     pub(crate) fn palette_preset_buttons(
         &self,
         fs: theme::FontSizes,
@@ -1068,8 +1065,8 @@ impl WhisprApp {
                     .style(theme::secondary),
             );
         }
-        // Swatch预览: muestra el accent del modo activo como
-        // recordatorio visual («el preset tocará esto»).
+        // Muestra de color: enseña el acento del modo activo como
+        // recordatorio («el preset tocará esto»).
         let swatch =
             container(Space::new(Length::Fixed(16.0), Length::Fixed(16.0))).style(move |_th| {
                 let p = self.resolved_palette();
@@ -1099,8 +1096,8 @@ impl WhisprApp {
     /// Filas de la tabla de campos de la paleta para un color: el rótulo a la
     /// izquierda y, pegados al BORDE DERECHO de la tarjeta (el mismo borde que
     /// la columna de control de la rejilla), el hex + «Aplicar» + «Restaurar» +
-    /// el swatch de previsualización. El aviso de contraste, cuando toca, sale
-    /// como nota bajo la fila (no estira la fila ni le cambia el borde).
+    /// la muestra de color. El aviso de contraste, cuando toca, sale como nota
+    /// bajo la fila (no estira la fila ni le cambia el borde).
     pub(crate) fn palette_field_rows(
         &self,
         field: theme::PaletteField,
@@ -1109,8 +1106,8 @@ impl WhisprApp {
         t: &UiPalette,
         fs: theme::FontSizes,
     ) -> Vec<Element<'_, Message>> {
-        // Texto actual del input: lo que el usuario está tecleando, o el
-        // hex persistido si no hay buffer, o vacío (= default).
+        // Texto del campo: lo que el usuario está escribiendo, o el hex ya
+        // guardado si no hay nada en marcha, o vacío (= por defecto).
         let current_text = self
             .palette_inputs
             .get(&field)
@@ -1118,9 +1115,9 @@ impl WhisprApp {
             .or_else(|| self.palette_field_persisted(field))
             .unwrap_or_default();
 
-        // Color que se previsualiza en el swatch:
-        //   - si el input tiene un hex parseable, ese color;
-        //   - si no, el color resuelto (override o default).
+        // Color que se enseña en la muestra:
+        //   - si lo escrito es un hex válido, ese color;
+        //   - si no, el color que se usa (el del usuario o el de serie).
         let swatch_color =
             theme::parse_hex(&current_text).unwrap_or_else(|| self.resolved_color_for_field(field));
 
@@ -1149,7 +1146,7 @@ impl WhisprApp {
             .on_press(Message::PaletteFieldReset(field))
             .style(theme::secondary);
 
-        // Swatch: muestra el color actual (resolved o en-vuelo).
+        // Muestra: enseña el color actual (el guardado o el que se está escribiendo).
         let border_color = t.border;
         let swatch_color_for_closure = swatch_color;
         let swatch =
@@ -1187,7 +1184,7 @@ impl WhisprApp {
         rows
     }
 
-    /// Devuelve el hex persistido del campo (o None si está en default).
+    /// Devuelve el hex guardado del campo (o None si está por defecto).
     pub(crate) fn palette_field_persisted(&self, field: theme::PaletteField) -> Option<String> {
         let cfg = self.config.palette.as_ref()?;
         let raw = match field {
@@ -1207,7 +1204,7 @@ impl WhisprApp {
         raw.clone()
     }
 
-    /// Devuelve el color resuelto (con overrides aplicados) para un campo.
+    /// Devuelve el color que se usa (con los cambios del usuario aplicados) para un campo.
     pub(crate) fn resolved_color_for_field(&self, field: theme::PaletteField) -> Color {
         let p = self.resolved_palette();
         match field {
@@ -1226,9 +1223,9 @@ impl WhisprApp {
         }
     }
 
-    /// Si el campo es «texto» o «dim» y su contraste contra el fondo activo
-    /// es < 3:1, devuelve un mensaje de aviso (None en caso contrario).
-    /// El requisito es no bloquear al usuario: solo avisa.
+    /// Si el campo es «texto» o «dim» y su contraste contra el fondo activo es
+    /// < 3:1, devuelve un aviso (None si no). Nunca bloquea al usuario: solo
+    /// avisa.
     pub(crate) fn contrast_warning_for(
         &self,
         field: theme::PaletteField,
@@ -1248,8 +1245,8 @@ impl WhisprApp {
         }
     }
 
-    /// Botones «Importar…» / «Exportar…» / «Restaurar todo» (la explicación de
-    /// qué hace cada uno va como nota de la tarjeta, no aquí).
+    /// Botones «Importar…» / «Exportar…» / «Restaurar todo» (lo que hace cada
+    /// uno se cuenta como nota de la tarjeta, no aquí).
     pub(crate) fn palette_actions_row(
         &self,
         t: &UiPalette,
@@ -1283,10 +1280,10 @@ impl WhisprApp {
     }
 
     /// ── Sección «Dictado» ────────────────────────────────────────────────
-    /// Calidad (beam size), hilos de CPU y el resumen de la inyección, con la
-    /// rejilla de las 5 pestañas: los dos sliders en la columna de control, su
-    /// explicación como nota bajo cada fila y la inyección (que no tiene
-    /// controles, los fija el producto) como nota informativa.
+    /// Calidad (beam size), hilos de CPU y el resumen de cómo se escribe, con la
+    /// rejilla de las 5 pestañas: los dos deslizadores en la columna de control,
+    /// su explicación como nota bajo cada fila y la escritura (que no tiene
+    /// controles, la fija el producto) como nota informativa.
     pub(crate) fn settings_section_dictation(
         &self,
         c: Chrome,
@@ -1296,8 +1293,8 @@ impl WhisprApp {
         let beam = self.config.beam_size();
         let threads = self.config.n_threads();
 
-        // Inyección: sin fila informativa en Ajustes (requisito sprint final:
-        // el resumen redundante se elimina; los parámetros los fija el producto).
+        // Escritura: sin fila informativa en Ajustes (sprint final: se quita el
+        // resumen que sobraba; los parámetros los fija el producto).
 
         let mut col = Column::new()
             .spacing(theme::GRID_SECTION_GAP)
@@ -1347,17 +1344,17 @@ impl WhisprApp {
     }
 
     /// ── Sección «Corrección IA» ─────────────────────────────────────────
-    /// Todo el corrector LLM con la rejilla de las 5 pestañas: cada opción es
-    /// una fila (rótulo + control en la columna fija) y las explicaciones largas
-    /// van como notas bajo su fila. El estado en vivo va arriba, como nota con
-    /// el color del estado.
+    /// Todo el corrector con la rejilla de las 5 pestañas: cada opción es una
+    /// fila (rótulo + control en la columna fija) y las explicaciones largas van
+    /// como notas bajo su fila. El estado en vivo va arriba, como nota con el
+    /// color del estado.
     pub(crate) fn settings_section_correction(
         &self,
         c: Chrome,
         ty: DesignType,
         t: &UiPalette,
     ) -> Element<'_, Message> {
-        // Estado en vivo (misma lógica pura que el chip del header):
+        // Estado en vivo (la misma cuenta que la etiqueta de la cabecera):
         // «Corrección IA: activa · <modelo>» o «inactiva — <motivo>».
         let (status_text, status_color) = {
             let ui = llm_status_ui(
@@ -1376,14 +1373,14 @@ impl WhisprApp {
         let mut col = Column::new()
             .spacing(theme::GRID_SECTION_GAP)
             .width(Length::Fill);
-        // Sprint final: solo dos modos. Local = llama.cpp descargado bajo
-        // demanda (nada viene de serie); Remoto = solo API key + proveedor.
+        // Sprint final: solo dos modos. Local = llama.cpp descargado cuando hace
+        // falta (nada viene de serie); Remoto = solo clave de API + proveedor.
         let is_local = self.config.correction_provider().is_local();
         let mut main_rows: Vec<Element<'_, Message>> = vec![
                     note_row(&status_text, status_color, ty),
-                    // El interruptor va a la columna de control (el mismo sitio que
-                    // en General: los toggles de todas las secciones comparten
-                    // columna, nodo `3:692`).
+                    // El interruptor va a la columna de control (el mismo sitio
+                    // que en General: los interruptores de todas las secciones
+                    // comparten columna, nodo `3:692`).
                     preference_row(
                         "Corrección IA: una IA revisa y corrige lo que dictas",
                         None,
@@ -1518,15 +1515,15 @@ impl WhisprApp {
             ty,
         ));
 
-        // (Los detalles técnicos —timeout, sensibilidad, confirmación— viven
+        // (Los detalles técnicos —espera, sensibilidad, confirmación— están
         // ahora en Avanzado → Corrección IA, sprint final.)
         col.into()
     }
 
-    /// Filas de la API key: solo con proveedor que la exija (Custom — opcional
-    /// si el server no la pide — y Cloud, obligatoria). Con Local el server no
-    /// la usa, así que no se pinta nada. Persistencia en el Credential Manager
-    /// de Windows, NUNCA en `config.json`.
+    /// Filas de la clave de API: solo con un proveedor que la pida (Custom —
+    /// opcional si el servidor no la pide — y Cloud, obligatoria). Con Local el
+    /// servidor no la usa, así que no se pinta nada. Se guarda en el Credential
+    /// Manager de Windows, NUNCA en `config.json`.
     fn api_key_rows(&self, c: Chrome, ty: DesignType) -> Vec<Element<'_, Message>> {
         if self.config.correction_provider() == CorrectionProvider::Default {
             return Vec::new();
@@ -1560,9 +1557,9 @@ impl WhisprApp {
     }
 
     /// ── Sección «Avanzado» ──────────────────────────────────────────────
-    /// Sprint final: mismas secciones que las pestañas principales, con las
-    /// opciones técnicas movidas aquí (timeout/sensibilidad/confirmación de
-    /// IA, server LLM, registro). Las pestañas principales quedan limpias.
+    /// Sprint final: las mismas secciones que las pestañas principales, con las
+    /// opciones técnicas movidas aquí (espera, sensibilidad y confirmación de la
+    /// IA, servidor LLM, registro). Las pestañas principales quedan limpias.
     pub(crate) fn settings_section_advanced(
         &self,
         c: Chrome,
@@ -1695,10 +1692,10 @@ impl WhisprApp {
     }
 }
 
-/// Navegación de Ajustes del diseño (`Settings navigation`, 43 px): etiqueta de
-/// 13 px por pestaña (activa en texto primario, el resto en secundario) y el
-/// subrayado de 2 px del acento colgando del borde inferior de la activa.
-/// Debajo va el hairline que cierra la fila, como en el frame.
+/// Navegación de Ajustes del diseño (`Settings navigation`, 43 px): texto de
+/// 13 px por pestaña (la activa en texto principal, el resto en secundario) y la
+/// raya de 2 px del acento colgando del borde de abajo de la activa. Debajo va
+/// la línea fina que cierra la fila, como en el diseño.
 fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'static, Message> {
     let mut tabs = row![]
         .spacing(theme::GRID_TAB_GAP)
@@ -1706,11 +1703,11 @@ fn settings_nav(active: SettingsSection, c: Chrome, ty: DesignType) -> Element<'
         .height(theme::GRID_TAB_HEIGHT);
     for section in SettingsSection::ALL {
         let is_active = section == active;
-        // La caja de la pestaña ES la etiqueta (+ el subrayado de 2 px en su
-        // borde inferior, pintado por `theme::tab_underline`). Sin hijos Fill
-        // dentro: el ancho sale del texto y «Corrección IA» no parte en dos
-        // líneas (con un hijo Fill, iced re-mide el texto a su ancho exacto y
-        // el salto de línea es cuestión de redondeo).
+        // La caja de la pestaña ES la etiqueta (más la raya de 2 px en su borde
+        // de abajo, que pinta `theme::tab_underline`). Sin hijos Fill dentro: el
+        // ancho sale del texto y «Corrección IA» no parte en dos líneas (con un
+        // hijo Fill, iced vuelve a medir el texto a su ancho exacto y el salto de
+        // línea queda al azar del redondeo).
         let tab = container(
             text(section.label())
                 .size(ty.control)
