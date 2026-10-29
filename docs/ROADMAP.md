@@ -1,10 +1,9 @@
 # ROADMAP — Silb (rama `native-iced`)
 
-Estado verificado a 11/09/2026 contra el código y el historial de git. Este
-archivo documenta **qué hay hecho** y **qué viene después**, priorizado por
-impacto/riesgo. Los documentos hermanos (`CORRECCION-VOZ.md`,
-`EMPAQUETADO.md`, `UI-FUTURA.md`) son las especificaciones detalladas de cada
-etapa.
+Estado comprobado a 11/09/2026 contra el código y el historial de git. Este
+archivo cuenta **qué hay hecho** y **qué viene después**, ordenado por impacto y
+riesgo. Los documentos hermanos (`CORRECCION-VOZ.md`, `EMPAQUETADO.md`,
+`UI-FUTURA.md`) explican cada etapa con detalle.
 
 > Alcance de esta carpeta `docs/`: solo documentar. No se toca `src/` ni se
 > implementa nada desde aquí.
@@ -29,18 +28,19 @@ etapa.
 | Licencia y documentación | `LICENSE`, `README.md`, `docs/` | MIT (10/09/2026); `docs/ARQUITECTURA.md` (recorrido del código para quien no ha tocado Rust), `docs/GUIA-USUARIO.md` y doc-comments públicos en español (11/09/2026). |
 
 Versión actual del paquete: **0.5.0** (`Cargo.toml`). Rama activa: `native-iced`
-(la rama `main` es la versión web legada y no se toca desde aquí).
+(la rama `main` es la versión web antigua y desde aquí no se toca).
 
 > **Actualización 26/10/2026 (0.5.0)**: el roadmap de abajo se escribió en
-> septiembre y sus referencias de versión (0.2.0) están obsoletas. Lo que ha
+> septiembre y sus referencias de versión (0.2.0) están viejas. Lo que ha
 > entrado desde entonces: instalador Inno Setup con .ico y CUDA opcional,
-> rediseño de UI desde Figma, server LLM embebido en el paquete, y el **port a
-> Linux integrado** (ver `docs/PORT-LINUX/` y `docs/VERIFICACION-2026-10-26.txt`).
-> Lo único que sigue abierto de este documento es el backlog P3
-> (transcripción casi-tiempo-real, notetaker) y los ítems de `UI-FUTURA.md`.
+> rediseño de la interfaz salido de Figma, servidor de IA metido en el paquete, y
+> el **port a Linux integrado** (ver `docs/PORT-LINUX/` y
+> `docs/VERIFICACION-2026-10-26.txt`). Lo único que sigue abierto de este
+> documento es la lista de pendientes P3 (transcripción casi en tiempo real,
+> notetaker) y los puntos de `UI-FUTURA.md`.
 
-Verificación de hoy (11/09/2026): `cargo.exe test` → **271 passed, 0 failed,
-1 ignored** (el ignorado pide un server llama.cpp real encendido);
+Comprobación de hoy (11/09/2026): `cargo.exe test` → **271 passed, 0 failed,
+1 ignored** (el ignorado necesita un servidor llama.cpp de verdad encendido);
 `cargo.exe check` sin errores.
 
 ### Cadena de procesado actual (por turno de dictado)
@@ -69,15 +69,16 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 
 ### Orden recomendado de trabajo
 
-1. **P0 completado:** validar manualmente el flujo con micrófono, cambio de
-   modelo, endpoint cloud/custom autenticado y confirmación de correcciones.
+1. **P0 completado:** probar a mano el recorrido con micrófono, el cambio de
+   modelo, un servidor en la nube o propio con autenticación y la confirmación
+   de las correcciones.
 2. **P2 completado** (R3/R4, commit `7f2109e`): nota editable, contraste AA
-   medido, transparencia del corrector IA y foco visible.
+   medido, transparencia del corrector con IA y foco visible.
 3. **R5 completado** (11/09/2026): licencia MIT, `docs/ARQUITECTURA.md`, guía de
-   usuario ampliada y doc-comments públicos en español.
+   usuario ampliada y comentarios de documentación en español en lo público.
 4. **P1 siguiente:** empaquetado y distribución: instalador, icono `.ico`,
-   variante portable y firma (fase R6 de `NOTA-SESION.md`).
-5. **P3 backlog:** transcripción casi en tiempo real y notetaker de reuniones.
+   versión portable y firma (fase R6 de `NOTA-SESION.md`).
+5. **P3 pendiente:** transcripción casi en tiempo real y notetaker de reuniones.
 
 
 ---
@@ -85,5 +86,5 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 ## 3. Definición de "done" (heredada de `AGENTS.md`)
 
 1. `cmd.exe /c "cd /d whispr-open && cargo test"` → tests verdes.
-2. `... cargo.exe check` → sin errores (warnings tolerados).
-3. Commit por etapa lógica, mensaje en español.
+2. `... cargo.exe check` → sin errores (avisos tolerados).
+3. Un commit por etapa lógica, con el mensaje en español.

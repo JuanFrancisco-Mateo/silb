@@ -1,8 +1,8 @@
 # Design tokens — Silb (rediseño de UI)
 
-Fuente de verdad para llevar el diseño de Penpot al código Rust/Iced.
-Estado: **Fase 0 completada** (medidas reales del código). Las tablas finales
-por tema (Dark / Light / Custom) se completan tras las fases de diseño en
+Referencia para llevar el diseño de Penpot al código Rust/Iced.
+Estado: **Fase 0 completada** (medidas reales del código). Las tablas finales por
+tema (Dark / Light / Custom) se completan después de las fases de diseño en
 Penpot (archivo *Open Whisper*, `http://localhost:9001`).
 
 ---
@@ -30,10 +30,10 @@ Penpot (archivo *Open Whisper*, `http://localhost:9001`).
 | Duración máxima de grabación | 2 h | `src/audio.rs` (`MAX_RECORDING_SECS`) |
 | Animación de burbuja (frames) | 1–30 FPS (default 12) | `src/config.rs` (`bubble_animation_fps`) |
 
-Principios vigentes del lenguaje visual (`src/theme.rs`): calm design, dark
-por defecto, un solo acento violeta `#7C6CFF`, sin glassmorphism, sin
-animaciones decorativas, grid de 8 px, foco visible, contraste WCAG medido
-por tests (texto ≥ 4.5:1, gráficos ≥ 3:1).
+Lo que sigue vigente del lenguaje visual (`src/theme.rs`): diseño tranquilo,
+oscuro por defecto, un solo acento violeta `#7C6CFF`, sin cristal traslúcido, sin
+animaciones de adorno, rejilla de 8 px, foco visible y contraste WCAG medido por
+tests (texto ≥ 4.5:1, gráficos ≥ 3:1).
 
 ---
 
@@ -73,20 +73,20 @@ por tests (texto ≥ 4.5:1, gráficos ≥ 3:1).
 | `err` | `#C93E3E` | Errores |
 | `border` | `#D9D9E0` | Bordes y separadores |
 
-Tinta fija sobre relleno de acento (botón primario): `#17181C`
-(`INK_ON_ACCENT`, ≥ 4.5:1 sobre `#7C6CFF` y su hover en ambos modos).
+El color de la letra sobre un relleno de acento (botón primario) es fijo:
+`#17181C` (`INK_ON_ACCENT`, ≥ 4.5:1 sobre `#7C6CFF` y su hover en ambos modos).
 
 ---
 
 ## 3. Tokens por tema (creados en Penpot, proyecto *Open Whisper*)
 
-Sets del catálogo de tokens del archivo (junto al set previo
-`Silb · Núcleo`) y themes `Theme/Dark`, `Theme/Light`, `Theme/Custom`
-(cada theme activa Núcleo + su set). **Estrategia de nombres**: los tokens de
-color llevan prefijo `dark.` / `light.` porque Penpot resuelve los tokens por
-NOMBRE con precedencia del último set activo — sin prefijo, los tres temas no
-podrían convivir en boards contiguos. Los tokens de `Theme/Custom` llevan los
-nombres exactos del encargo (no colisionan).
+Los sets del catálogo de tokens del archivo (junto al set anterior
+`Silb · Núcleo`) y los temas `Theme/Dark`, `Theme/Light`, `Theme/Custom` (cada
+tema activa Núcleo + su set). **Cómo se nombran**: los tokens de color llevan
+delante `dark.` / `light.` porque Penpot resuelve los tokens por NOMBRE y manda
+el último set activo — sin ese prefijo, los tres temas no podrían convivir en
+tableros seguidos. Los de `Theme/Custom` llevan los nombres exactos del encargo
+(no chocan con ninguno).
 
 ### Theme/Dark (22 tokens)
 
@@ -142,11 +142,12 @@ nombres exactos del encargo (no colisionan).
 | `light.elevation.mid` | `0 6 20 #C9C9D4` | Sombra suave media |
 | `light.elevation.high` | `0 16 48 #B8B8C6` | Sombra suave alta |
 
-Contraste WCAG verificado por cálculo sobre los valores reales: todos los
-pares texto/fondo ≥ 4.5:1 (mínimo: `light.text.muted` sobre `light.surface.app`
-= 4.61:1; tinta sobre acento = 5.23:1). Los valores `dark.text.muted` y
-`light.text.muted` suben respecto al Núcleo previo (`#737585`, que medía
-~3.6:1 sobre tarjeta) precisamente para cumplir AA.
+El contraste WCAG está comprobado por cálculo sobre los valores reales: todas las
+parejas texto/fondo dan ≥ 4.5:1 (el más bajo:
+`light.text.muted` sobre `light.surface.app` = 4.61:1; la letra sobre el acento =
+5.23:1). Los valores `dark.text.muted` y `light.text.muted` suben respecto al
+Núcleo anterior (`#737585`, que medía ~3.6:1 sobre tarjeta) justo para cumplir
+AA.
 
 ### Theme/Custom (6 tokens — reemplazo en runtime)
 
@@ -171,7 +172,7 @@ pares texto/fondo ≥ 4.5:1 (mínimo: `light.text.muted` sobre `light.surface.ap
 | `shape.radius.bubble.rounded` | 20 px |
 | `font.family.sans` | Inter |
 
-Preexistentes del Núcleo (sin cambios): `font.size.*` 8/9/10/11/12/13/15/17/
+Ya estaban en el Núcleo (sin cambios): `font.size.*` 8/9/10/11/12/13/15/17/
 18/27/30, `shape.radius.card` 10, `shape.radius.pill` 999,
 `shape.border.hairline` 1.
 
@@ -186,17 +187,17 @@ Preexistentes del Núcleo (sin cambios): `font.size.*` 8/9/10/11/12/13/15/17/
 | `bg-image-overlay` | Opacidad sobre imagen de fondo | `Config::bg_image_path` + overlay (campo nuevo `bg_image_overlay`) |
 | `bubble-radius` | Forma de burbuja | Campo nuevo `bubble_radius` (hoy hay estilos `BubbleStyle::{Solid,Ring,Minimal}`) |
 
-Resto de tokens → código: `dark.*`/`light.*` se corresponden con `theme.rs`
-(`UiPalette`); las diferencias ya medidas se listan en §2 y se resumen:
-acento de marca `#8978FF` (vs `#7C6CFF` en código — el archivo manda sobre
-el código, migración pendiente), tinta sobre acento `#17181C` =
-`INK_ON_ACCENT`, `accent.text` = `ACCENT_TEXT`/`ACCENT_TEXT_LIGHT`, estados =
+El resto de tokens → código: `dark.*`/`light.*` se corresponden con `theme.rs`
+(`UiPalette`); las diferencias ya medidas están en §2 y son, en resumen: acento
+de marca `#8978FF` (frente a `#7C6CFF` en el código — manda el archivo, la
+migración está pendiente), letra sobre acento `#17181C` = `INK_ON_ACCENT`,
+`accent.text` = `ACCENT_TEXT`/`ACCENT_TEXT_LIGHT`, estados =
 `OK`/`WARN`/`ERR` con los valores del archivo. `space.*` = `SPACE_1..6`
 (4/8/16/24/32/48 idénticos), `shape.radius.card` = `RADIUS_MD` (10).
 
 ## 5. Métricas del sistema de burbujas (Fase 3 — implementadas y verificadas)
 
-Valores reales del archivo tras revisión/reparación (texto con envoltura
+Valores reales del archivo tras revisarlo y arreglarlo (texto con envoltura
 `auto-height` + `fill` horizontal en flex; contenedores con altura `auto`):
 
 | Métrica | Valor |
@@ -212,9 +213,9 @@ Valores reales del archivo tras revisión/reparación (texto con envoltura
 | Estados visuales | transcribiendo: 3 puntos de acento + «transcribiendo…»; error: borde `state.danger` 1 px; edición: etiqueta «editando…» |
 | Estados de sistema | pill 320×31: `model-loading` ◌, `mic-paused` ⏸, `offline` ⌁ |
 
-También se revisó `02 · Componentes` y se corrigió el board «C · Widgets»
-(slider y cabecera de panel a 320 px de ancho real, carril del slider
-centrado: 0 desbordes verificados).
+También se revisó `02 · Componentes` y se corrigió el tablero «C · Widgets»
+(control deslizante y cabecera de panel a 320 px de ancho real, carril del
+control centrado: 0 desbordes comprobados).
 
 ## 6. Estado de las fases de diseño en Penpot (a 14/10/2026)
 
@@ -222,7 +223,7 @@ centrado: 0 desbordes verificados).
 - ✅ Fase 1 (tokens): sets + themes creados y verificados (§3).
 - ✅ Fase 2 (`02 · Componentes`): 25 componentes locales con variantes y
   auto-layout; defectos de anchos/desbordes corregidos (C · Widgets).
-- ✅ Fase 3 (`03 · Burbujas`): sistema completo A–G; réparado el defecto
+- ✅ Fase 3 (`03 · Burbujas`): sistema completo A–G; arreglado el defecto
   principal (textos de una línea con burbujas de 100 px fijos → envoltura a
   ancho real y altura auto en componentes E instancias).
 - ✅ Fase 4: páginas nuevas creadas:

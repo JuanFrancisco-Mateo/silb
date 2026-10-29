@@ -4,10 +4,10 @@
 > (React/TS + Tauri v2 + Whisper WASM, rama `main`): habla de `App.tsx`, `npm`
 > y agentes A/B/C. Nada de eso existe en la rama activa.
 >
-> El roadmap **vivo** de la app nativa (rama `native-iced`) es
-> [`ROADMAP.md`](ROADMAP.md), en este mismo directorio `docs/`; el `ROADMAP.md`
+> El roadmap **al día** de la app nativa (rama `native-iced`) es
+> [`ROADMAP.md`](ROADMAP.md), en esta misma carpeta `docs/`; el `ROADMAP.md`
 > de la raíz solo apunta ahí.
-> Se conserva solo como referencia de cómo se llegó hasta aquí; sus números
+> Se guarda solo como referencia de cómo se llegó hasta aquí; sus números
 > (40 tests, `npm test`) son de la versión web y no describen la app actual.
 >
 > Texto original, sin retocar, a continuación.

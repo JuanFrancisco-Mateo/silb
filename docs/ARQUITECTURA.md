@@ -1,9 +1,9 @@
 # ARQUITECTURA — recorrido del código para quien nunca ha tocado Rust
 
-Este documento explica **qué hace cada fichero** de Silb y **cómo viaja
-una frase** desde que hablas hasta que aparece escrita en Slack. No hace falta
-saber Rust para leerlo: solo entender qué es un «fichero de código» y qué es
-una «función» (una pieza con nombre que recibe datos y devuelve datos).
+Este documento explica **qué hace cada fichero** de Silb y **cómo viaja una
+frase** desde que hablas hasta que aparece escrita en Slack. No hace falta saber
+Rust para leerlo: solo entender qué es un «fichero de código» y qué es una
+«función» (una pieza con nombre que recibe datos y devuelve datos).
 
 Si quieres cambiar algo de la app, la última sección dice exactamente qué
 fichero tocar.
@@ -53,10 +53,10 @@ fichero tocar.
                          └────────────────────────────────────────────────┘
 ```
 
-Lo importante del dibujo: **todo ocurre dentro de un único proceso**. La app
-es un solo `.exe` sin servidor local obligatorio; el único proceso externo
-que puede llegar a existir es `llama-server.exe` (la corrección IA), y lo
-arranca y apaga la propia app.
+Lo importante del dibujo: **todo ocurre dentro de un único proceso**. La app es
+un solo `.exe` y no necesita ningún servidor local; el único programa externo
+que puede llegar a existir es `llama-server.exe` (el de la corrección con IA), y
+lo arranca y lo apaga la propia app.
 
 ---
 
@@ -106,7 +106,7 @@ arranca y apaga la propia app.
 | `src/ui/shell.rs` | El **marco** del rediseño (frame *Dictado* de Figma): barra de ventana propia, barra lateral y el espacio de trabajo (`frame_window_bar`, `frame_sidebar`, `dictado_workspace`). | El marco lo dibuja la app (ventana sin decoración nativa): medidas y colores salen de `theme::chrome`/`theme::design_type`, no de literales en la vista. |
 | `src/ui/icons.rs` | Los 20 iconos vectoriales (lucide) del diseño, incrustados con `include_bytes!` desde `assets/icons/`. | Vectoriales nítidos a 12, 15, 18 o 30 px sin depender de rutas en disco ni de glifos del sistema. |
 | `src/theme.rs` | Los colores, tamaños y radios de toda la interfaz, con el contraste **medido** (fórmulas WCAG) en tests. | Un solo sitio donde cambiar el aspecto; los tests impiden que un cambio rompa la legibilidad. |
-| `src/fonts.rs` | Carga la fuente de emoji de Windows para que símbolos como ✓ y ↩ no salgan como cajas vacías. | El renderizador de texto de la UI no hace «fallback» de fuente por defecto. |
+| `src/fonts.rs` | Carga la fuente de emoji de Windows para que símbolos como ✓ y ↩ no salgan como cajas vacías. | El renderizador de texto de la UI no cambia de fuente solo cuando le falta un símbolo. |
 
 ---
 
@@ -141,15 +141,15 @@ las cinco»** con Slack enfocado:
 
 Detalles que no se ven en el dibujo pero importan:
 
-- **Hilos**: la transcripción (4-5) y la corrección IA (8) ocurren en hilos
-  aparte para que la ventana nunca se congele. Se comunican con la UI por
-  «canales» (colas de mensajes) que la UI drena 10 veces por segundo.
-- **Nunca se pierde texto**: si la IA falla, se agota su tiempo o su
-  respuesta no convence a los filtros de seguridad, se escribe EXACTAMENTE
-  lo que dijiste, sin corrección.
-- **Todo local salvo el paso 8**: la transcripción (whisper) siempre ocurre
-  en tu PC. La corrección IA es local por defecto; si la configuras en la
-  nube, el pie de la ventana te lo recuerda.
+- **Hilos**: la transcripción (4-5) y la corrección con IA (8) ocurren en hilos
+  aparte para que la ventana nunca se congele. Se comunican con la interfaz por
+  «canales» (colas de mensajes) que la app vacía 10 veces por segundo.
+- **Nunca se pierde texto**: si la IA falla, se le acaba el tiempo o su respuesta
+  no pasa los filtros de seguridad, se escribe EXACTAMENTE lo que dijiste, sin
+  corrección.
+- **Todo local salvo el paso 8**: la transcripción (whisper) siempre ocurre en tu
+  PC. La corrección con IA es local por defecto; si la configuras en la nube, el
+  pie de la ventana te lo recuerda.
 
 ---
 
@@ -169,10 +169,10 @@ Detalles que no se ven en el dibujo pero importan:
 | El tiempo máximo de una nota | `src/audio.rs` | `MAX_RECORDING_SECS` |
 | Qué hace cada mensaje de la UI | `src/ui/*.rs` | un manejador por familia en `src/ui/`; `update()` en `app.rs` solo reparte |
 
-Regla de oro del repo: **la lógica va en `src/domain/` (pura, sin I/O,
-testeable) y la UI en `src/app.rs` + `src/ui/`**. Si añades una feature, primero la
-función pura con sus tests, luego el cableado en `app.rs` (estado y `view`) y su
-manejador en `src/ui/`.
+Regla de oro del repo: **la lógica va en `src/domain/` (pura, sin escribir en
+disco ni en la red, y fácil de probar) y la UI en `src/app.rs` + `src/ui/`**. Si
+añades algo nuevo, primero la función pura con sus tests, luego el cableado en
+`app.rs` (estado y `view`) y su manejador en `src/ui/`.
 
 ---
 
@@ -186,19 +186,20 @@ cd whispr-open
 cargo test    # 336 pasan, 3 se saltan
 ```
 
-El que se salta («ignored») necesita un servidor llama.cpp real encendido:
-es una prueba de integración viva, no un fallo.
+El que se salta («ignored») necesita un servidor llama.cpp de verdad encendido:
+es una prueba con un servidor real, no un fallo.
 
-Lo que los tests **no** pueden cubrir y se prueba a mano: el micrófono
-físico, el foco real entre ventanas y la inyección en apps elevadas
-(administrador). La checklist está en `INFORME-CIERRE.md`.
+Lo que los tests **no** pueden cubrir y se prueba a mano: el micrófono físico, el
+foco real entre ventanas y la escritura en apps que van como administrador. La
+lista de comprobaciones está en `INFORME-CIERRE.md`.
 
 ## 6. Cosas que NO hace esta app (a propósito)
 
-- Sin telemetría: no hay ninguna llamada a servicios externos salvo las que
-  el usuario configura (corrección IA en la nube) y la descarga del modelo de
-  voz en el primer arranque (HuggingFace, solamente si falta el modelo).
-- Sin frontend web: no hay HTML/CSS/JS ni webview; la UI es nativa (Iced).
-- Sin auto-actualización: la app no se descarga a sí misma.
-- El instalador no mete los modelos de voz dentro (se bajan al primer
+- Sin datos de uso: no hay ninguna llamada a servicios externos salvo las que
+  configura el usuario (corrección con IA en la nube) y la descarga del modelo de
+  voz en el primer arranque (HuggingFace, solo si falta el modelo).
+- Sin interfaz web: no hay HTML/CSS/JS ni navegador incrustado; la UI es nativa
+  (Iced).
+- Sin actualizarse sola: la app no se descarga a sí misma.
+- El instalador no mete los modelos de voz dentro (se bajan en el primer
   arranque, una vez).

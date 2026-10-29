@@ -1,70 +1,72 @@
 # SETUP — Corrección IA: proveedores Local, Custom y Cloud
 
-Guía breve para dejar funcionando el corrector IA de Silb. El detalle
-del diseño (routing, ciclo de vida de memoria, guard anti-truncación) está en
-`docs/CORRECCION-VOZ.md`; aquí solo el «cómo se configura cada proveedor».
+Guía corta para dejar funcionando el corrector con IA de Silb. El diseño
+completo (por dónde decide, cómo libera memoria, la protección contra respuestas
+recortadas) está en `docs/CORRECCION-VOZ.md`; aquí solo «cómo se configura cada
+proveedor».
 
-La app **arranca sola** por defecto: al abrirla, descarga el modelo de voz de
-Whisper si falta y lanza el server LLM local si lo encuentra. Si en tu PC el
-server local no se encuentra automáticamente, sigue la sección Local; si quieres
-usar tu propio servidor OpenAI-compatible o la nube de OpenAI, secciones Custom
-y Cloud.
+La app **se apaña sola** por defecto: al abrirla descarga el modelo de voz de
+Whisper si falta y arranca el servidor de IA local si lo encuentra. Si en tu PC
+el servidor local no aparece automáticamente, sigue la sección Local; si quieres
+usar tu propio servidor compatible con OpenAI o la nube de OpenAI, las secciones
+Custom y Cloud.
 
 ---
 
 ## Local (llama.cpp — el que viene con la app) [DEFAULT]
 
-Sin internet y sin API key: la app lanza `llama-server.exe` al arrancar y le
+Sin internet y sin API key: la app arranca `llama-server.exe` al abrirse y le
 pasa el modelo GGUF. Proveedor en Configuración → Corrección IA → **Local**.
 
 ### 1. Descargar el modelo GGUF
 
 El modelo por defecto es `ornith-1.0-9b`. Si tu equipo va justo de VRAM,
-cualquier GGUF pequeño de un modelo instruct de calidad funciona igual (cambia
-el campo Modelo IA).
+cualquier GGUF pequeño de un modelo instruct decente sirve igual (cambia el
+campo Modelo IA).
 
-- Bájalo de Hugging Face (p. ej. un repo de `lmstudio-community` para que la
-  autodetección lo encuentre) o del sitio que prefieras.
-- Colócalo en cualquiera de estas rutas (la app las busca en este orden):
+- Bájalo de Hugging Face (por ejemplo, de un repo de `lmstudio-community` para
+  que la búsqueda automática lo encuentre) o de donde prefieras.
+- Ponlo en cualquiera de estas rutas (la app las mira en este orden):
   - `%USERPROFILE%\.lmstudio\models\...` (la carpeta de modelos de LM Studio,
-    incl. `lmstudio-community\...`)
+    incluida `lmstudio-community\...`)
   - `D:\LlamaCPP\models\...` o `C:\LlamaCPP\models\...`
   - `D:\models\...` o `C:\models\...`
-- La búsqueda es por **nombre de archivo exacto** y recorre hasta 6 niveles de
+- La búsqueda va por **nombre de archivo exacto** y baja hasta 6 niveles de
   profundidad: si tu GGUF se llama distinto, cambia el campo **Modelo IA** en
-  Ajustes (p. ej. `qwen3-0.8b-q8_0.gguf`) o pon la ruta completa al archivo.
+  Ajustes (por ejemplo `qwen3-0.8b-q8_0.gguf`) o pon la ruta completa al
+  archivo.
 
 ### 2. Localizar llama-server.exe
 
-La autodetección busca, en orden:
+La búsqueda automática mira, en orden:
 `D:\LlamaCPP\llama-server.exe` / `C:\LlamaCPP\llama-server.exe` → junto al exe
 de la app → `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` → PATH de Windows.
 
-- Si tienes una build de llama.cpp (server CUDA/CPU), copia `llama-server.exe`
-  a `D:\LlamaCPP\` (con sus DLL del lado: `llama-server-impl.dll`,
-  `cublas64_13.dll` o las `ggml-*` correspondientes — el exe las carga desde su
-  propio directorio) y listo.
+- Si tienes una compilación de llama.cpp (servidor CUDA o CPU), copia
+  `llama-server.exe` a `D:\LlamaCPP\` (con sus DLL al lado:
+  `llama-server-impl.dll`, `cublas64_13.dll` o las `ggml-*` que
+  correspondan — el exe las carga desde su propia carpeta) y listo.
 - Si la app **no lo encuentra sola**, escríbelo en Ajustes → Corrección IA →
-  **Server LLM** → «Examinar…» (más fácil) o pega la ruta completa. El campo
-  muestra «auto: D:\LlamaCPP\llama-server.exe» cuando está resuelto solo.
+  **Server LLM** → «Examinar…» (lo más fácil) o pega la ruta completa. El campo
+  muestra «auto: D:\LlamaCPP\llama-server.exe» cuando lo ha resuelto solo.
 
 ### 3. Comprobar
 
-- Abre la app: el chip debe pasar de «comprobando…» a
+- Abre la app: el aviso de estado debe pasar de «comprobando…» a
   **«● Corrección IA: activa · ornith-1.0-9b»**.
-- El log del server (si algo falla) está en
+- El registro del servidor (si algo falla) está en
   `%APPDATA%\whispr-open\llama-server.log`.
-- El toggle de Corrección IA apagado **descarga el modelo de memoria** (termina
-  el server); encendido lo vuelve a cargar. Al salir de la app el server también
-  se cierra.
+- Si apagas la corrección con IA, **el modelo se descarga de la memoria**
+  (el servidor se cierra); si la vuelves a encender, se carga otra vez. Al salir
+  de la app el servidor también se cierra.
 
 ---
 
 ## Custom (cualquier servidor OpenAI-compatible)
 
 Proveedor en Configuración → Corrección IA → **Custom LLM**. Sirve para
-llama.cpp en otra máquina, vLLM, LM Studio en modo server, Groq, Gemini
-(base_url propia), etc.
+llama.cpp en otra máquina, vLLM, LM Studio en modo servidor, Groq, Gemini (con
+su propio base_url), etc.
 
 ### Campo a campo
 
@@ -95,8 +97,8 @@ curl -s http://127.0.0.1:8000/v1/chat/completions \
 ```
 
 Si `GET /v1/models` devuelve 200, la app lo verá como «activa» al arrancar. Si
-el endpoint no responde o rechaza, la corrección se desactiva con aviso visible
-y el dictado sigue a texto bruto (nunca bloquea).
+el endpoint no responde o rechaza la petición, la corrección se desactiva con un
+aviso a la vista y el dictado sigue con el texto tal cual (nunca te bloquea).
 
 ---
 
@@ -110,8 +112,8 @@ Proveedor en Configuración → Corrección IA → **Cloud (OpenAI)**.
 | Modelo IA | `gpt-4o-mini` (default) u otro |
 | API key | **obligatoria** — tu key de OpenAI. Se guarda en el Administrador de credenciales de Windows, nunca en config.json |
 
-Nota: con Cloud tu dictado se envía a los servidores de OpenAI para la
-corrección. Si quieres que nada salga de tu máquina, usa Local.
+Nota: con Cloud tu dictado se envía a los servidores de OpenAI para corregirlo.
+Si quieres que no salga nada de tu máquina, usa Local.
 
 ---
 
@@ -125,5 +127,5 @@ corrección. Si quieres que nada salga de tu máquina, usa Local.
 | «el servidor LLM (…) no respondió a /v1/models en 60 s» | el server lanza pero no carga el modelo → mira `%APPDATA%\whispr-open\llama-server.log` |
 | Correctas las opciones pero el chip dice «inactiva» | activa el toggle de Corrección IA y vuelve a comprobar; si el endpoint cayó a mitad, corrígelo y dicta de nuevo |
 
-Todas las rutas y nombres de función citados están verificados en el código
+Todas las rutas y nombres de función citados están comprobados en el código
 (rama `native-iced`); no hay ningún comportamiento distinto del descrito.
