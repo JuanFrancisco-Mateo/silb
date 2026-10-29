@@ -1,13 +1,13 @@
-//! Marco del rediseño: barra de ventana propia, barra lateral y el espacio de
-//! trabajo de «Dictado» (frame `3:484` de Figma).
+//! El marco del rediseño: barra de ventana propia, barra lateral y la zona de
+//! trabajo de «Dictado» (pantalla `3:484` de Figma).
 //!
-//! Fuente de verdad de medidas y colores: `design/openwhispr-figma/raw/
+//! Medidas y colores salen de `design/openwhispr-figma/raw/
 //! dictado-design-context.txt` (capa a capa) y `metadata-arbol-capas.txt`
-//! (coordenadas). Aquí no hay ni un literal de color ni de tamaño de fuente:
-//! los tonos vienen de [`crate::theme::chrome`] y la escala tipográfica de
-//! [`crate::theme::design_type`] (ambos derivados del diseño).
+//! (coordenadas). Aquí no hay ni un color ni un tamaño de letra sueltos: los
+//! tonos vienen de [`crate::theme::chrome`] y los tamaños de
+//! [`crate::theme::design_type`] (los dos sacados del diseño).
 //!
-//! Estructura del frame (1200×820):
+//! Cómo está montada la pantalla (1200×820):
 //!
 //! ```text
 //! Window bar 40 ──────────────────────────────────────────────
@@ -15,8 +15,8 @@
 //!             │   Page heading · Recording console · Transcript editor · Footer
 //! ```
 //!
-//! El espacio de trabajo de «Ajustes» sigue siendo el panel de siempre
-//! (`settings_view`): el frame de Ajustes es otra tarjeta del tablero.
+//! La zona de «Ajustes» sigue siendo el panel de siempre (`settings_view`):
+//! la pantalla de Ajustes es otra tarjeta del tablero.
 
 use iced::widget::text::Shaping;
 use iced::widget::{
@@ -33,24 +33,24 @@ use crate::fonts;
 use crate::theme::{self, Chrome, DesignType};
 use crate::ui::icons;
 
-/// Margen izquierdo único de la barra lateral: marca, items de navegación y
-/// pie comparten la misma x para su contenido (el fondo del item activo sigue
-/// empezando en el borde del sidebar; el icono cae donde el logo).
+/// Margen izquierdo único de la barra lateral: la marca, los elementos de
+/// navegación y el pie empiezan en la misma x (el fondo del elemento activo
+/// sigue empezando en el borde; el icono cae donde el logo).
 const SIDEBAR_CONTENT_PAD: f32 = 12.0;
 
-/// Nº de barras del medidor de nivel del micrófono (18 en el diseño, de 3 px
-/// de ancho y 3 px de separación: 18*3 + 17*3 = 105 px de ancho).
+/// Número de barras del medidor del micrófono (18 en el diseño, de 3 px de
+/// ancho y 3 px de separación: 18*3 + 17*3 = 105 px).
 const LEVEL_BARS: usize = 18;
 
 /// Alturas (px) de las barras del medidor en el diseño. Son la FORMA del
 /// medidor; la altura real de cada barra se escala con el nivel del micrófono
-/// (con el micro en silencio quedan en 3 px, el mínimo).
+/// (con el micro en silencio se quedan en 3 px, el mínimo).
 const LEVEL_SHAPE: [u16; LEVEL_BARS] = [3, 5, 7, 4, 10, 6, 4, 8, 5, 3, 6, 4, 8, 5, 3, 6, 4, 3];
 
 impl WhisprApp {
-    /// `Window bar` (40 px): título, control de tema y controles de ventana
-    /// propios (minimizar / maximizar / cerrar, 12 px). La zona del título
-    /// arrastra la ventana (la decoración nativa está desactivada).
+    /// `Window bar` (40 px): título, botón de tema y botones de ventana propios
+    /// (minimizar / maximizar / cerrar, 12 px). La zona del título arrastra la
+    /// ventana (la barra del sistema está desactivada).
     pub(crate) fn frame_window_bar(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let theme_toggle = match self.config.theme_mode() {
             crate::config::ThemeMode::Auto => "◐ Auto",
@@ -92,9 +92,9 @@ impl WhisprApp {
         container(
             row![
                 drag_zone,
-                // El conmutador de tema vive en una barra de 40 px donde todo
-                // el chrome es de 11 px: se le da ese tamaño y un padding
-                // compacto en vez del táctil de los botones de contenido.
+                // El botón de tema vive en una barra de 40 px donde todo el
+                // marco es de 11 px: se le da ese tamaño y un relleno apretado en
+                // vez del cómodo de los botones de contenido.
                 button(ui_text(theme_toggle).size(ty.chrome))
                     .on_press(Message::ToggleTheme)
                     .padding(Padding {
@@ -124,11 +124,11 @@ impl WhisprApp {
 
     /// `Sidebar` (204 px): marca, navegación, hueco elástico y versión + ayuda.
     pub(crate) fn frame_sidebar(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
-        // Un único margen izquierdo para marca, nav y pie: el contenido arranca
-        // en la misma x que el icono de los items de navegación.
+        // Un solo margen izquierdo para marca, navegación y pie: el contenido
+        // empieza en la misma x que el icono de los elementos de navegación.
         let brand = row![
             icons::icon(icons::WHISPR_SYMBOL, 32.0),
-            // Marca: solo el texto, el logo (el cuadrado con la onda) se queda.
+            // Marca: solo el texto; el logo (el cuadrado con la onda) se queda.
             text("Silb")
                 .size(ty.brand)
                 .font(fonts::semibold())
@@ -144,7 +144,7 @@ impl WhisprApp {
         });
 
         // Los dos destinos de la navegación salen de `WindowSection::ALL` (el
-        // orden y las etiquetas viven en el enum, no duplicados aquí).
+        // orden y los nombres viven en el enum, no repetidos aquí).
         let mut nav = column![].spacing(6.0).width(Length::Fill);
         for section in WindowSection::ALL {
             nav = nav.push(nav_item(
@@ -160,9 +160,9 @@ impl WhisprApp {
             ));
         }
 
-        // Ayuda: abre Ajustes en General (la entrada segura). Antes apuntaba
-        // a Avanzado sin motivo y confundía (sprint final). Lo técnico sigue
-        // en Avanzado, pero la ayuda no debe llevar allí por defecto.
+        // Ayuda: abre Ajustes en General (la entrada segura). Antes llevaba a
+        // Avanzado sin motivo y confundía (sprint final). Lo técnico sigue en
+        // Avanzado, pero la ayuda no debe llevar allí de entrada.
         let version = row![
             text(format!("v{}", env!("CARGO_PKG_VERSION")))
                 .size(ty.chrome)
@@ -197,7 +197,7 @@ impl WhisprApp {
         .into()
     }
 
-    /// Espacio de trabajo del frame Dictado: cabecera de página, tarjeta de
+    /// Zona de trabajo de la pantalla Dictado: cabecera de página, tarjeta de
     /// grabación, tarjeta de transcripción y pie.
     pub(crate) fn dictado_workspace(
         &self,
@@ -225,7 +225,7 @@ impl WhisprApp {
         .spacing(24.0)
         .height(Length::Fill);
 
-        // El feedback del turno (corrección pendiente, undo, muletillas) solo
+        // El aviso del turno (corrección pendiente, deshacer, muletillas) solo
         // ocupa sitio cuando hay algo que decir.
         if let Some(feedback) = self.dictado_feedback(c, ty) {
             workspace = workspace.push(feedback);
@@ -244,9 +244,9 @@ impl WhisprApp {
             .into()
     }
 
-    /// Espacio de trabajo de Ajustes (frame `3:604`): cabecera de página,
-    /// navegación de pestañas, contenido con scroll y pie, con el mismo margen
-    /// (pt 32 · px 40 · pb 24) que el espacio de trabajo de Dictado.
+    /// Zona de trabajo de Ajustes (pantalla `3:604`): cabecera de página,
+    /// pestañas, contenido con scroll y pie, con el mismo margen
+    /// (pt 32 · px 40 · pb 24) que la zona de Dictado.
     pub(crate) fn settings_workspace(
         &self,
         c: Chrome,
@@ -265,8 +265,8 @@ impl WhisprApp {
             .into()
     }
 
-    /// `Recording console` (190 px): botón circular de 80 px, estado, atajo en
-    /// keycaps, medidor de nivel y fila de preferencias (micrófono, idioma,
+    /// `Recording console` (190 px): botón redondo de 80 px, estado, atajo en
+    /// teclas, medidor de nivel y fila de preferencias (micrófono, idioma,
     /// modelo).
     fn recording_card(
         &self,
@@ -320,8 +320,8 @@ impl WhisprApp {
         .spacing(8.0)
         .width(Length::Fill);
 
-        // Progreso de descarga (R4: tamaño + ETA, no solo un porcentaje) y
-        // aviso de pico del micrófono: se conservan bajo la pista.
+        // Progreso de descarga (tamaño + tiempo que queda, no solo el
+        // porcentaje) y aviso del pico del micrófono: se quedan bajo la pista.
         match &self.status {
             Status::Downloading {
                 downloaded, total, ..
@@ -441,7 +441,7 @@ impl WhisprApp {
         .into()
     }
 
-    /// Atajo global en keycaps (un keycap por tecla del atajo registrado).
+    /// Atajo global en teclas (una por cada tecla del atajo registrado).
     fn keycaps(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let mut keys = row![].spacing(4.0).align_y(Alignment::Center);
         for key in keycap_labels(&self.hotkey_label) {
@@ -476,9 +476,9 @@ impl WhisprApp {
     /// `Transcript editor`: cabecera con acciones, texto editable y pie con el
     /// contador de palabras.
     fn transcript_card(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
-        // Cabecera de 64 px: el contenido se centra VERTICALMENTE (el nodo
-        // `3:574` del diseño pone «Transcripción» a y=22 dentro de 64 px).
-        // Sin `align_y` el título y los botones se pegaban al borde superior.
+        // Cabecera de 64 px: el contenido se centra en VERTICAL (el nodo
+        // `3:574` del diseño pone «Transcripción» a y=22 dentro de 64 px). Sin
+        // `align_y` el título y los botones se pegaban arriba.
         let toolbar = container(
             row![
                 text("Transcripción")
@@ -522,7 +522,7 @@ impl WhisprApp {
             left: 28.0,
         });
 
-        // Pie de 42 px: el contenido se centra VERTICALMENTE sobre la línea
+        // Pie de 42 px: el contenido se centra en VERTICAL sobre la línea
         // divisoria (nodo `3:589`: «Texto editable» a y=13.5 dentro de 42).
         let status = container(
             row![
@@ -562,14 +562,14 @@ impl WhisprApp {
         .into()
     }
 
-    /// «Limpiar» con la confirmación armada de siempre (borrar la nota es
-    /// destructivo y explícito: primer clic arma, segundo borra). Con la nota
-    /// vacía no hay nada que borrar: el botón sale DESHABILITADO (iced pinta
+    /// «Limpiar» con la confirmación de siempre (borrar la nota es
+    /// destructivo: el primer clic arma, el segundo borra). Con la nota vacía no
+    /// hay nada que borrar: el botón sale DESHABILITADO (iced pinta
     /// `Status::Disabled`, que ahora se ve apagado) en vez de activo.
     ///
-    /// El icono de la papelera se tiñe con el MISMO tono que el texto del
-    /// botón (secundario activo / tenue deshabilitado): el SVG traía un color
-    /// fijo y sobre el estado apagado se quedaba más claro que su rótulo.
+    /// El icono de la papelera se tiñe con el MISMO tono que el texto del botón
+    /// (secundario cuando se puede, tenue cuando no): el SVG traía un color fijo
+    /// y con el botón apagado quedaba más claro que su rótulo.
     fn clear_control(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         if self.clear_armed {
             return row![
@@ -610,9 +610,9 @@ impl WhisprApp {
         }
     }
 
-    /// «Otra vez» / «Escribir en app»: reinserción del último turno.
-    /// Usa el mismo padding que «Copiar texto» para que la fila quede a la
-    /// misma altura (sprint final: la mezcla de paddings la dejaba desplazada).
+    /// «Otra vez» / «Escribir en app»: vuelve a escribir el último turno.
+    /// Usa el mismo relleno que «Copiar texto» para que la fila quede a la misma
+    /// altura (en el sprint final la mezcla de rellenos la dejaba desplazada).
     fn inject_control(&self, _c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let label = if self.config.auto_inject.unwrap_or(true) {
             "Otra vez"
@@ -634,13 +634,13 @@ impl WhisprApp {
         }
     }
 
-    /// «Copiar texto» (acción principal de la tarjeta). Sin texto no hay nada
+    /// «Copiar texto» (la acción principal de la tarjeta). Sin texto no hay nada
     /// que copiar: sale DESHABILITADO (no activo).
     ///
     /// El icono se tiñe con la tinta del botón en cada estado (oscura sobre el
     /// relleno de acento, tenue cuando está deshabilitado): el SVG traía
-    /// `stroke="white"` fijo y sobre el botón apagado quedaba blanco puro,
-    /// más brillante que su propio texto.
+    /// `stroke="white"` fijo y con el botón apagado quedaba blanco puro, más
+    /// brillante que su propio texto.
     fn copy_control(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
         let label = if self.copied_at.is_some() {
             "✓ Copiado"
@@ -675,9 +675,9 @@ impl WhisprApp {
         }
     }
 
-    /// Feedback del último turno (diff pendiente, corrección aplicada con
-    /// undo, muletillas eliminadas). `None` si no hay nada que decir: el
-    /// diseño no reserva espacio para esta línea.
+    /// Aviso del último turno (cambio pendiente, corrección aplicada con
+    /// deshacer, muletillas quitadas). `None` si no hay nada que decir: el diseño
+    /// no reserva sitio para esta línea.
     fn dictado_feedback(&self, c: Chrome, ty: DesignType) -> Option<Element<'_, Message>> {
         if let Some(_diff) = self.pending_diff.as_ref() {
             let label = self
@@ -756,9 +756,9 @@ impl WhisprApp {
             }
         };
 
-        // Aviso honesto SOLO cuando el corrector sale a la nube: con la
-        // corrección local (o apagada) el texto «nada sale de tu PC» era
-        // redundante con el README y se retira.
+        // Aviso honesto SOLO si el corrector sale a la nube: con la corrección
+        // local (o apagada) el «nada sale de tu PC» sobraba con el README y se
+        // quitó.
         let cloud_correction = enabled
             && matches!(
                 self.config.correction_provider(),
@@ -798,11 +798,11 @@ impl WhisprApp {
 
 /// Un elemento de navegación de la barra lateral (40 px de alto).
 ///
-/// El contenido se centra VERTICALMENTE dentro de los 40 px (el `button` con
-/// altura fija no centra a su hijo: sin el `container` de `Fill`, el icono y
-/// el texto quedaban pegados al borde superior de la pastilla). El icono va
-/// teñido según el estado —acento en la sección activa, secundario en la otra—
-/// y el rótulo activo usa Inter Medium, como el diseño.
+/// El contenido se centra en VERTICAL dentro de los 40 px (el `button` con
+/// altura fija no centra a su hijo: sin el `container` de `Fill`, el icono y el
+/// texto se quedaban pegados arriba de la pastilla). El icono va teñido según
+/// el estado —acento en la sección activa, secundario en la otra— y el rótulo
+/// activo usa Inter Medium, como el diseño.
 fn nav_item<'a>(
     bytes: &'static [u8],
     label: &'static str,
@@ -870,7 +870,7 @@ fn word_count(transcript: &str) -> usize {
 }
 
 /// Altura de cada barra del medidor para un nivel 0..=100. Con el micro en
-/// silencio todas quedan en el mínimo (3 px): el medidor nunca miente.
+/// silencio todas se quedan en el mínimo (3 px): el medidor nunca miente.
 fn level_bar_heights(level: u32) -> [u16; LEVEL_BARS] {
     let level = level.min(100) as f32;
     let mut heights = [3u16; LEVEL_BARS];
@@ -925,7 +925,7 @@ mod tests {
         assert_eq!(silencio, [3u16; LEVEL_BARS]);
         // A tope, cada barra llega a su forma máxima del diseño.
         assert_eq!(level_bar_heights(100), LEVEL_SHAPE);
-        // Monótono y nunca por debajo del mínimo.
+        // Sube siempre y nunca baja del mínimo.
         let medio = level_bar_heights(50);
         assert!(medio.iter().all(|h| *h >= 3));
         assert!(medio.iter().zip(silencio).all(|(a, b)| *a >= b));

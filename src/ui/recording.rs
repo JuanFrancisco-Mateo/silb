@@ -1,7 +1,7 @@
-//! Manejadores de grabación, transcripción y ajustes del dictado.
+//! Qué pasa al grabar, al transcribir y al cambiar ajustes del dictado.
 //!
-//! Extraído de `WhisprApp::update` en el refactor de organización (cero
-//! cambio de conducta): los cuerpos de los `match` se movieron tal cual.
+//! Salió de `WhisprApp::update` al repartir el fichero (sin cambiar nada de
+//! comportamiento): los cuerpos de los `match` se movieron tal cual.
 
 use std::sync::mpsc;
 
@@ -14,8 +14,8 @@ use crate::app::{
 use crate::audio::AudioCapture;
 
 impl WhisprApp {
-    /// Control del turno de grabación: atajo/atajo-global (`Toggle`),
-    /// arranque, parada y micrófono perdido a mitad de turno.
+    /// El turno de grabación: atajo o atajo global (`Toggle`), empezar, parar
+    /// y micro perdido a mitad.
     ///
     /// Movido tal cual desde `WhisprApp::update` (ver `app.rs`).
     pub(crate) fn handle_recording_control(&mut self, m: Message) -> Task<Message> {
@@ -28,7 +28,7 @@ impl WhisprApp {
             }
             Message::StartRecording => {
                 // Dictado bloqueado hasta que whisper esté listo (pantalla de
-                // carga) y si el arranque falló sin modelo transcribible.
+                // carga) y si el arranque falló sin un modelo que transcriba.
                 if self.audio.is_some()
                     || self.transcribe_rx.is_some()
                     || self.llm_rx.is_some()
@@ -39,36 +39,35 @@ impl WhisprApp {
                 {
                     return Task::none();
                 }
-                // Una grabación nueva descarta cualquier inyección pendiente.
+                // Una grabación nueva descarta cualquier escritura pendiente.
                 self.pending_inject = false;
-                // Re-mostrar la burbuja si el auto-ocultar la escondió (dictar
-                // es la actividad principal: la burbuja debe estar visible).
+                // Vuelve a enseñar la burbuja si el esconderla sola la ocultó
+                // (dictar es lo principal: la burbuja tiene que verse).
                 let show = self.show_bubble();
                 let device = self.config.input_device.clone();
                 match AudioCapture::start(device.as_deref()) {
                     Ok(mut capture) => {
                         // H6: si el micrófono configurado ya no estaba, se
-                        // dictó igual con el dispositivo por defecto. El
-                        // aviso va a la línea de feedback: el usuario ve qué
-                        // micro se está usando de verdad.
+                        // dictó igual con el de por defecto. El aviso va a la línea
+                        // de avisos: el usuario ve qué micro se usa de verdad.
                         if let Some(notice) = capture.take_fallback_notice() {
                             self.last_correction = Some(notice);
                         }
                         self.audio = Some(capture);
                         self.status = Status::Recording;
-                        // Marcador de inicio para el tope de duración del
-                        // turno (el Poll lo vigila).
+                        // Marca de inicio para el tope de duración del turno (lo
+                        // vigila el `Poll`).
                         self.recording_started = Some(std::time::Instant::now());
                         self.device_lost = false;
-                        // La sesión y `last_turn` sobreviven entre turnos:
-                        // las correcciones multi-turno y la corrección IA
-                        // necesitan ver el dictado anterior.
+                        // La sesión y `last_turn` siguen entre turnos: las
+                        // correcciones de varios turnos y la corrección IA necesitan
+                        // ver lo dictado antes.
                         show
                     }
                     Err(e) => {
-                        // Sin micro (o ocupado): error visible y estado
-                        // consistente — el siguiente intento funciona sin
-                        // reiniciar (requisito de robustez).
+                        // Sin micro (u ocupado): error visible y estado coherente
+                        // — el siguiente intento funciona sin reiniciar (nada se
+                        // queda roto).
                         self.recording_started = None;
                         self.status = Status::Error(e);
                         Task::none()
@@ -76,15 +75,15 @@ impl WhisprApp {
                 }
             }
             Message::StopRecording => {
-                // Parada voluntaria (atajo, botón, burbuja o tope de
-                // duración): el turno termina como dictado normal.
+                // Parada voluntaria (atajo, botón, burbuja o tope de duración):
+                // el turno acaba como un dictado normal.
                 self.device_lost = false;
                 self.finish_recording()
             }
             Message::AudioDeviceLost(reason) => {
-                // El stream murió a mitad (micro desconectado): se corta el
-                // turno YA con el audio acumulado hasta ese momento — NUNCA
-                // se pierde lo ya dicho — y la transcripción lleva un aviso.
+                // La entrada murió a mitad (micro desconectado): se corta el
+                // turno YA con el audio guardado hasta ese momento — NUNCA se
+                // pierde lo ya dicho — y la transcripción lleva un aviso.
                 if self.audio.is_none() {
                     return Task::none();
                 }
@@ -96,16 +95,16 @@ impl WhisprApp {
         }
     }
 
-    /// Llegó (o falló) la transcripción de un turno: aplica el pipeline de
-    /// limpieza, decide inyectar/guardar y avisa del resultado.
+    /// Llegó (o falló) la transcripción de un turno: pasa la limpieza, decide
+    /// si escribir o guardar, y avisa del resultado.
     ///
     /// Movido tal cual desde `WhisprApp::update` (ver `app.rs`).
     pub(crate) fn handle_transcription_done(&mut self, m: Message) -> Task<Message> {
         match m {
             Message::TranscriptionDone(result) => {
                 self.transcribe_rx = None;
-                // La burbuja marca `pending_inject` en el soltado: ese turno
-                // se escribe en la app activa aunque autoinyectar esté off.
+                // La burbuja marca `pending_inject` al soltar: ese turno se
+                // escribe en la app activa aunque la escritura automática esté off.
                 let force_inject = self.pending_inject;
                 self.pending_inject = false;
                 match result {
@@ -113,73 +112,71 @@ impl WhisprApp {
                         let (processed, rule_corrected) = self.apply_pipeline(&raw);
                         if processed.is_empty() && raw.trim().is_empty() {
                             self.status = Status::Idle;
-                            // Turno vacío (hubo audio pero no se transcribió
-                            // nada): aviso útil en vez de silencio confuso.
-                            // Si además el micro murió a mitad, el aviso lo
-                            // dice (requisito de robustez).
+                            // Turno vacío (hubo audio pero no se sacó texto):
+                            // aviso útil en vez de un silencio que despista. Si
+                            // además murió el micro a mitad, el aviso lo dice.
                             self.last_correction = Some(if self.device_lost {
                                 "El micrófono se desconectó y no se llegó a oír nada; revisa el micro y vuelve a dictar.".to_string()
                             } else {
                                 "No se oyó nada: comprueba el micrófono, acércate y repite el dictado.".to_string()
                             });
                             self.device_lost = false;
-                            // Turno vacío: igualmente «terminado» → armar el
-                            // auto-ocultar si está configurado.
+                            // Turno vacío: cuenta igual como «terminado» → armar
+                            // el esconder la burbuja si está configurado.
                             self.arm_bubble_hide_timeout();
                             return Task::none();
                         }
-                        // Aviso de micro perdido a mitad (si procede): se
-                        // pone ya, antes del enrutado — si hay corrección IA,
-                        // su propio feedback puede reemplazarlo después.
+                        // Aviso de micro perdido a mitad (si toca): se pone ya,
+                        // antes de repartir — si hay corrección IA, su propio aviso
+                        // puede sustituirlo después.
                         if self.device_lost {
                             self.last_correction = Some(
                                 "El micrófono se desconectó a mitad: se transcribió lo que se oyó hasta ese momento.".to_string(),
                             );
                             self.device_lost = false;
                         }
-                        // Nota pendiente del turno (p. ej. tope de duración
-                        // maratoniano): tiene prioridad sobre el aviso de
-                        // micro porque explica el corte.
+                        // Nota pendiente del turno (por ejemplo el tope de
+                        // duración): manda sobre el aviso del micro porque explica
+                        // el corte.
                         if let Some(note) = self.pending_turn_note.take() {
                             self.last_correction = Some(note);
                         }
 
-                        // Corrección IA (spec §3 + §3.5, t_78d9e1fa): el sistema decide en
-                        // cascada qué modo aplicar al turno recién
-                        // transcrito. De más prioritario a menos:
+                        // Corrección IA (documento, puntos 3 y 3.5): el sistema
+                        // decide en cascada qué hacer con el turno recién
+                        // transcrito. De más a menos importante:
                         //
-                        //   1) IN-TURN (modo principal desde 10/09/2026):
-                        //      el turno contiene auto-corrección hablada
+                        //   1) DENTRO DEL TURNO (lo normal desde el 10/09/2026):
+                        //      el turno trae una corrección hablada
                         //      («digo X», «quiero decir», «no X sino Y»,
-                        //      «mejor X», «en vez de»...) → el LLM
-                        //      recibe el turno COMPLETO y devuelve el
-                        //      texto final corregido (sin meta-lengua).
-                        //      Caso canónico:
+                        //      «mejor X», «en vez de»...) → el modelo
+                        //      recibe el turno ENTERO y devuelve el
+                        //      texto final ya corregido (sin la muletilla).
+                        //      Caso típico:
                         //        «que calor en murcia digo cartagena»
                         //          → «que calor en cartagena»
                         //
-                        //   2) CROSS-TURN (modo histórico, fallback):
-                        //      la frase apunta al turno ANTERIOR («no no
-                        //      lo último está mal, es 2 en vez de 4») →
-                        //      el LLM recibe (target, instruction) y
+                        //   2) ENTRE TURNOS (lo de antes, si no hay otra):
+                        //      la frase apunta al turno ANTERIOR («no no lo
+                        //      último está mal, es 2 en vez de 4») → el
+                        //      modelo recibe (target, instruction) y
                         //      devuelve {find, replace} sobre `target`.
                         //
-                        //   3) PLAIN: no se detecta intención correctiva
-                        //      → el turno se inyecta como está.
+                        //   3) NORMAL: no se ve intención de corregir
+                        //      → el turno se escribe tal cual.
                         //
-                        // Ambos modos comparten los mismos gates de
-                        // «AI activada», «server LLM listo» y «no hay
-                        // otra corrección volando». El modo in-turn NO
-                        // exige que haya un turno previo (el input es
-                        // el turno actual entero); el cross-turn SÍ.
+                        // Los dos modos comparten los mismos filtros: «IA
+                        // encendida», «servidor LLM listo» y «no hay otra
+                        // corrección en marcha». El de dentro del turno NO
+                        // pide un turno previo (el texto es el turno entero);
+                        // el de entre turnos SÍ.
                         //
-                        // LOG DE DECISIÓN (bug Juanfri 09/09/2026): el
-                        // síntoma «no llama al LLM» antes era invisible
-                        // porque el `eprintln!` se perdía en Windows GUI.
-                        // Ahora el resultado del clasificador, los gates
-                        // que cortan y la decisión de enrutar van al log
-                        // del archivo `%APPDATA%\whispr-open\whispr-open.log`
-                        // (visible siempre, incluso sin consola).
+                        // LOG DE LA DECISIÓN (fallo de Juanfri 09/09/2026): el
+                        // «no llama al modelo» antes no se veía porque el
+                        // `eprintln!` se perdía en Windows sin consola. Ahora el
+                        // resultado del clasificador, los filtros que cortan y la
+                        // decisión de mandar van al log del archivo
+                        // `%APPDATA%\whispr-open\whispr-open.log` (se ve siempre).
                         let in_turn = crate::domain::corrective::classify_in_turn(&processed);
                         let decision = crate::domain::corrective::classify_with(
                             &processed,
@@ -194,11 +191,10 @@ impl WhisprApp {
                         let can_route_cross_turn = can_route_common && !self.last_turn.is_empty();
 
                         if can_route_in_turn && in_turn {
-                            // ── Modo in-turn (t_78d9e1fa) ───────────
-                            // El LLM recibe `processed` entero y
-                            // devuelve el texto final limpio. El
-                            // resultado REEMPLAZA el turno que
-                            // íbamos a inyectar (no se aplica diff).
+                            // ── Dentro del turno (t_78d9e1fa) ───────
+                            // El modelo recibe `processed` entero y devuelve el
+                            // texto final limpio. El resultado SUSTITUYE al turno
+                            // que se iba a escribir (no se aplica un cambio).
                             let target = processed.clone();
                             let llm_cfg = self.config.llm_settings();
                             let (tx, rx) = mpsc::channel();
@@ -240,10 +236,10 @@ impl WhisprApp {
                         if can_route_cross_turn
                             && decision == crate::domain::corrective::CorrectiveDecision::NeedsLlm
                         {
-                            // ── Modo cross-turn (flujo histórico) ─────
-                            // El LLM recibe (last_turn, instruction)
-                            // y devuelve {find, replace}. Se aplica
-                            // sobre `target` (= last_turn).
+                            // ── Entre turnos (el camino de antes) ──────
+                            // El modelo recibe (last_turn, instruction) y
+                            // devuelve {find, replace}. Se aplica sobre `target`
+                            // (= last_turn).
                             let target = self.last_turn.clone();
                             let instruction = processed.clone();
                             let llm_cfg = self.config.llm_settings();
@@ -284,14 +280,12 @@ impl WhisprApp {
                             });
                             return Task::none();
                         }
-                        // Ruta no tomada: registrar POR QUÉ para que
-                        // «no llama al LLM» deje de ser un misterio cuando
-                        // el usuario mira el log. Distinguimos
-                        // in_turn / cross_turn por separado para que el
-                        // diagnóstico de Juanfri sea inmediato cuando un
-                        // modo detecta y el otro no (caso real: el turno
-                        // tiene «digo X» que SÍ es in-turn pero el
-                        // cross-turn lo descarta por umbral alto).
+                        // Camino no tomado: apuntar POR QUÉ para que «no llama
+                        // al modelo» deje de ser un misterio al mirar el log. Se
+                        // distinguen los dos modos para que el diagnóstico sea
+                        // inmediato cuando uno detecta y el otro no (caso real: el
+                        // turno lleva «digo X» que SÍ es dentro del turno pero el
+                        // de entre turnos lo descarta por umbral alto).
                         crate::log!(
                             "llm",
                             "no se enruta: in_turn={} classifier={:?} threshold={} enabled={} llm_ready={} rule_corrected={} llm_busy={} last_turn_empty={} processed={:?}",
@@ -322,8 +316,8 @@ impl WhisprApp {
                                     &processed,
                                 );
                             }
-                            // La nota es editable (R3): todo cambio del
-                            // pipeline se refleja en el editor al instante.
+                            // La nota se puede editar (R3): cada cambio de la
+                            // limpieza se ve en el editor al instante.
                             self.sync_editor_from_transcript();
                             self.last_turn = processed.clone();
                         }
@@ -338,8 +332,8 @@ impl WhisprApp {
                     }
                     Err(e) => self.status = Status::Error(e),
                 }
-                // Turno terminado (o error): armar el auto-ocultar. El camino
-                // del LLM sale antes (return) y arma al resolver la corrección.
+                // Turno terminado (o error): armar el esconder la burbuja. El
+                // camino del modelo sale antes (return) y lo arma al resolver.
                 self.arm_bubble_hide_timeout();
                 self.save_config();
                 Task::none()
@@ -348,8 +342,8 @@ impl WhisprApp {
         }
     }
 
-    /// Ajustes del dictado que cambian el pipeline (modelo whisper,
-    /// limpieza de muletillas, auto-inyección).
+    /// Ajustes del dictado que cambian lo que se hace (modelo de whisper,
+    /// limpieza de muletillas, escritura automática).
     ///
     /// Movido tal cual desde `WhisprApp::update` (ver `app.rs`).
     pub(crate) fn handle_dictation_settings(&mut self, m: Message) -> Task<Message> {
@@ -382,8 +376,8 @@ impl WhisprApp {
                                 let _ = tx.send(Ok(format!("__PROGRESS__{d}:{t}")));
                             })
                             .map(|_| "__DOWNLOAD_OK__".to_string())
-                            // Error de descarga con causa accionable, no la
-                            // cadena cruda de ureq (requisito de robustez).
+                            // Error de descarga con una causa útil, no el texto
+                            // crudo de ureq (nada de tecnicismos al usuario).
                             .map_err(|e| download_failure_message(model, &e));
                             let _ = tx.send(result);
                         });
