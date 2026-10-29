@@ -1227,22 +1227,20 @@ impl WhisprApp {
             self.save_config();
             return Task::none();
         }
-        // Guard numérico determinista (t_1fc864ef, ampliado t_d64797c2). El
-        // corrector local (Qwen3.5-0.8B-Q8) concatena numerales en lugar de
-        // sustituirlos cuando el usuario rectifica un número: «me comí
-        // cuatro digo cinco peras» → «me comí cuatro cinco peras» (sin
-        // «digo», con los dos números juntos); y en frases naturales se
-        // queda con el número VIEJO y borra la meta-lengua («a tres
-        // personas, digo cuatro personas» → «a tres personas») — frase
-        // plausible y FALSA (log 14/09 03:19 y 13/09 01:37). Este guard
-        // detecta el patrón «NUM_A [texto] [marcador] NUM_B» en el INPUT y
-        // reconstruye determinísticamente la sustitución. Si el LLM ya
-        // acertó (contiene NUM_B pero no NUM_A), el guard NO interviene y
-        // deja pasar el output tal cual.
+        // Protección numérica, sin depender del modelo (t_1fc864ef, ampliada en
+        // t_d64797c2). El corrector local (Qwen3.5-0.8B-Q8) pega los números en vez
+        // de cambiarlos cuando el usuario rectifica: «me comí cuatro digo cinco
+        // peras» → «me comí cuatro cinco peras» (sin «digo» y con los dos números
+        // seguidos); y en frases normales se queda el número VIEJO y borra lo de
+        // «digo» («a tres personas, digo cuatro personas» → «a tres personas»), una
+        // frase creíble y FALSA (log 14/09 03:19 y 13/09 01:37). Esta protección
+        // busca en lo que se dijo el patrón «NUM_A [texto] [marcador] NUM_B» y rehace
+        // la sustitución ella misma, siempre igual. Si el modelo ya acertó (trae
+        // NUM_B y no NUM_A), no se mete y deja pasar su respuesta tal cual.
         //
-        // El texto del guard es el que se inyecta (`effective_clean_text`,
-        // usado más abajo): antes se calculaba pero se descartaba, así que
-        // la reconstrucción nunca llegaba al usuario.
+        // El texto que sale de esta protección es el que se escribe
+        // (`effective_clean_text`, más abajo): antes se calculaba y se tiraba, así
+        // que la reconstrucción no llegaba nunca al usuario.
         let effective_clean_text = match crate::llm::guard_numeric_substitution(&input, clean_text)
         {
             Ok(reconstructed) => {
@@ -1258,18 +1256,17 @@ impl WhisprApp {
         };
         let still_has_meta =
             crate::domain::corrective::contains_in_turn_marker(&effective_clean_text);
-        // Guard anti-truncación (t_6b9348de): el LLM local (Qwen3.5-0.8B)
-        // responde a los turnos largos sin corrección con UN RESUMEN
+        // Protección contra recortes (t_6b9348de): el modelo local (Qwen3.5-0.8B)
+        // contesta a los turnos largos sin nada que corregir con UN RESUMEN
         // («estamos debulando la aplicación…» → «no se ha levantado ningún
-        // servidor», log 01:34:54). El prompt no se endurece porque toda
-        // variante «no resumas» rompe alguna auto-corrección (verificado
-        // en runtime); este guard es la capa OBLIGATORIA: si la respuesta
-        // queda desproporcionadamente corta respecto al input sin
-        // auto-corrección inequívoca que lo justifique, se descarta y se
-        // inyecta el input ORIGINAL — nunca se pierde ni se recorta el
-        // dictado (ver `guard_anti_truncacion`). Se evalúa sobre el texto
-        // que de verdad se va a inyectar (reconstrucción incluida): los
-        // umbrales y la lógica del guard no cambian.
+        // servidor», log 01:34:54). Al prompt no se le aprieta más porque cualquier
+        // variante de «no resumas» rompe alguna autocorrección (probado en
+        // ejecución); esta protección es la capa OBLIGATORIA: si la respuesta queda
+        // desproporcionadamente corta al lado de lo dictado y no hay una
+        // autocorrección clara que lo explique, se tira y se escribe el texto
+        // ORIGINAL — el dictado no se pierde ni se recorta (ver
+        // `guard_anti_truncacion`). Se mira el texto que de verdad se va a
+        // escribir (reconstrucción incluida): los umbrales y la lógica no cambian.
         if crate::llm::guard_anti_truncacion(&input, &effective_clean_text) != effective_clean_text {
             crate::log!(
                 "llm",
@@ -1303,11 +1300,10 @@ impl WhisprApp {
             return Task::none();
         }
 
-        // Caso normal: tenemos texto limpio. Lo aplicamos como el
-        // turno completo. Undo antes de mutar. El texto aplicado es el
-        // que resolvieron los guards (`effective_clean_text`): la
-        // reconstrucción numérica determinista, si la hubo, ES el texto
-        // final (t_1fc864ef + t_d64797c2).
+        // Caso normal: hay texto limpio. Se aplica como el turno entero. Deshacer
+        // antes de tocar nada. El texto que se aplica es el que dejaron las
+        // protecciones (`effective_clean_text`): la reconstrucción numérica, si la
+        // hubo, ES el texto final (t_1fc864ef + t_d64797c2).
         self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
         let clean = effective_clean_text.clone();
         self.transcript = crate::domain::correction::append_transcript(
@@ -1320,8 +1316,8 @@ impl WhisprApp {
         let summary = if input == clean {
             format!("Turno confirmado por IA (sin cambios): «{}»", clean)
         } else {
-            // Mostramos la corrección aplicada: «antes → después» con
-            // el meta-lengua destacada.
+            // Se enseña la corrección aplicada: «antes → después», con la parte que
+            // el modelo añadió de su cosecha resaltada.
             let stripped_meta = crate::domain::corrective::strip_in_turn_meta(&input);
             format!(
                 "Auto-corregido IA: «{}» → «{}»",
@@ -1340,9 +1336,9 @@ impl WhisprApp {
         if (self.config.auto_inject.unwrap_or(true) || force_inject) && !clean.is_empty() {
             self.inject_into_active(&clean);
         }
-        // Silenciar warning de variable no usada (removed fillers: hay
-        // feedback útil si el filtro actuó sobre el turno limpio, pero
-        // por ahora solo se loguea para diagnóstico).
+        // Callar el aviso de variable sin usar (removed fillers: habría feedback
+        // útil si el filtro tocó el turno limpio, pero de momento solo se anota en
+        // el log para diagnóstico).
         let _ = removed;
         self.status = Status::Idle;
         self.arm_bubble_hide_timeout();
@@ -1350,10 +1346,10 @@ impl WhisprApp {
         Task::none()
     }
 
-    /// Fallback unificado para cuando el LLM falla o devuelve algo no
-    /// utilizable (cross-turn o in-turn). El turno original se inyecta
-    /// tal cual o se trata como dictado normal (spec §3.3.1 y §3.5.4:
-    /// nunca perder texto del usuario).
+    /// Salida única para cuando el modelo falla o devuelve algo que no se puede
+    /// usar (cross-turn o in-turn). El turno original se escribe tal cual o se
+    /// trata como dictado normal (spec §3.3.1 y §3.5.4: el texto del usuario no
+    /// se pierde nunca).
     pub(crate) fn restore_pending_as_dictation(&mut self, pending: Option<LlmPending>) {
         let Some(p) = pending else { return };
         let text = if p.target.is_empty() {
@@ -1361,8 +1357,8 @@ impl WhisprApp {
         } else if matches!(p.mode, LlmMode::InTurn) {
             p.target.clone()
         } else {
-            // Cross-turn: la instrucción es lo que el usuario QUIERE
-            // que aparezca si la corrección falla.
+            // Cross-turn: si la corrección falla, lo que el usuario QUIERE que
+            // aparezca es su frase.
             if !p.instruction.is_empty() {
                 p.instruction.clone()
             } else {
@@ -1372,9 +1368,9 @@ impl WhisprApp {
         self.inject_or_store_raw(&text, p.force_inject);
     }
 
-    /// Inyecta `text` si el toggle está activo (o si `force_inject`),
-    /// y si no lo inyecta, lo acumula al menos como `last_turn` para
-    /// que el siguiente turno pueda corregirlo.
+    /// Escribe `text` si el interruptor está encendido (o si `force_inject`); si
+    /// no se escribe, al menos se guarda como `last_turn` para que el siguiente
+    /// turno pueda corregirlo.
     fn inject_or_store_raw(&mut self, text: &str, force_inject: bool) {
         if text.is_empty() {
             return;
@@ -1390,24 +1386,24 @@ impl WhisprApp {
         }
     }
 
-    /// Resumen de las muletillas eliminadas en el turno actual (si
-    /// las hay). Solo se usa para diagnóstico en logs; reservado
-    /// para una versión futura del feedback de UI.
+    /// Resumen de las muletillas quitadas en el turno actual (si hubo). Solo se
+    /// usa para diagnóstico en los logs; queda para una versión futura del aviso
+    /// en la interfaz.
     fn removed_fillers_summary(&self) -> String {
         self.removed_fillers.join(", ")
     }
 
-    /// Aplica el diff pendiente (modo `ai_correction_confirm`). Reconstruye
-    /// la «aplicación a ciegas» pero sobre el diff que el usuario ya vio:
-    /// mismos pasos que el camino Ok de `handle_llm_correction` (capturar
-    /// undo, sustituir, inyectar si corresponde). Si `pending_diff` es
-    /// None (carrera: el usuario toggleo off mientras decidía), no-op.
+    /// Aplica el cambio pendiente (modo `ai_correction_confirm`). Hace lo mismo
+    /// que la aplicación directa, pero sobre el cambio que el usuario ya vio:
+    /// mismos pasos que el camino bueno de `handle_llm_correction` (guardar el
+    /// deshacer, sustituir, escribir si toca). Si `pending_diff` es None (carrera:
+    /// el usuario apagó mientras decidía), no hace nada.
     pub(crate) fn apply_pending_diff(&mut self) {
         let Some(pending) = self.pending_diff.take() else {
             return;
         };
-        // Aplicar siempre sobre el target capturado, nunca sobre un turno
-        // posterior que el usuario haya dictado mientras decidía.
+        // Se aplica siempre sobre el `target` copiado, nunca sobre un turno que el
+        // usuario haya dictado mientras decidía.
         let target = pending.target;
         let diff = pending.diff;
         match crate::domain::corrective::apply_diff(&target, &diff) {
@@ -1443,19 +1439,19 @@ impl WhisprApp {
                 }
             }
             None => {
-                // El diff ya no aplica al target capturado: no mutamos el
-                // transcript ni inyectamos nada. La instrucción solo se
-                // recupera como dictado normal cuando el LLM falla, no cuando
-                // el usuario descarta explícitamente una propuesta.
+                // El cambio ya no encaja en el `target` copiado: no se toca el
+                // transcript ni se escribe nada. La frase solo se recupera como
+                // dictado normal cuando el modelo falla, no cuando el usuario
+                // descarta una propuesta a propósito.
                 self.last_correction =
                     Some("La corrección IA ya no aplica al último turno".to_string());
             }
         }
     }
 
-    /// Descarta el diff pendiente. El usuario ya vio la propuesta y la
-    /// rechaza explícitamente: no se modifica el transcript ni se inyecta la
-    /// instrucción de corrección como texto normal.
+    /// Tira el cambio pendiente. El usuario ya vio la propuesta y la rechaza a
+    /// propósito: no se toca el transcript ni se escribe la frase de corrección
+    /// como texto normal.
     pub(crate) fn discard_pending_diff(&mut self) {
         let Some(_pending) = self.pending_diff.take() else {
             return;
@@ -1472,16 +1468,16 @@ impl WhisprApp {
         &self.status
     }
 
-    /// ¿El arranque aún está en curso (whisper/LLM cargándose)? Mientras sea
-    /// cierto, el dictado está bloqueado y la vista principal es la pantalla
-    /// de carga. Lo usa la burbuja para mostrar el ámbar de «cargando».
+    /// ¿Sigue el arranque en marcha (whisper/LLM cargándose)? Mientras sí, no se
+    /// puede dictar y la vista principal es la pantalla de carga. Lo usa la
+    /// burbuja para ponerse ámbar de «cargando».
     pub(crate) fn is_starting(&self) -> bool {
         matches!(self.startup, StartupPhase::Loading)
     }
 
-    /// Color de la burbuja durante el arranque: ámbar mientras carga, rojo
-    /// si el arranque falló sin modelo transcribible. None = el arranque no
-    /// pinta la burbuja (deja que `bubble_status` decida).
+    /// Color de la burbuja durante el arranque: ámbar mientras carga, rojo si el
+    /// arranque falló y no hay modelo con el que transcribir. None = el arranque
+    /// no pinta la burbuja (que decida `bubble_status`).
     pub(crate) fn startup_bubble_color(&self) -> Option<Color> {
         match &self.startup {
             StartupPhase::Loading => Some(crate::theme::WARN),
@@ -1490,22 +1486,23 @@ impl WhisprApp {
         }
     }
 
-    /// Actualiza el ítem de estado del menú de bandeja (best-effort: sin
-    /// bandeja no hay nada que actualizar).
+    /// Actualiza el renglón de estado del menú de la bandeja (si no hay bandeja,
+    /// no hay nada que actualizar).
     fn set_tray_status(&self, label: &str) {
         if let Some(tray) = &self.tray {
             tray.status_item.set_text(label);
         }
     }
 
-    /// Relanza la fase LLM en background (toggle de corrección IA activado
-    /// en caliente tras un arranque sin server). Eventos por `startup_rx`;
-    /// el Poll los procesa igual que los del arranque inicial.
+    /// Vuelve a lanzar la fase del modelo en segundo plano (se encendió la
+    /// corrección IA en caliente, después de un arranque sin servidor). Los
+    /// eventos van por `startup_rx`; el `Poll` los atiende igual que los del
+    /// arranque inicial.
     ///
-    /// Cada fase recibe un token de cancelación nuevo (`llm_phase_cancel`):
-    /// si el usuario la apaga mientras la fase está en vuelo, el token se
-    /// pone a true y el hilo aborta en su siguiente punto de control (sin
-    /// lanzar server, o terminando el PID que él mismo lanzó).
+    /// Cada fase recibe su marca de cancelación nueva (`llm_phase_cancel`): si el
+    /// usuario la apaga con la fase en marcha, la marca pasa a true y el hilo
+    /// aborta en su siguiente control (sin lanzar servidor, o cerrando el proceso
+    /// que él mismo lanzó).
     pub(crate) fn spawn_llm_startup(&mut self) -> Task<Message> {
         let (startup_tx, startup_rx) = mpsc::channel();
         let startup_config = self.config.clone();
@@ -1517,23 +1514,22 @@ impl WhisprApp {
         Task::none()
     }
 
-    /// Apaga la corrección IA en caliente y deja la máquina de estados
-    /// coherente (ciclo de vida 10/09/2026, requisito «descargar el modelo
-    /// al desactivar»):
+    /// Apaga la corrección IA en caliente y deja todo coherente (ciclo de vida
+    /// 10/09/2026, requisito «descargar el modelo al desactivar»):
     ///
-    /// 1. Corrección LLM pendiente → degrada a texto bruto (spec: nunca
-    ///    perder texto; el turno se inyecta tal cual, sin esperar al LLM).
-    /// 2. Propuesta de diff en confirmación pendiente → se descarta (el
-    ///    texto bruto del target ya está en el transcript).
-    /// 3. Fase LLM en vuelo → cancelada: no debe lanzar un server después
-    ///    de haberse apagado (el token la aborta en su punto de control y
-    ///    termina su propio PID si ya lo lanzó).
-    /// 4. Server lanzado por ESTA app → terminado (modelo descargado de
-    ///    RAM/VRAM). Un server ajeno (ya corría antes de abrir la app) NO
-    ///    se toca: `kill_launched_server` solo mata el PID que registró
+    /// 1. Corrección pendiente → se queda el texto bruto (spec: no se pierde
+    ///    texto; el turno se escribe tal cual, sin esperar al modelo).
+    /// 2. Propuesta esperando confirmación → se tira (el texto bruto del target
+    ///    ya está en el transcript).
+    /// 3. Fase del modelo en marcha → se cancela: no debe lanzar un servidor
+    ///    después de haberse apagado (la marca la corta en su control y cierra su
+    ///    propio proceso si ya lo lanzó).
+    /// 4. Servidor lanzado por ESTA app → se cierra (el modelo sale de RAM/VRAM).
+    ///    Un servidor ajeno (que ya corría antes de abrir la app) NO se toca:
+    ///    `kill_launched_server` solo mata el proceso que registró
     ///    `launch_server`.
     pub(crate) fn disable_ai_correction_now(&mut self) {
-        // 1) Corrección en vuelo → texto bruto.
+        // 1) Corrección en marcha → texto bruto.
         if self.llm_rx.is_some() || self.llm_pending.is_some() {
             if let Some(p) = self.llm_pending.take() {
                 crate::log!(
@@ -1544,7 +1540,7 @@ impl WhisprApp {
             }
             self.llm_rx = None;
         }
-        // 2) Propuesta de diff pendiente → descartada (el texto bruto queda).
+        // 2) Propuesta pendiente → se tira (queda el texto bruto).
         if self.pending_diff.take().is_some() {
             crate::log!(
                 "llm",
@@ -1554,11 +1550,11 @@ impl WhisprApp {
         if self.status == Status::Correcting {
             self.status = Status::Idle;
         }
-        // 3) Cancelar la fase LLM en vuelo.
+        // 3) Cancelar la fase del modelo que esté en marcha.
         if let Some(cancel) = &self.llm_phase_cancel {
             cancel.store(true, Ordering::SeqCst);
         }
-        // 4) Descargar el modelo: terminar solo el server que lanzó la app.
+        // 4) Descargar el modelo: cerrar solo el servidor que lanzó la app.
         let killed = crate::llm::kill_launched_server();
         crate::log!(
             "llm",
@@ -1573,18 +1569,18 @@ impl WhisprApp {
     }
 
     pub(crate) fn config_is_dark(&self) -> bool {
-        // Modo resuelto: Auto → estado cacheado del sistema (AppsUseLightTheme,
-        // refrescado en el Poll cada 5 s); Claro/Oscuro → forzado por config.
+        // Modo resuelto: Auto → lo último que se vio del sistema (AppsUseLightTheme,
+        // refrescado en el `Poll` cada 5 s); Claro/Oscuro → lo que diga la config.
         self.config.resolved_dark(self.system_dark)
     }
 
-    /// Tamaño del círculo de la burbuja (px lógicos) — accesor para bubble.rs
-    /// (el campo `config` es privado de este módulo).
+    /// Tamaño del círculo de la burbuja (px lógicos) — para bubble.rs (el campo
+    /// `config` es privado de este módulo).
     pub(crate) fn bubble_size_px(&self) -> f32 {
         self.config.bubble_size().px()
     }
 
-    /// Opacidad de la burbuja en % (20..=100) — accesor para bubble.rs.
+    /// Cuánto se ve la burbuja, en % (20..=100) — para bubble.rs.
     pub(crate) fn bubble_opacity_percent(&self) -> u8 {
         self.config.bubble_opacity()
     }
@@ -1593,33 +1589,33 @@ impl WhisprApp {
         self.config.bubble_style()
     }
 
-    /// Frames resueltos para la animación por conmutación de la
-    /// burbuja. `None` si la carpeta no está configurada, no existe o
-    /// no contiene imágenes soportadas (en cuyo caso el render usa el
-    /// sprite estático si está, o el render vectorial). Cachear el
-    /// resultado de `resolve_frames` aquí evita I/O repetido durante
-    /// el redibujo (que ocurre ~60 Hz).
+    /// Fotogramas que tocan para la animación de la burbuja. `None` si la carpeta
+    /// no está puesta, no existe o no tiene imágenes que valgan (entonces se pinta
+    /// el sprite fijo si lo hay, o el dibujo vectorial). Guardar aquí el resultado
+    /// de `resolve_frames` evita leer el disco una y otra vez en cada redibujo
+    /// (que va a unos 60 Hz).
     pub(crate) fn bubble_frames_resolved(
         &self,
     ) -> Option<Vec<std::path::PathBuf>> {
-        // `*_or_warn` (H4): si la carpeta configurada desapareció, queda dicho
-        // en el log («asset desaparecido, cayendo al tema») una sola vez.
+        // `*_or_warn` (H4): si la carpeta configurada desapareció, queda dicho en
+        // el log («asset desaparecido, cayendo al tema») una sola vez.
         crate::custom_image::resolve_frames_or_warn(
             "carpeta de frames de la burbuja",
             self.config.bubble_frames_path(),
         )
     }
 
-    /// ¿Hay animación GIF activa? (imagen configurada + es `.gif`).
+    /// ¿Hay animación de GIF en marcha? (hay imagen configurada y es un `.gif`).
     pub(crate) fn gif_animation_active(&self) -> bool {
         self.bubble_static_image()
             .map(|p| crate::custom_image::is_gif_path(&p))
             .unwrap_or(false)
     }
 
-    /// Carga perezosa de los frames GIF en memoria (idempotente por ruta).
-    /// Se llama desde `AnimationTick` y al elegir imagen: decodifica una sola
-    /// vez por archivo; un GIF corrupto deja `gif_frames` vacío (fallback).
+    /// Carga los fotogramas del GIF en memoria cuando hacen falta (una sola vez
+    /// por ruta). Se llama desde `AnimationTick` y al elegir imagen: descodifica
+    /// una vez por archivo; si el GIF está roto, `gif_frames` se queda vacío y se
+    /// usa lo de siempre.
     pub(crate) fn ensure_gif_loaded(&mut self) {
         let current = self.bubble_static_image();
         let Some(path) = current else {
@@ -1649,11 +1645,10 @@ impl WhisprApp {
         }
     }
 
-    /// Frame actual del sprite animado (la ruta del fichero a mostrar).
-    /// Si la animación está parada o el índice quedó fuera de rango,
-    /// devuelve el primer frame (determinista). Es el método que usa
-    /// `bubble.rs` para pintar el sprite sin tocar el `Message` ni el
-    /// `update`.
+    /// Fotograma actual del sprite animado (la ruta del fichero que se pinta). Si
+    /// la animación está parada o el índice se salió del rango, devuelve el
+    /// primero (así siempre sale lo mismo). Es lo que usa `bubble.rs` para pintar
+    /// el sprite sin tocar el `Message` ni el `update`.
     pub(crate) fn bubble_current_frame(&self) -> Option<std::path::PathBuf> {
         let frames = self.bubble_frames_resolved()?;
         if frames.is_empty() {
@@ -1665,8 +1660,8 @@ impl WhisprApp {
         Some(frames[idx].clone())
     }
 
-    /// Ruta del sprite estático de la burbuja (validada). `None` si no
-    /// hay imagen propia (en ese caso se pinta el render vectorial).
+    /// Ruta del sprite fijo de la burbuja (comprobada). `None` si no hay imagen
+    /// propia (entonces se pinta el dibujo vectorial).
     pub(crate) fn bubble_static_image(
         &self,
     ) -> Option<std::path::PathBuf> {
@@ -1676,8 +1671,8 @@ impl WhisprApp {
         )
     }
 
-    /// Ruta de la imagen de fondo de la ventana principal (validada).
-    /// `None` = fondo del tema.
+    /// Ruta de la imagen de fondo de la ventana principal (comprobada). `None` =
+    /// fondo del tema.
     pub(crate) fn bg_image(&self) -> Option<std::path::PathBuf> {
         crate::custom_image::resolve_static_or_warn(
             "imagen de fondo de la ventana",
@@ -1689,12 +1684,11 @@ impl WhisprApp {
         self.config.dictionary.clone()
     }
 
-    /// Nivel del micrófono en % (0-100) mientras se graba.
     /// Sección visible de la ventana principal (UI 24/09/2026).
     ///
-    /// `settings_open` sigue siendo el ÚNICO estado (lo tocan los handlers de
-    /// Ajustes y su persistencia); aquí solo se LEE para saber qué pestaña
-    /// está activa. Así la vista gana pestañas sin duplicar estado.
+    /// `settings_open` sigue siendo el ÚNICO estado (lo tocan las funciones de
+    /// Ajustes y su guardado); aquí solo se LEE para saber qué pestaña está
+    /// activa. Así la vista gana pestañas sin duplicar estado.
     pub(crate) fn window_section(&self) -> WindowSection {
         if self.settings_open {
             WindowSection::Ajustes
