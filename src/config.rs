@@ -1,6 +1,6 @@
-//! Config persistente de la app (reemplaza localStorage de la versión web).
-//! Archivo JSON en %APPDATA%/whispr-open/config.json: diccionario, modelo
-//! seleccionado y preferencias. Correcciones best-effort: nunca rompe el arranque.
+//! Configuración que se guarda de la app (sustituye al localStorage de la web).
+//! Un JSON en %APPDATA%/whispr-open/config.json: diccionario, modelo elegido y
+//! preferencias. Si algo falla se queda lo que se pueda: nunca rompe el arranque.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -14,9 +14,10 @@ use crate::inject::LinuxInjectBackend;
 use crate::theme::PaletteConfig;
 use crate::transcribe::Model;
 
-/// Proveedor de corrección IA: Local (llama.cpp descargado bajo demanda,
-/// sprint final) o Remoto (API OpenAI u endpoint propio). `Default` es el
-/// alias histórico de Local; `Cloud`/`Custom` son las dos variantes remotas.
+/// De dónde sale la corrección IA: Local (llama.cpp descargado cuando hace
+/// falta, del sprint final) o Remoto (API de OpenAI o un servidor propio).
+/// `Default` es el nombre viejo de Local; `Cloud`/`Custom` son las dos formas
+/// de trabajar en remoto.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum CorrectionProvider {
@@ -26,7 +27,7 @@ pub enum CorrectionProvider {
 }
 
 impl CorrectionProvider {
-    /// Etiqueta del selector de Ajustes (sprint final: solo Local/Remoto).
+    /// Texto del selector de Ajustes (sprint final: solo Local/Remoto).
     pub fn label(self) -> &'static str {
         match self {
             CorrectionProvider::Default => "Local (en este equipo)",
@@ -35,7 +36,7 @@ impl CorrectionProvider {
         }
     }
 
-    /// ¿Es corrección local? Solo `Default`.
+    /// ¿La corrección es local? Solo `Default`.
     pub fn is_local(self) -> bool {
         matches!(self, CorrectionProvider::Default)
     }
@@ -47,9 +48,8 @@ impl std::fmt::Display for CorrectionProvider {
     }
 }
 
-/// Modo de tema de la app. `Auto` sigue el tema del SISTEMA Windows
-/// (`AppsUseLightTheme` del registro, cacheado en el Poll cada 5 s);
-/// `Claro`/`Oscuro` fuerzan un modo manual.
+/// Modo de tema. `Auto` sigue el tema del SISTEMA (`AppsUseLightTheme` del
+/// registro, mirado cada 5 s en el `Poll`); `Claro`/`Oscuro` lo fijan a mano.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ThemeMode {
@@ -59,7 +59,7 @@ pub enum ThemeMode {
 }
 
 impl ThemeMode {
-    /// Siguiente modo en el ciclo del botón del header: Auto → Claro → Oscuro.
+    /// Siguiente modo al pulsar el botón de la cabecera: Auto → Claro → Oscuro.
     pub fn next(self) -> ThemeMode {
         match self {
             ThemeMode::Auto => ThemeMode::Claro,
@@ -68,8 +68,8 @@ impl ThemeMode {
         }
     }
 
-    /// ¿Este modo fuerza un lado concreto? `Auto` no fuerza (None): decide el
-    /// sistema operativo.
+    /// ¿Este modo fija un lado? `Auto` no fija nada (None): decide el sistema
+    /// operativo.
     pub fn forced_dark(self) -> Option<bool> {
         match self {
             ThemeMode::Auto => None,
@@ -78,7 +78,7 @@ impl ThemeMode {
         }
     }
 
-    /// Etiqueta en español para el `pick_list` de Ajustes.
+    /// Texto en español para el desplegable de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             ThemeMode::Auto => "Auto",
@@ -107,7 +107,7 @@ impl std::str::FromStr for ThemeMode {
     }
 }
 
-/// Estilo visual de la burbuja flotante.
+/// Aspecto de la burbuja flotante.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BubbleStyle {
@@ -117,7 +117,7 @@ pub enum BubbleStyle {
 }
 
 impl BubbleStyle {
-    /// Etiqueta en español para el `pick_list` de Ajustes.
+    /// Texto en español para el desplegable de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             BubbleStyle::Solid => "Sólida",
@@ -133,8 +133,8 @@ impl std::fmt::Display for BubbleStyle {
     }
 }
 
-/// Tamaño de fuente global de la UI (Ajustes → Apariencia). Factores sobre
-/// los tamaños base de `theme.rs`: 0.85 / 1.0 / 1.15 / 1.3.
+/// Tamaño de letra de toda la interfaz (Ajustes → Apariencia). Se multiplica
+/// sobre los tamaños base de `theme.rs`: 0.85 / 1.0 / 1.15 / 1.3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FontSize {
@@ -145,7 +145,7 @@ pub enum FontSize {
 }
 
 impl FontSize {
-    /// Factor multiplicador sobre los tamaños base de `theme.rs`.
+    /// Cuánto multiplica sobre los tamaños base de `theme.rs`.
     pub fn factor(self) -> f32 {
         match self {
             FontSize::Small => 0.85,
@@ -155,7 +155,7 @@ impl FontSize {
         }
     }
 
-    /// Etiqueta en español para el `pick_list` de Ajustes.
+    /// Texto en español para el desplegable de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             FontSize::Small => "Pequeña",
@@ -172,9 +172,9 @@ impl std::fmt::Display for FontSize {
     }
 }
 
-/// Tamaño del círculo de la burbuja flotante, en px lógicos.
-/// La ventana acepta el rango completo 48–72 (min/max) para que el resize en
-/// caliente por `window::resize` no se tope con el clamp de WM_GETMINMAXINFO.
+/// Tamaño del círculo de la burbuja, en px lógicos.
+/// La ventana acepta todo el rango 48–72 para que el cambio de tamaño en
+/// caliente con `window::resize` no choque con el límite de WM_GETMINMAXINFO.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BubbleSize {
@@ -193,7 +193,7 @@ impl BubbleSize {
         }
     }
 
-    /// Etiqueta en español para el `pick_list` de Ajustes (con su tamaño).
+    /// Texto en español para el desplegable de Ajustes (con su tamaño).
     pub fn label(self) -> String {
         format!("{} px", self.px() as u16)
     }
@@ -205,8 +205,8 @@ impl std::fmt::Display for BubbleSize {
     }
 }
 
-/// Esquina del monitor donde se ancla la burbuja (posición inicial y destino
-/// de «mover a esquina» al cambiar la selección en Ajustes).
+/// Esquina de la pantalla donde se pone la burbuja (posición al arrancar y
+/// destino de «mover a esquina» al cambiar la opción en Ajustes).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum BubbleCorner {
@@ -217,7 +217,7 @@ pub enum BubbleCorner {
 }
 
 impl BubbleCorner {
-    /// Etiqueta en español para el `pick_list` de Ajustes.
+    /// Texto en español para el desplegable de Ajustes.
     pub fn label(self) -> &'static str {
         match self {
             BubbleCorner::TopRight => "Arriba derecha",
@@ -234,7 +234,7 @@ impl std::fmt::Display for BubbleCorner {
     }
 }
 
-/// Auto-ocultar la burbuja tras un rato sin dictar. Se re-muestra al pulsar
+/// Esconder la burbuja sola tras un rato sin dictar. Vuelve a salir al pulsar
 /// el micrófono (o al abrir la burbuja).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BubbleHideTimeout {
@@ -251,7 +251,7 @@ pub enum BubbleHideTimeout {
 }
 
 impl BubbleHideTimeout {
-    /// Segundos tras el último turno antes de ocultar la burbuja; `None`
+    /// Segundos desde el último turno antes de esconder la burbuja; `None`
     /// para «Nunca».
     pub fn secs(self) -> Option<u64> {
         match self {
@@ -263,7 +263,7 @@ impl BubbleHideTimeout {
         }
     }
 
-    /// Etiqueta del selector «Ocultar la burbuja tras…» (incluye «Nunca»).
+    /// Texto del selector «Ocultar la burbuja tras…» (incluye «Nunca»).
     pub fn label(self) -> &'static str {
         match self {
             BubbleHideTimeout::Never => "Nunca",
@@ -281,223 +281,216 @@ impl std::fmt::Display for BubbleHideTimeout {
     }
 }
 
-/// Ajustes persistidos del usuario (`%APPDATA%/whispr-open/config.json`).
+/// Ajustes guardados del usuario (`%APPDATA%/whispr-open/config.json`).
 ///
-/// Todos los campos son opcionales y caen a su default: un config.json
-/// incompleto, antiguo o corrupto no rompe la app (ver `load`).
+/// Todos los campos son opcionales y caen a su valor por defecto: un
+/// config.json incompleto, viejo o roto no rompe la app (ver `load`).
 ///
-/// Deriva `PartialEq` para los tests de degradación elegante (config corrupta
-/// o vacía → defaults comparables por valor).
+/// Se deriva `PartialEq` para los tests de cuando la config viene rota o vacía
+/// (así se pueden comparar los valores por defecto).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Config {
     /// `#[serde(default)]` en TODOS los campos (incluida la lista): un
-    /// config.json sin la clave `dictionary` (versiones antiguas, edición a
-    /// mano, escritura parcial) no debe tirar a la basera el resto de
-    /// ajustes del usuario — sin esto, el parse entero fallaba y TODO caía
-    /// a defaults (contradecía la promesa del README de ignorar solo lo
-    /// ausente). Requisito de robustez R2.
+    /// config.json sin la clave `dictionary` (versiones viejas, editado a mano,
+    /// escrito a medias) no debe tirar el resto de ajustes del usuario — sin
+    /// esto, al fallar el parse entero se perdía TODO y volvían los valores por
+    /// defecto (contradecía lo que promete el README: ignorar solo lo que
+    /// falta). Requisito de robustez R2.
     #[serde(default)]
     pub dictionary: Vec<DictionaryEntry>,
     pub model: Option<String>,
-    /// Limpieza de muletillas (toggle «Limpiar muletillas» en Ajustes).
-    /// `None` = activa (default: se limpian las muletillas comunes).
+    /// Limpieza de muletillas (interruptor «Limpiar muletillas» en Ajustes).
+    /// `None` = activa (por defecto se quitan las muletillas comunes).
     pub cleanup_enabled: Option<bool>,
     pub auto_inject: Option<bool>,
     pub input_device: Option<String>,
-    /// Tema oscuro por defecto (2026: dark mode default); toggle persistido.
+    /// Tema oscuro por defecto (2026: dark mode de serie); el interruptor se guarda.
     pub dark_mode: Option<bool>,
-    /// Corrección IA: post-procesado con LLM local de los turnos con
-    /// intención correctiva («no no, era 2 en vez de 4»). Toggle en Ajustes;
-    /// spec en docs/CORRECCION-VOZ.md. Default: activada.
+    /// Corrección IA: pasar por el modelo local los turnos que suenan a
+    /// corrección («no no, era 2 en vez de 4»). Interruptor en Ajustes; está
+    /// explicado en docs/CORRECCION-VOZ.md. Por defecto: activada.
     pub ai_correction_enabled: Option<bool>,
-    /// Proveedor del corrector: local por defecto, cloud OpenAI-compatible o
-    /// endpoint personalizado. `None` conserva el método local histórico.
+    /// De dónde saca el corrector: local por defecto, la nube de OpenAI o un
+    /// servidor propio. `None` mantiene el método local de siempre.
     pub correction_provider: Option<CorrectionProvider>,
-    /// Endpoint OpenAI-compatible del corrector. Se usa en modo Custom y,
-    /// si está presente, también permite sustituir el endpoint cloud.
-    /// `http://127.0.0.1:8081/v1` (llama.cpp/Ornith en WSL, alcanzable desde
+    /// Dirección del corrector compatible con OpenAI. Se usa en modo Custom y,
+    /// si está puesta, también deja cambiar la de la nube.
+    /// `http://127.0.0.1:8081/v1` (llama.cpp/Ornith en WSL, que se alcanza desde
     /// Windows por localhost forwarding). Groq/Gemini con su base_url.
     pub llm_base_url: Option<String>,
     pub llm_model: Option<String>,
-    /// API key en memoria. No se serializa: en Windows se guarda en
-    /// Credential Manager y se migra cualquier valor legado al cargar/guardar.
+    /// Clave de la API en memoria. No se guarda en el JSON: en Windows va al
+    /// Credential Manager y cualquier valor viejo del JSON se pasa allí al
+    /// cargar o guardar.
     #[serde(default, skip_serializing)]
     pub llm_api_key: Option<String>,
-    /// Timeout de la llamada HTTP al LLM corrector, en segundos. Default
-    /// 25 s (en el límite de los ~4-6 s esperados + margen para endpoints
-    /// remotos Groq/Gemini; spec §3.4). Valores ≤ 0 caen al default.
+    /// Cuánto se espera la respuesta del modelo corrector, en segundos. Por
+    /// defecto 25 s (los turnos tardan unos 4-6 s, más margen para Groq/Gemini;
+    /// punto 3.4 del documento). Valores ≤ 0 usan el de por defecto.
     pub llm_timeout_secs: Option<u64>,
-    /// Ruta del override MANUAL del server LLM (histórico: se elegía a mano en
-    /// Ajustes con «Examinar…»). Desde el 14/10/2026 el server VIAJA con la
-    /// app (`vendor/llama/`, ver `llm::resolve_server_path`, que lo prueba
-    /// PRIMERO): este campo ya solo existe para no romper una instalación
-    /// antigua sin `vendor/`, donde el server vive en otro sitio. Nadie lo
-    /// escribe desde la UI; `heal_llama_server_path` limpia el valor obsoleto
-    /// al arrancar.
+    /// Ruta del servidor LLM puesta A MANO (de cuando se elegía en Ajustes con
+    /// «Examinar…»). Desde el 14/10/2026 el servidor VIAJA con la app
+    /// (`vendor/llama/`, ver `llm::resolve_server_path`, que lo mira PRIMERO):
+    /// este campo solo existe para no romper una instalación vieja sin
+    /// `vendor/`, donde el servidor está en otro sitio. La interfaz ya no lo
+    /// escribe; `heal_llama_server_path` limpia el valor viejo al arrancar.
     pub llama_server_path: Option<String>,
-    /// Umbral de sensibilidad del clasificador correctivo (spec §2:
-    /// «el umbral debe favorecer la precisión sobre el recall»). Rango
-    /// 0..=100; default 50 (= conducta previa: todo lo que pasa la regla
-    /// de los dos niveles va al LLM). Subir = más conservador (menos
-    /// falsos positivos al LLM, más dictado normal por defecto). El
-    /// clasificador mapea el nº de señales presentes a {50, 75, 100},
-    /// así que el rango efectivo del usuario va de 50 (permisivo) a 100
-    /// (imposible, nunca se enruta). 0 lo trata el clasificador como
-    /// pasivo (atajo equivalente al toggle, conservando el resto de la
-    /// config).
+    /// Umbral de sensibilidad del clasificador de correcciones (punto 2:
+    /// «mejor no equivocarse que acertar siempre»). Rango 0..=100; por defecto
+    /// 50 (= como antes: todo lo que pasa la regla de los dos niveles va al
+    /// modelo). Más alto = más prudente (menos falsos positivos al modelo y más
+    /// dictado normal). El clasificador lleva el número de señales a {50, 75,
+    /// 100}, así que el rango real va de 50 (permisivo) a 100 (imposible, nunca
+    /// se manda). 0 el clasificador lo trata como apagado (atajo igual que
+    /// quitar la corrección, sin tocar el resto de la config).
     pub llm_classifier_threshold: Option<u8>,
-    /// Si true, las correcciones IA NO se aplican a ciegas: al volver del
-    /// LLM la app muestra el diff en el panel de feedback con botones
-    /// «Aplicar» / «Descartar». Default false (aplicar + aviso + undo,
-    /// spec §4.2: «por fluidez»). El undo de 1 nivel sigue disponible
-    /// también en modo confirmar.
+    /// Si está activo, las correcciones IA NO se aplican a ciegas: al volver del
+    /// modelo, la app enseña el cambio en el panel de avisos con botones
+    /// «Aplicar» / «Descartar». Por defecto no (aplicar, avisar y poder
+    /// deshacer; punto 4.2: «por fluidez»). El deshacer de un paso sigue
+    /// estando también en modo confirmar.
     pub ai_correction_confirm: Option<bool>,
-    /// Atajo global de dictado, formato `Mod1+Mod2+Tecla` (p. ej.
-    /// "Ctrl+Shift+D", "Alt+Space", "Ctrl+Alt+F12"). Se registra al arrancar;
-    /// si el valor es inválido o el atajo ya lo usa otra app, se vuelve al
-    /// default y la UI sigue funcionando (botones). Default: Ctrl+Shift+D.
+    /// Atajo global del dictado, con la forma `Mod1+Mod2+Tecla` (por ejemplo
+    /// "Ctrl+Shift+D", "Alt+Space", "Ctrl+Alt+F12"). Se registra al arrancar; si
+    /// el valor no vale o el atajo ya lo usa otra app, se vuelve al de por
+    /// defecto y la interfaz sigue funcionando (botones). Por defecto: Ctrl+Shift+D.
     pub shortcut: Option<String>,
-    /// Formato de inyección del turno en la app activa: "paste" (default)
-    /// copia al portapapeles y pega con Ctrl+V; "type" teclea el texto
-    /// directamente (enigo, sin tocar el portapapeles del usuario).
+    /// Cómo se escribe el turno en la app activa: "paste" (por defecto) lo
+    /// copia al portapapeles y pega con Ctrl+V; "type" teclea el texto tal cual
+    /// (con enigo, sin tocar el portapapeles del usuario).
     pub inject_format: Option<String>,
-    /// Retardo en ms antes de pegar/teclear (la app destino asienta el foco).
-    /// Default 40; `0` = sin retardo.
+    /// Milisegundos de espera antes de pegar o teclear (para que la app de
+    /// destino coja el foco). Por defecto 40; `0` = sin espera.
     pub inject_delay_ms: Option<u64>,
-    /// Filtro por título de la ventana activa (substring, sin distinguir
-    /// mayúsculas): si el título no lo contiene, el turno NO se inyecta.
-    /// Vacío/ausente = inyectar en cualquier app.
+    /// Filtro por el título de la ventana activa (basta con que lo contenga, sin
+    /// mirar mayúsculas): si el título no lo lleva, el turno NO se escribe.
+    /// Vacío o ausente = escribir en cualquier app.
     pub inject_window_filter: Option<String>,
-    /// Solo Linux: backend de inyección del turno. Valores válidos
+    /// Solo Linux: cómo se escribe el turno en la app activa. Valores válidos
     /// (`inject_backend` en config.json):
-    /// - `"wl-clipboard"` (default): wl-copy al portapapeles + wtype para
-    ///   la pulsación del pegado. Sin daemons ni permisos extra.
-    /// - `"ydotool"`: tecleo por uinput (universal, Xwayland incluido);
-    ///   exige `ydotoold` corriendo — sin él se copia al portapapeles y se
-    ///   avisa (la app no teclea a ciegas).
-    /// - `"wtype"`: tecleo directo por teclado virtual Wayland; algunas
-    ///   apps lo bloquean (zwp_virtual_keyboard_v1) → portapapeles.
-    /// Cualquier otro valor cae al default (la config nunca rompe).
+    /// - `"wl-clipboard"` (por defecto): wl-copy al portapapeles y wtype para
+    ///   la pulsación de pegar. Sin programas de fondo ni permisos de más.
+    /// - `"ydotool"`: teclea por uinput (vale para todo, Xwayland incluido);
+    ///   pide `ydotoold` en marcha — sin él se copia al portapapeles y se avisa
+    ///   (la app no teclea a ciegas).
+    /// - `"wtype"`: teclea con el teclado virtual de Wayland; algunas apps lo
+    ///   bloquean (zwp_virtual_keyboard_v1) → portapapeles.
+    /// Cualquier otro valor usa el de por defecto (la config nunca rompe).
     pub inject_backend: Option<String>,
-    /// Idioma de la transcripción. Vacío o "auto" (sin distinguir
-    /// mayúsculas) = autodetección de whisper (se pasa `None` al motor);
-    /// cualquier otro valor se trimea y se trata como BCP-47 (`"es"`,
-    /// `"en"`, `"fr"`, …). Valores desconocidos NO se validan aquí:
-    /// whisper los acepta y puede caer a `"en"` silenciosamente.
-    /// Default: `"es"` (lo que la app asumía hardcoded).
+    /// Idioma de la transcripción. Vacío o "auto" (sin mirar mayúsculas) =
+    /// que whisper lo detecte (se le pasa `None`); cualquier otro valor se limpia
+    /// y se toma como código de idioma (`"es"`, `"en"`, `"fr"`, …). Los valores
+    /// raros NO se comprueban aquí: whisper los acepta y puede acabar en `"en"`
+    /// sin avisar. Por defecto: `"es"` (lo que la app daba por hecho).
     pub language: Option<String>,
     /// Beam size de `SamplingStrategy::BeamSearch` de whisper. Rango útil
-    /// 1..=8 (1 = greedy equivalente); >8 es prohibitivamente lento sin
-    /// ganancia apreciable. Default: 5 (lo que ya usaba la app como
-    /// constante). Fuera de rango cae al default.
+    /// 1..=8 (1 es como ir a lo rápido); por encima de 8 va lentísimo sin ganar
+    /// apenas calidad. Por defecto 5 (lo que ya usaba la app). Fuera de rango
+    /// se usa el de por defecto.
     pub beam_size: Option<u32>,
-    /// Hilos del decoder de whisper. Más hilos = más paralelismo, pero el
-    /// cuello suele estar en GPU (small + cuda). Default: 4 (lo que ya
-    /// usaba la app como constante). El sistema físico lo respeta.
+    /// Hilos del decodificador de whisper. Más hilos = más a la vez, pero el
+    /// cuello suele estar en la GPU (small + cuda). Por defecto 4 (lo que ya
+    /// usaba la app). Se respeta lo que diga el sistema.
     pub n_threads: Option<u32>,
-    /// Campo legado de configuración. Whisper siempre recibe 16 kHz; se
-    /// conserva para no romper configs antiguas, pero ya no se expone en UI.
+    /// Campo viejo de configuración. Whisper siempre recibe 16 kHz; se guarda
+    /// para no romper configs antiguas, pero ya no sale en la interfaz.
     pub auto_resample_to_16k: Option<bool>,
     // ── Apariencia (tema / fuente / burbuja) ────────────────────────────────
-    /// Tema claro/oscuro/auto. `None` = legacy: se deriva de `dark_mode`
-    /// (el toggle antiguo) para no cambiar el comportamiento de configs
-    /// viejas. Al elegir modo en la UI se escribe `theme_mode` y `dark_mode`
-    /// queda como fallback para configs futuras sin el campo.
+    /// Tema claro/oscuro/auto. `None` = config vieja: se saca de `dark_mode`
+    /// (el interruptor de antes) para no cambiar el comportamiento. Al elegir
+    /// modo en la interfaz se escribe `theme_mode` y `dark_mode` queda por si
+    /// aparece una config sin el campo.
     pub theme_mode: Option<ThemeMode>,
-    /// Tamaño de fuente global (Ajustes → Apariencia). `None` = Normal.
+    /// Tamaño de letra de toda la interfaz (Ajustes → Apariencia). `None` = Normal.
     pub font_size: Option<FontSize>,
-    /// Tamaño del círculo de la burbuja flotante. `None` = 56 px (Mid).
+    /// Tamaño del círculo de la burbuja. `None` = 56 px (Mid).
     pub bubble_size: Option<BubbleSize>,
-    /// Esquina del monitor donde se ancla la burbuja. `None` = arriba
-    /// derecha (posición histórica).
+    /// Esquina donde se pone la burbuja. `None` = arriba
+    /// derecha (donde estaba siempre).
     pub bubble_corner: Option<BubbleCorner>,
-    /// Opacidad de la burbuja en % (rango 20..=100). `None` = 100.
+    /// Opacidad de la burbuja en % (de 20 a 100). `None` = 100.
     pub bubble_opacity: Option<u8>,
-    /// Estilo visual de la burbuja. `None` = sólida (compatibilidad histórica).
+    /// Aspecto de la burbuja. `None` = sólida (como antes).
     pub bubble_style: Option<BubbleStyle>,
-    /// Auto-ocultar la burbuja tras N segundos sin dictar. `None` = nunca.
-    /// Se re-muestra al pulsar el micrófono o al abrir la burbuja.
+    /// Esconder la burbuja tras N segundos sin dictar. `None` = nunca.
+    /// Vuelve a salir al pulsar el micrófono o al abrir la burbuja.
     pub bubble_hide_timeout: Option<BubbleHideTimeout>,
-    /// Posición física (px de pantalla) de la burbuja arrastrada por el
-    /// usuario. Pareja: si solo uno está presente se ignoran ambos (mover
-    /// sin arrastre no persiste). Al elegir una esquina en Ajustes se
-    /// limpian: la esquina vuelve a mandar en el siguiente arranque.
+    /// Dónde está la burbuja en pantalla (px) después de arrastrarla. Van en
+    /// pareja: si solo está uno, se ignoran los dos (mover sin arrastrar no se
+    /// guarda). Al elegir una esquina en Ajustes se borran: la esquina manda
+    /// otra vez al arrancar.
     pub bubble_x: Option<i32>,
     pub bubble_y: Option<i32>,
-    /// Muletillas personalizadas (Ajustes → Muletillas). `None` = las
-    /// listas por defecto de `cleanup.rs` (eh/um/uh/o sea/you know ·
-    /// este/esto/tipo/like/pues · bueno/pues). Se persiste solo cuando el
-    /// usuario toca las listas; el botón «Por defecto» lo vuelve a None.
-    /// Los configs legacy que ya traían `fillers` vuelven a usarlos.
+    /// Muletillas propias (Ajustes → Muletillas). `None` = las listas de
+    /// `cleanup.rs` (eh/um/uh/o sea/you know · este/esto/tipo/like/pues ·
+    /// bueno/pues). Solo se guarda cuando el usuario toca las listas; el botón
+    /// «Por defecto» lo devuelve a None. Los configs viejos que ya traían
+    /// `fillers` vuelven a usarlas.
     pub fillers: Option<FillerWords>,
-    /// Estado del panel «Ajustes avanzados» de la ventana de Ajustes
-    /// (colapsado/expandido). Decisión de diseño 09/09/2026 (re-agrupado
-    /// 10/09/2026): lo técnico (beam, hilos, timeout, umbral, API key,
-    /// confirmar, fuente, inyección…) queda oculto tras un panel que por
-    /// defecto está colapsado; lo común (modelo, corrección IA, ruta del
-    /// server LLM) vive en primer nivel. `None` = colapsado. Solo
-    /// afecta a la UI: no cambia ninguna opción de comportamiento.
+    /// Estado del panel «Ajustes avanzados» (plegado o abierto). Decisión de
+    /// diseño del 09/09/2026 (reagrupado el 10/09/2026): lo técnico (beam, hilos,
+    /// espera, umbral, clave de API, confirmar, fuente, escritura…) queda
+    /// escondido tras un panel plegado por defecto; lo normal (modelo,
+    /// corrección IA, ruta del servidor LLM) se ve sin abrir nada. `None` =
+    /// plegado. Solo afecta a la interfaz: no cambia ninguna opción.
     pub advanced_settings_open: Option<bool>,
-    /// Overrides por campo de la paleta visual (R7 — Personalización II).
-    /// Cada campo es un hex opcional (`"#RRGGBB"` o `"#RGB"`); un valor
-    /// ausente o inválido cae al default del modo activo (la app nunca
-    /// rompe por un hex basura). `None` = paleta por defecto = mismo
-    /// comportamiento que antes de R7-II. Se serializa tal cual: campos
-    /// `None` se omiten del JSON para mantener los configs limpios.
+    /// Colores cambiados a mano en la paleta (R7 — Personalización II). Cada
+    /// campo es un hex opcional (`"#RRGGBB"` o `"#RGB"`); si falta o no vale,
+    /// se usa el color del modo activo (un hex basura no rompe nada). `None` =
+    /// paleta de siempre = como antes de R7-II. Los campos `None` se dejan
+    /// fuera del JSON para que el config quede limpio.
     pub palette: Option<PaletteConfig>,
-    // ── Personalización III: imágenes del usuario ───────────────────────
-    /// Ruta absoluta (o relativa al directorio de trabajo) de la imagen de
-    /// fondo de la ventana principal. `None` = fondo del tema (defecto).
-    /// La ruta se persiste TAL CUAL; la validación (existencia, extensión
-    /// soportada) corre al renderizar, en `custom_image::resolve_static`:
-    /// si falla → fallback al fondo del tema, sin romper la UI.
+    // ── Personalización III: imágenes del usuario ─────────────────────────
+    /// Ruta (absoluta o relativa a donde se ejecuta) de la imagen de fondo de
+    /// la ventana principal. `None` = fondo del tema. La ruta se guarda TAL
+    /// CUAL; se comprueba al dibujar, en `custom_image::resolve_static`: si falla
+    /// → se pinta el fondo del tema, sin romper la interfaz.
     pub bg_image_path: Option<String>,
-    /// Ruta del sprite estático de la burbuja flotante. Si está presente
-    /// gana sobre la animación por frames; si no, se evalúa
-    /// `bubble_frames_path`. Validación y fallback en
-    /// `custom_image::resolve_static` / `resolve_frames`.
+    /// Ruta de la imagen fija de la burbuja. Si está, manda sobre la animación;
+    /// si no, se mira `bubble_frames_path`. Se comprueba y se cae al aspecto de
+    /// siempre en `custom_image::resolve_static` / `resolve_frames`.
     pub bubble_image_path: Option<String>,
-    /// Carpeta con la secuencia de frames PNG (u otro formato soportado)
-    /// para animar la burbuja. Orden alfabético estable; cada
-    /// `1000/fps` ms se avanza al siguiente frame (wrap). Vacía o
-    /// ausente → se usa `bubble_image_path` (o el render vectorial).
+    /// Carpeta con la secuencia de PNG (u otro formato aceptado) para animar
+    /// la burbuja. Orden por nombre; cada `1000/fps` ms se pasa a la siguiente
+    /// (y vuelve a empezar). Vacía o sin poner → se usa `bubble_image_path` (o
+    /// el dibujo de siempre).
     pub bubble_frames_path: Option<String>,
-    /// Velocidad de la animación de la burbuja en FPS. Default 12; rango
-    /// 1..=30 (validado en el getter y al aplicar el slider). Valores
-    /// fuera de rango caen al default.
+    /// Velocidad de la animación de la burbuja en imágenes por segundo. Por
+    /// defecto 12; rango 1..=30 (se comprueba al leerlo y al mover el control).
+    /// Fuera de rango se usa el de por defecto.
     pub bubble_animation_fps: Option<u8>,
 }
 
 /// Ruta del `config.json` del usuario (junto a `dictionary.json`).
 ///
-/// Windows: `%APPDATA%\whispr-open\config.json` (vía `dirs::data_dir`).
+/// Windows: `%APPDATA%\whispr-open\config.json` (lo da `dirs::data_dir`).
 /// Linux: `~/.config/whispr-open/config.json` (respeta `$XDG_CONFIG_HOME`).
 ///
-/// Si el sistema no expone carpeta de datos se cae al directorio actual: la
-/// app sigue funcionando, solo guarda la config al lado del ejecutable.
+/// Si el sistema no da carpeta de datos, se usa la carpeta actual: la app sigue
+/// funcionando, solo que guarda la config junto al ejecutable.
 #[cfg(target_os = "windows")]
 pub fn config_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("config.json")
 }
 
-/// Linux: config en XDG (no en data); doc-comments/docsUPDATED-2026-10-03.
+/// Linux: la config va a XDG (no a datos); doc-comments/docsUPDATED-2026-10-03.
 #[cfg(not(target_os = "windows"))]
 pub fn config_path() -> PathBuf {
     crate::paths::app_config_dir().join("config.json")
 }
 
-/// Ruta del diccionario personal exportable/importable (JSON).
-/// Mismo directorio base que `config_path`; el fichero vive junto a la
-/// config para que un backup de la carpeta base lo incluya todo.
+/// Ruta del diccionario personal que se puede exportar e importar (JSON).
+/// La misma carpeta base que `config_path`; el fichero vive junto al config para
+/// que una copia de la carpeta base lo tenga todo.
 #[cfg(target_os = "windows")]
 pub fn dictionary_path() -> PathBuf {
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     base.join("whispr-open").join("dictionary.json")
 }
 
-/// Linux: junto a config (XDG_CONFIG_HOME), coincide con Windows en la
-/// disposición relativa (junto a config.json).
+/// Linux: junto al config (XDG_CONFIG_HOME), igual que en Windows
+/// (los dos ficheros uno al lado del otro).
 #[cfg(not(target_os = "windows"))]
 pub fn dictionary_path() -> PathBuf {
     crate::paths::app_config_dir().join("dictionary.json")
@@ -577,38 +570,38 @@ fn save_api_key_secret(value: Option<&str>) {
 fn save_api_key_secret(_value: Option<&str>) {}
 
 impl Config {
-    /// Parsea el contenido de config.json con degradación elegante: un JSON
-    /// corrupto, vacío o de una versión desconocida NO rompe el arranque —
-    /// cae a los defaults (los campos válidos que se reconozcan se mantienen
-    /// por el `#[serde(default)]` de cada campo). Extraída como función pura
-    /// para testear el comportamiento sin depender de %APPDATA%.
+    /// Lee el contenido de config.json aguantando lo que venga: un JSON roto,
+    /// vacío o de una versión desconocida NO rompe el arranque — se usan los
+    /// valores por defecto (lo que sí se reconoce se queda, por el
+    /// `#[serde(default)]` de cada campo). Va aparte para poder probarlo sin
+    /// depender de %APPDATA%.
     pub fn parse_or_default(raw: &str) -> Self {
         serde_json::from_str(raw).unwrap_or_default()
     }
 
-    /// Carga la config de `%APPDATA%\whispr-open\config.json` con degradación
-    /// elegante: fichero ausente, vacío o corrupto → defaults (nunca rompe
-    /// el arranque). La API key se lee del Credential Manager de Windows.
+    /// Carga la config de `%APPDATA%\whispr-open\config.json` aguantando lo que
+    /// venga: fichero que falta, vacío o roto → valores por defecto (nunca rompe
+    /// el arranque). La clave de la API se lee del Credential Manager de Windows.
     pub fn load() -> Self {
         let path = config_path();
         let mut cfg: Self = match std::fs::read_to_string(&path) {
-            // Corrupto/vacío/versión anterior → defaults; nunca un pánico
-            // ni un arranque roto (requisito de robustez).
+            // Roto, vacío o de una versión anterior → valores por defecto;
+            // nunca un pánico ni un arranque roto.
             Ok(raw) => Self::parse_or_default(&raw),
             Err(_) => Self::default(),
         };
-        // La key nueva vive en Credential Manager; el campo legado del JSON
-        // solo se conserva para migrar configuraciones antiguas al guardar.
+        // La clave nueva vive en el Credential Manager; el campo viejo del JSON
+        // solo se queda para pasar configs antiguas al guardar.
         if cfg.llm_api_key.is_none() {
             cfg.llm_api_key = load_api_key_secret();
         }
         cfg
     }
 
-    /// Persiste la config a `config.json` (creando el directorio si falta)
-    /// y la API key al Credential Manager (o la borra si el usuario la
-    /// vació). Los fallos de escritura se ignoran a propósito: perder la
-    /// config no debe tumbar la sesión de dictado.
+    /// Guarda la config en `config.json` (crea la carpeta si falta) y la clave
+    /// de la API en el Credential Manager (o la borra si el usuario la dejó
+    /// vacía). Si falla la escritura se ignora a propósito: perder la config no
+    /// puede tumbar la sesión de dictado.
     pub fn save(&self) {
         save_api_key_secret(self.llm_api_key.as_deref());
         let path = config_path();
@@ -620,33 +613,33 @@ impl Config {
         }
     }
 
-    /// Modelo whisper efectivo: el de config si es válido, o Small (base
-    /// de mejor calidad en español; la GPU lo corre en tiempo real).
+    /// Modelo de whisper que se usa: el del config si vale, o Small (la mejor
+    /// calidad en español; la GPU lo mueve en tiempo real).
     pub fn selected_model(&self) -> Model {
         match self.model.as_deref() {
             Some("tiny") => Model::Tiny,
             Some("base") => Model::Base,
             Some("small") => Model::Small,
-            // Default (sin config) y valores inválidos: Small. Base/tiny en
-            // español producen errores fonéticos (buscar→boscar); small es el
-            // mínimo razonable y la RTX 4070 lo corre en tiempo real.
+            // Sin config y con valores raros: Small. Base y tiny se equivocan
+            // con sonidos del español (buscar→boscar); small es el mínimo
+            // razonable y la RTX 4070 lo mueve en tiempo real.
             _ => Model::Small,
         }
     }
 
-    /// Tema: dark por defecto (2026); el toggle persiste `dark_mode`.
+    /// Tema: oscuro por defecto (2026); el interruptor guarda `dark_mode`.
     pub fn is_dark(&self) -> bool {
         self.dark_mode.unwrap_or(true)
     }
 
-    /// Corrección IA activada (toggle en Ajustes; default: on).
+    /// Corrección IA activada (interruptor de Ajustes; por defecto: sí).
     pub fn ai_correction_enabled(&self) -> bool {
         self.ai_correction_enabled.unwrap_or(true)
     }
 
-    /// Atajo global de dictado: valor de `shortcut` en config.json o el
-    /// default Ctrl+Shift+D si está ausente/en blanco. El parseo fino (y el
-    /// volver a default si el string es inválido) vive en `hotkey.rs`.
+    /// Atajo global: el `shortcut` del config.json o Ctrl+Shift+D si falta o
+    /// está en blanco. La lectura fina (y volver al de por defecto si el texto no
+    /// vale) está en `hotkey.rs`.
     pub fn shortcut(&self) -> String {
         match self.shortcut.as_deref().map(str::trim) {
             Some(s) if !s.is_empty() => s.to_string(),
@@ -654,10 +647,10 @@ impl Config {
         }
     }
 
-    /// Comportamiento de inyección desde config.json: formato (paste/type),
-    /// retardo en ms (default 40, 0 = sin retardo), filtro por título de la
-    /// ventana activa y —solo Linux— backend (wl-clipboard/ydotool/wtype).
-    /// Valores inválidos/ausentes → defaults seguros.
+    /// Cómo se escribe el turno, sacado del config.json: formato (paste/type),
+    /// espera en ms (40 por defecto, 0 = ninguna), filtro por título de la
+    /// ventana activa y —solo Linux— por dónde escribir (wl-clipboard/ydotool/
+    /// wtype). Valores raros o que faltan → los de por defecto, que son seguros.
     pub fn inject_settings(&self) -> crate::inject::InjectSettings {
         crate::inject::InjectSettings {
             format: match self.inject_format.as_deref() {
@@ -671,9 +664,9 @@ impl Config {
                 .map(str::trim)
                 .filter(|f| !f.is_empty())
                 .map(str::to_string),
-            // Solo Linux: deserializar el backend pidiendo perdón si el
-            // valor no es reconocible (consulte el doc-comment del enum
-            // para las reglas). En Windows no existe el campo.
+            // Solo Linux: leer el backend y quedarse con el de por defecto si
+            // el valor no se reconoce (las reglas están en el comentario del
+            // enum). En Windows el campo no existe.
             #[cfg(unix)]
             backend: match self.inject_backend.as_deref() {
                 Some("ydotool") => LinuxInjectBackend::Ydotool,
@@ -683,17 +676,17 @@ impl Config {
         }
     }
 
-    /// Configuración del LLM corrector. Defaults: llama.cpp local en WSL
-    /// (Ornith 9B, puerto 8081); overridables en config.json. El timeout
-    /// sale de `llm_timeout_secs` (default 25 s).
+    /// Configuración del modelo que corrige. Por defecto: llama.cpp local en
+    /// WSL (Ornith 9B, puerto 8081); se puede cambiar en config.json. La espera
+    /// sale de `llm_timeout_secs` (25 s por defecto).
     pub fn correction_provider(&self) -> CorrectionProvider {
         self.correction_provider
             .unwrap_or(CorrectionProvider::Default)
     }
 
-    /// Configuración efectiva del corrector IA (`llm::LlmConfig`): defaults
-    /// por proveedor, overridables por los campos individuales de config
-    /// (endpoint, modelo, timeout).
+    /// Configuración real del corrector (`llm::LlmConfig`): valores por defecto
+    /// según el proveedor, cambiables con los campos del config (dirección,
+    /// modelo, espera).
     pub fn llm_settings(&self) -> crate::llm::LlmConfig {
         let provider = self.correction_provider();
         let (default_url, default_model, needs_key) = match provider {
@@ -722,8 +715,8 @@ impl Config {
         }
     }
 
-    /// Timeout HTTP del corrector en segundos. Default 25; 0 cae al
-    /// default también (un timeout de 0 cortaría toda llamada).
+    /// Espera de la llamada al corrector, en segundos. Por defecto 25; un 0
+    /// también usa el de por defecto (con 0 no se llegaría a llamar nunca).
     pub fn llm_timeout_secs(&self) -> Option<u64> {
         match self.llm_timeout_secs {
             Some(t) if t > 0 => Some(t),
@@ -731,13 +724,13 @@ impl Config {
         }
     }
 
-    /// Ruta explícita del server LLM (`llama-server.exe`) elegida en
-    /// Ajustes. Cadena en blanco/ausente = autodetección (el hueco vacío
-    /// de un campo borrado no se persiste como ruta inválida).
+    /// Ruta puesta a mano del servidor LLM (`llama-server.exe`) desde Ajustes.
+    /// En blanco o sin poner = que se busque solo (un campo vacío no se guarda
+    /// como ruta mala).
     ///
-    /// La RESOLUCIÓN final (vendado → config → rutas comunes → PATH) vive en
-    /// `llm::resolve_server_path`, que además valida que el fichero exista:
-    /// aquí solo devolvemos lo que hubiera guardado.
+    /// La búsqueda de verdad (dentro de la app → config → rutas habituales →
+    /// PATH) está en `llm::resolve_server_path`, que además mira que el fichero
+    /// exista: aquí solo se devuelve lo que hubiera guardado.
     pub fn llama_server_path(&self) -> Option<&str> {
         self.llama_server_path
             .as_deref()
@@ -745,20 +738,20 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
-    /// Sanea una config VIEJA del server LLM (14/10/2026, «cero rutas que
-    /// teclear»). El server VIAJA con la app (`vendor/llama/`), y el campo
-    /// `llama_server_path` ya no se edita en la UI: aquí no se intenta
-    /// «arreglar» la ruta (eso era lo viejo: resolver + persistir), se
-    /// LIMPIA cuando es basura — no existe, no es `llama-server.exe`, o hay
-    /// server vendado que la eclipsa (una ruta de una instalación anterior no
-    /// puede romper una instalación nueva).
+    /// Limpia una config VIEJA del servidor LLM (14/10/2026, «cero rutas que
+    /// teclear»). El servidor VIAJA con la app (`vendor/llama/`) y el campo
+    /// `llama_server_path` ya no se edita en la interfaz: aquí no se intenta
+    /// «arreglar» la ruta (eso era lo de antes: resolver y guardar), se BORRA
+    /// cuando no vale — no existe, no es `llama-server.exe`, o hay un servidor
+    /// dentro de la app que la deja sin efecto (una ruta de una instalación
+    /// vieja no puede romper una nueva).
     ///
-    /// Se conserva cuando sigue siendo utilizable Y no hay server vendado:
-    /// una instalación antigua (sin `vendor/`) con el server en otro sitio
-    /// seguiría funcionando con su ruta manual.
+    /// Se queda cuando sigue sirviendo Y no hay servidor dentro de la app: una
+    /// instalación vieja (sin `vendor/`) con el servidor en otro sitio sigue
+    /// funcionando con su ruta a mano.
     ///
-    /// Devuelve la ruta que va a usarse (`None` si no hay server en ningún
-    /// sitio: la corrección IA se desactiva con aviso, el dictado sigue).
+    /// Devuelve la ruta que se va a usar (`None` si no hay servidor en ningún
+    /// sitio: la corrección IA se apaga con aviso, el dictado sigue).
     pub fn heal_llama_server_path(&mut self) -> Option<PathBuf> {
         let vendado = crate::llm::exe_dir()
             .as_deref()
@@ -783,31 +776,30 @@ impl Config {
         crate::llm::resolve_server_path(self)
     }
 
-    /// Umbral del clasificador (0..=100). Default 50 (= conducta previa:
-    /// todo lo que pasa la regla de los dos niveles va al LLM). Subir = más
-    /// conservador (precision > recall, spec §2). El clasificador mapea el
-    /// nº de señales presentes a {50, 75, 100}, así que el rango efectivo
-    /// del usuario va de 50 (permisivo) a 100 (imposible, nunca se enruta).
-    /// 0 lo trata el clasificador como pasivo.
+    /// Umbral del clasificador (0..=100). Por defecto 50 (= como antes: todo lo
+    /// que pasa la regla de los dos niveles va al modelo). Más alto = más
+    /// prudente (mejor no pasarse, punto 2). El clasificador lleva el número de
+    /// señales a {50, 75, 100}, así que el rango real va de 50 (permisivo) a 100
+    /// (imposible, nunca se manda). 0 lo trata como apagado.
     pub fn llm_classifier_threshold(&self) -> u8 {
         self.llm_classifier_threshold.unwrap_or(50)
     }
 
-    /// Modo «confirmar antes de aplicar»: si true, el diff del LLM se
-    /// muestra con botones «Aplicar» / «Descartar» en vez de aplicarse
-    /// automáticamente (spec §4.2). Default false.
+    /// Modo «confirmar antes de aplicar»: si está, el cambio del modelo se
+    /// enseña con botones «Aplicar» / «Descartar» en vez de aplicarse solo
+    /// (punto 4.2). Por defecto no.
     pub fn ai_correction_confirm(&self) -> bool {
         self.ai_correction_confirm.unwrap_or(false)
     }
 
-    /// Idioma para `whisper_full_params::language`. Vacío o "auto" (sin
-    /// distinguir mayúsculas) = autodetección (el motor NO recibe
-    /// `set_language` y whisper decide). Cualquier otro valor se trimea
-    /// y se devuelve como BCP-47 (`"es"`, `"en"`, …). Valores
-    /// desconocidos NO se validan aquí: whisper los acepta.
+    /// Idioma para `whisper_full_params::language`. Vacío o "auto" (sin mirar
+    /// mayúsculas) = que lo detecte solo (al motor NO se le pone `set_language`
+    /// y decide whisper). Cualquier otro valor se limpia y se devuelve como
+    /// código de idioma (`"es"`, `"en"`, …). Los valores raros NO se comprueban
+    /// aquí: whisper los acepta.
     ///
-    /// Default seguro cuando el campo está ausente o vacío:
-    /// `Some("es")` (lo que la app asumía hardcoded).
+    /// Si el campo falta o está vacío, se usa `Some("es")` (lo que la app daba
+    /// por hecho).
     pub fn language(&self) -> Option<&str> {
         match self.language.as_deref().map(str::trim) {
             Some(s) if s.is_empty() => Some("es"),
@@ -817,10 +809,9 @@ impl Config {
         }
     }
 
-    /// Beam size efectivo del SamplingStrategy. Por defecto 5 (lo que ya
-    /// usaba la app como constante). Clamp 1..=8: 1 = greedy equivalente,
-    /// >8 es prohibitivamente lento en CPU y apenas gana calidad. Valores
-    /// fuera de rango caen al default.
+    /// Beam size que se usa. Por defecto 5 (lo que ya usaba la app). Se limita
+    /// a 1..=8: 1 va como el modo rápido, y por encima de 8 es lentísimo en CPU
+    /// sin ganar apenas calidad. Fuera de rango se usa el de por defecto.
     pub fn beam_size(&self) -> u32 {
         match self.beam_size {
             Some(n @ 1..=8) => n,
@@ -828,9 +819,9 @@ impl Config {
         }
     }
 
-    /// Hilos del decoder de whisper. Por defecto 4 (lo que ya usaba la
-    /// app como constante). Mínimo 1; tope blando 32 (más hilos no
-    /// aportan, pero se permite por si el usuario sabe lo que hace).
+    /// Hilos del decodificador de whisper. Por defecto 4 (lo que ya usaba la
+    /// app). Mínimo 1; tope blando 32 (más no aportan, pero se deja por si el
+    /// usuario sabe lo que hace).
     pub fn n_threads(&self) -> u32 {
         match self.n_threads {
             Some(n) if n >= 1 => n.min(32),
@@ -838,27 +829,27 @@ impl Config {
         }
     }
 
-    /// Compatibilidad con configs antiguas. El pipeline siempre remuestrea
-    /// a 16 kHz antes de invocar Whisper.
+    /// Para no romper configs antiguas. Antes de llamar a Whisper siempre se
+    /// pasa el audio a 16 kHz.
     pub fn auto_resample_16k(&self) -> bool {
         true
     }
 
-    /// ¿Limpieza de muletillas activa? Default: sí (se limpian las
-    /// muletillas comunes; el toggle de Ajustes puede desactivarla).
+    /// ¿Limpieza de muletillas activa? Por defecto sí (se quitan las comunes;
+    /// el interruptor de Ajustes puede apagarla).
     pub fn cleanup_enabled(&self) -> bool {
         self.cleanup_enabled.unwrap_or(true)
     }
 
-    /// Muletillas efectivas: las personalizadas de Ajustes o, si no hay
-    /// (`None`), los defaults de `cleanup.rs` (las listas originales).
+    /// Muletillas que se usan: las de Ajustes o, si no hay (`None`), las de
+    /// `cleanup.rs` (las listas de siempre).
     pub fn fillers(&self) -> FillerWords {
         self.fillers.clone().unwrap_or_default()
     }
 
-    /// Modo de tema efectivo. `None` (config vieja sin el campo) se deriva
-    /// del `dark_mode` legacy: true → Oscuro, false → Claro, ausente →
-    /// Oscuro (default 2026). El modo `Auto` delega en el sistema.
+    /// Modo de tema que se usa. `None` (config vieja sin el campo) se saca del
+    /// `dark_mode` de antes: true → Oscuro, false → Claro, sin campo → Oscuro
+    /// (por defecto en 2026). El modo `Auto` lo decide el sistema.
     pub fn theme_mode(&self) -> ThemeMode {
         self.theme_mode.unwrap_or_else(|| {
             if self.dark_mode.unwrap_or(true) {
@@ -869,9 +860,9 @@ impl Config {
         })
     }
 
-    /// ¿Modo oscuro efectivo? `system_dark` es el estado del SISTEMA (leído
-    /// por `theme::system_dark_mode()` y cacheado en el Poll del App cada
-    /// 5 s). Solo se consulta cuando el modo es Auto.
+    /// ¿Está en oscuro? `system_dark` es el estado del SISTEMA (lo lee
+    /// `theme::system_dark_mode()` y se guarda en el `Poll` cada 5 s). Solo se
+    /// mira cuando el modo es Auto.
     pub fn resolved_dark(&self, system_dark: bool) -> bool {
         match self.theme_mode() {
             ThemeMode::Auto => system_dark,
@@ -880,44 +871,44 @@ impl Config {
         }
     }
 
-    /// Tamaño de fuente global. Default: Normal (factor 1.0 = baseline).
+    /// Tamaño de letra de toda la interfaz. Por defecto: Normal (1.0, la base).
     pub fn font_size(&self) -> FontSize {
         self.font_size.unwrap_or(FontSize::Normal)
     }
 
-    /// Panel «Ajustes avanzados» de Ajustes expandido. Default: colapsado
-    /// (las opciones técnicas quedan ocultas hasta que el usuario lo abre).
+    /// Panel «Ajustes avanzados» abierto. Por defecto plegado (lo técnico queda
+    /// escondido hasta que el usuario lo abre).
     pub fn advanced_open(&self) -> bool {
         self.advanced_settings_open.unwrap_or(false)
     }
 
-    /// Tamaño del círculo de la burbuja. Default: 56 px (Mid).
+    /// Tamaño del círculo de la burbuja. Por defecto: 56 px (Mid).
     pub fn bubble_size(&self) -> BubbleSize {
         self.bubble_size.unwrap_or(BubbleSize::Mid)
     }
 
-    /// Esquina de anclaje de la burbuja. Default: arriba derecha.
+    /// Esquina donde se ancla la burbuja. Por defecto: arriba derecha.
     pub fn bubble_corner(&self) -> BubbleCorner {
         self.bubble_corner.unwrap_or(BubbleCorner::TopRight)
     }
 
-    /// Opacidad de la burbuja en % (20..=100). Default: 100 (opaca).
+    /// Opacidad de la burbuja en % (20..=100). Por defecto: 100 (opaca).
     pub fn bubble_opacity(&self) -> u8 {
         self.bubble_opacity.unwrap_or(100).clamp(20, 100)
     }
 
-    /// Estilo de la burbuja. Default: sólida.
+    /// Aspecto de la burbuja. Por defecto: sólida.
     pub fn bubble_style(&self) -> BubbleStyle {
         self.bubble_style.unwrap_or(BubbleStyle::Solid)
     }
 
-    /// Auto-ocultar de la burbuja. Default: nunca.
+    /// Esconder la burbuja sola. Por defecto: nunca.
     pub fn bubble_hide_timeout(&self) -> BubbleHideTimeout {
         self.bubble_hide_timeout.unwrap_or(BubbleHideTimeout::Never)
     }
 
-    /// Posición persistida de la burbuja (px físicos de pantalla). Solo Some
-    /// si la pareja x/y está completa: un solo campo no significa nada.
+    /// Dónde quedó la burbuja (px de pantalla). Solo hay valor si están las dos
+    /// coordenadas: una sola no dice nada.
     pub fn bubble_position(&self) -> Option<(i32, i32)> {
         match (self.bubble_x, self.bubble_y) {
             (Some(x), Some(y)) => Some((x, y)),
@@ -925,12 +916,10 @@ impl Config {
         }
     }
 
-    /// Ruta de la imagen de fondo de la ventana principal (cadena en
-    /// blanco/ausente = sin imagen). El getter NO valida la ruta: la
-    /// verificación corre al renderizar (`custom_image::resolve_static`)
-    /// para no penalizar el arranque con un I/O innecesario y para que
-    /// un fichero recién elegido por el diálogo de archivo esté
-    /// disponible aunque el FS aún no haya refrescado el descriptor.
+    /// Ruta de la imagen de fondo (en blanco o sin poner = sin imagen). Aquí NO
+    /// se comprueba: eso se hace al dibujar (`custom_image::resolve_static`),
+    /// para no gastar disco al arrancar y para que un fichero recién elegido en
+    /// el diálogo esté disponible aunque el sistema todavía no lo tenga apuntado.
     pub fn bg_image_path(&self) -> Option<&str> {
         self.bg_image_path
             .as_deref()
@@ -938,8 +927,8 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
-    /// Ruta del sprite estático de la burbuja flotante. Misma semántica
-    /// que `bg_image_path`: validación en el render.
+    /// Ruta de la imagen fija de la burbuja. Igual que `bg_image_path`: se
+    /// comprueba al dibujar.
     pub fn bubble_image_path(&self) -> Option<&str> {
         self.bubble_image_path
             .as_deref()
@@ -947,10 +936,9 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
-    /// Carpeta de frames para la animación por conmutación de la
-    /// burbuja. Validación en el render: si la carpeta no existe o está
-    /// vacía → no se anima (cae al sprite estático o al render
-    /// vectorial).
+    /// Carpeta de imágenes para animar la burbuja. Se comprueba al dibujar: si
+    /// la carpeta no existe o está vacía → no hay animación (se usa la imagen
+    /// fija o el dibujo de siempre).
     pub fn bubble_frames_path(&self) -> Option<&str> {
         self.bubble_frames_path
             .as_deref()
@@ -958,10 +946,10 @@ impl Config {
             .filter(|s| !s.is_empty())
     }
 
-    /// FPS efectivo de la animación de la burbuja. Default 12; fuera del
-    /// rango 1..=30 también cae al default. La validación fina (clamp)
-    /// vive en `custom_image::clamp_fps` para que el módulo y la UI
-    /// compartan la misma función pura.
+    /// Imágenes por segundo de la burbuja. Por defecto 12; fuera del rango
+    /// 1..=30 también se usa el de por defecto. El ajuste fino (`clamp_fps`)
+    /// está en `custom_image::clamp_fps`, para que el módulo y la interfaz usen
+    /// la misma función.
     pub fn bubble_animation_fps(&self) -> u8 {
         crate::custom_image::clamp_fps(self.bubble_animation_fps.unwrap_or(
             crate::custom_image::DEFAULT_BUBBLE_FPS,
@@ -1027,7 +1015,7 @@ mod tests {
         assert_eq!(s.delay.as_millis(), 0);
         assert_eq!(s.window_filter.as_deref(), Some("Visual Studio Code"));
 
-        // Formato desconocido → paste (default seguro); filtro en blanco → sin filtro.
+        // Formato raro → paste (seguro); filtro en blanco → sin filtro.
         let c = Config {
             inject_format: Some("escaneo".into()),
             ..Default::default()
@@ -1046,12 +1034,12 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn inject_backend_linux_defaults_y_overrides() {
-        // Default: wl-clipboard (sin daemons ni permisos extra).
+        // Por defecto: wl-clipboard (sin programas de fondo ni permisos de más).
         assert_eq!(
             Config::default().inject_settings().backend,
             crate::inject::LinuxInjectBackend::WlClipboard
         );
-        // Overrides legítimos.
+        // Cambios que sí valen.
         for (raw, esperado) in [
             ("ydotool", crate::inject::LinuxInjectBackend::Ydotool),
             ("wtype", crate::inject::LinuxInjectBackend::Wtype),
@@ -1063,7 +1051,7 @@ mod tests {
             };
             assert_eq!(c.inject_settings().backend, esperado, "backend {raw}");
         }
-        // Valor desconocido → default (la config nunca rompe el arranque).
+        // Valor raro → el de por defecto (la config nunca rompe el arranque).
         let raro = Config {
             inject_backend: Some("xdotool-mola".into()),
             ..Default::default()
@@ -1083,7 +1071,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(c.shortcut(), "Alt+Space");
-        // En blanco/ausente → default (la config nunca rompe el arranque).
+        // En blanco o sin poner → el de por defecto (la config nunca rompe el arranque).
         let c = Config {
             shortcut: Some("   ".into()),
             ..Default::default()
@@ -1103,7 +1091,7 @@ mod tests {
         assert_eq!(llm.model, "ornith-1.0-9b");
         assert_eq!(llm.api_key, None);
         assert_eq!(cfg.correction_provider(), CorrectionProvider::Default);
-        // Override de endpoint (p. ej. cualquier API OpenAI-compatible) via config.json.
+        // Cambiar la dirección (por ejemplo cualquier API compatible con OpenAI) desde config.json.
         let remoto = Config {
             correction_provider: Some(CorrectionProvider::Custom),
             llm_base_url: Some("https://api.example.com/v1".into()),
@@ -1128,7 +1116,7 @@ mod tests {
         assert_eq!(cloud_settings.base_url, "https://api.openai.com/v1");
         assert_eq!(cloud_settings.model, "gpt-4o-mini");
         assert_eq!(cloud_settings.api_key.as_deref(), Some("clave"));
-        // Toggle off persistido.
+        // Corrección IA apagada y guardada.
         let off = Config {
             ai_correction_enabled: Some(false),
             ..Default::default()
@@ -1139,23 +1127,23 @@ mod tests {
     #[test]
     fn timeout_umbral_y_confirm_tienen_defaults_seguros() {
         let cfg = Config::default();
-        // Default 25 s y aplicado al LlmConfig.
+        // 25 s por defecto, aplicado al LlmConfig.
         assert_eq!(cfg.llm_timeout_secs(), None, "None = cae al default de 25");
         assert_eq!(cfg.llm_settings().timeout_secs, 25);
-        // Default 50 del clasificador (= conducta previa: pasa todo lo que
+        // 50 por defecto del clasificador (= como antes: pasa todo lo que
         // cumple los dos niveles).
         assert_eq!(cfg.llm_classifier_threshold(), 50);
-        // Default false: aplicar + aviso + undo (spec §4.2: fluidez).
+        // Falso por defecto: aplicar, avisar y poder deshacer (punto 4.2: fluidez).
         assert!(!cfg.ai_correction_confirm());
 
-        // Override de timeout desde config.json.
+        // Cambiar la espera desde config.json.
         let c = Config {
             llm_timeout_secs: Some(45),
             ..Default::default()
         };
         assert_eq!(c.llm_timeout_secs(), Some(45));
         assert_eq!(c.llm_settings().timeout_secs, 45);
-        // 0 cae al default (timeout de 0 cortaría toda llamada).
+        // 0 usa el de por defecto (con 0 no se llegaría a llamar nunca).
         let c = Config {
             llm_timeout_secs: Some(0),
             ..Default::default()
@@ -1163,7 +1151,7 @@ mod tests {
         assert_eq!(c.llm_timeout_secs(), None);
         assert_eq!(c.llm_settings().timeout_secs, 25);
 
-        // Override del umbral y modo confirmar.
+        // Cambiar el umbral y el modo confirmar.
         let c = Config {
             llm_classifier_threshold: Some(85),
             ai_correction_confirm: Some(true),
@@ -1175,12 +1163,12 @@ mod tests {
 
     #[test]
     fn language_default_es_y_auto_y_overrides() {
-        // Default seguro: español (lo que la app asumía hardcoded).
+        // Por defecto, español (lo que la app daba por hecho).
         let cfg = Config::default();
         assert_eq!(cfg.language(), Some("es"));
 
-        // Vacío o None también caen al default español (la config nunca
-        // rompe el arranque; el usuario debe poner "auto" explícitamente).
+        // Vacío o None también acaban en español (la config nunca rompe el
+        // arranque; para detectar el idioma hay que poner "auto" a mano).
         let c = Config {
             language: None,
             ..Default::default()
@@ -1197,7 +1185,7 @@ mod tests {
         };
         assert_eq!(c.language(), Some("es"));
 
-        // "auto" (cualquier casing) → autodetección (None).
+        // "auto" (con cualquier mayúscula) → que lo detecte solo (None).
         let c = Config {
             language: Some("auto".into()),
             ..Default::default()
@@ -1219,7 +1207,7 @@ mod tests {
         };
         assert_eq!(c.language(), None);
 
-        // Overrides legítimos (trimeo + BCP-47).
+        // Cambios que sí valen (se limpian y se pasan como código de idioma).
         let c = Config {
             language: Some("en".into()),
             ..Default::default()
@@ -1234,10 +1222,10 @@ mod tests {
 
     #[test]
     fn beam_size_default_y_rango_valido() {
-        // Default 5 (lo que ya usaba la app).
+        // 5 por defecto (lo que ya usaba la app).
         assert_eq!(Config::default().beam_size(), 5);
 
-        // Valores válidos: 1..=8.
+        // Valores que valen: 1..=8.
         for n in 1..=8 {
             let c = Config {
                 beam_size: Some(n),
@@ -1245,7 +1233,7 @@ mod tests {
             };
             assert_eq!(c.beam_size(), n, "beam_size válido: {n}");
         }
-        // Fuera de rango → default (la config nunca rompe el arranque).
+        // Fuera de rango → el de por defecto (la config nunca rompe el arranque).
         let c = Config {
             beam_size: Some(0),
             ..Default::default()
@@ -1270,7 +1258,7 @@ mod tests {
 
     #[test]
     fn n_threads_default_y_rango() {
-        // Default 4 (lo que ya usaba la app).
+        // 4 por defecto (lo que ya usaba la app).
         assert_eq!(Config::default().n_threads(), 4);
 
         // Mínimo 1.
@@ -1290,13 +1278,13 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(c.n_threads(), 16);
-        // Tope blando 32 (más hilos no aportan pero se permite).
+        // Tope blando 32 (más no aportan, pero se permite).
         let c = Config {
             n_threads: Some(64),
             ..Default::default()
         };
         assert_eq!(c.n_threads(), 32);
-        // 0 y None → default.
+        // 0 y None → el de por defecto.
         let c = Config {
             n_threads: Some(0),
             ..Default::default()
@@ -1311,8 +1299,8 @@ mod tests {
 
     #[test]
     fn legacy_resampling_setting_is_ignored() {
-        // Whisper siempre exige 16 kHz: el campo legacy ya no puede desactivar
-        // el remuestreo aunque un config.json antiguo lo contenga.
+        // Whisper siempre pide 16 kHz: el campo viejo ya no puede desactivar
+        // el cambio de frecuencia aunque un config.json antiguo lo traiga.
         assert!(Config::default().auto_resample_16k());
         let disabled = Config {
             auto_resample_to_16k: Some(false),
@@ -1328,7 +1316,7 @@ mod tests {
 
     #[test]
     fn serializa_y_relee_campos_nuevos_de_transcripcion() {
-        // Roundtrip por JSON (lo que pasa con config.json en disco).
+        // Guardar y volver a leer por JSON (lo que pasa con el fichero en disco).
         let original = Config {
             language: Some("en".into()),
             beam_size: Some(3),
@@ -1343,10 +1331,10 @@ mod tests {
         assert_eq!(leido.n_threads(), 8);
         assert!(leido.auto_resample_16k());
 
-        // Compatibilidad hacia atrás: un config.json viejo sin los campos
-        // nuevos se deserializa sin error y los getters devuelven los defaults.
-        // (Los campos «viejos» como `dictionary` sí son requeridos; lo que
-        // se prueba aquí es que los NUEVOS campos son opcionales.)
+        // Compatibilidad: un config.json viejo sin los campos nuevos se lee sin
+        // error y los getters dan los valores por defecto. (Los campos viejos
+        // como `dictionary` sí son obligatorios; aquí se prueba que los NUEVOS
+        // son opcionales.)
         let viejo = r#"{"dictionary":[]}"#;
         let cfg: Config = serde_json::from_str(viejo).expect("json viejo");
         assert_eq!(cfg.language(), Some("es"));
@@ -1358,22 +1346,22 @@ mod tests {
 
     #[test]
     fn theme_mode_legacy_y_explicito() {
-        // Default (sin nada): Oscuro (2026: dark por defecto).
+        // Por defecto (sin nada): Oscuro (2026: dark de serie).
         assert_eq!(Config::default().theme_mode(), ThemeMode::Oscuro);
-        // Legacy dark_mode=false → Claro (config vieja con toggle en claro).
+        // `dark_mode=false` de una config vieja → Claro.
         let claro = Config {
             dark_mode: Some(false),
             ..Default::default()
         };
         assert_eq!(claro.theme_mode(), ThemeMode::Claro);
-        // theme_mode explícito manda sobre dark_mode.
+        // `theme_mode` puesto gana sobre `dark_mode`.
         let c = Config {
             dark_mode: Some(true),
             theme_mode: Some(ThemeMode::Claro),
             ..Default::default()
         };
         assert_eq!(c.theme_mode(), ThemeMode::Claro);
-        // FromStr tolera casing y alias inglés (usa "dark"/"light").
+        // `FromStr` aguanta mayúsculas y el alias en inglés ("dark"/"light").
         assert_eq!("auto".parse::<ThemeMode>(), Ok(ThemeMode::Auto));
         assert_eq!("OSCURO".parse::<ThemeMode>(), Ok(ThemeMode::Oscuro));
         assert_eq!("light".parse::<ThemeMode>(), Ok(ThemeMode::Claro));
@@ -1382,14 +1370,14 @@ mod tests {
 
     #[test]
     fn resolved_dark_sigue_al_modo_y_al_sistema() {
-        // Auto: decide el sistema (cacheado en el Poll).
+        // Auto: lo decide el sistema (se guarda en el `Poll`).
         let auto = Config {
             theme_mode: Some(ThemeMode::Auto),
             ..Default::default()
         };
         assert!(auto.resolved_dark(true));
         assert!(!auto.resolved_dark(false));
-        // Claro/Oscuro: fuerzan sin mirar al sistema.
+        // Claro/Oscuro: lo fijan sin mirar al sistema.
         let claro = Config {
             theme_mode: Some(ThemeMode::Claro),
             ..Default::default()
@@ -1406,7 +1394,7 @@ mod tests {
             oscuro.resolved_dark(false),
             "oscuro gana aunque el sistema sea claro"
         );
-        // Default (None) = Oscuro, ignora al sistema.
+        // Por defecto (None) = Oscuro, sin mirar al sistema.
         assert!(Config::default().resolved_dark(false));
     }
 
@@ -1417,7 +1405,7 @@ mod tests {
         assert_eq!(m.next().next(), ThemeMode::Oscuro);
         assert_eq!(m.next().next().next(), ThemeMode::Auto, "ciclo cerrado");
         assert_eq!(ThemeMode::Oscuro.next(), ThemeMode::Auto);
-        // forced_dark: solo Auto delega.
+        // `forced_dark`: solo Auto mira al sistema.
         assert_eq!(ThemeMode::Auto.forced_dark(), None);
         assert_eq!(ThemeMode::Claro.forced_dark(), Some(false));
         assert_eq!(ThemeMode::Oscuro.forced_dark(), Some(true));
@@ -1439,14 +1427,14 @@ mod tests {
 
     #[test]
     fn ajustes_avanzados_colapsados_por_defecto_y_persistidos() {
-        // Default: colapsado (el usuario normal no ve opciones técnicas).
+        // Por defecto: plegado (el usuario normal no ve opciones técnicas).
         assert!(!Config::default().advanced_open());
-        // Config legacy (sin el campo): también colapsado al deserializar.
-        // (Los campos viejos como `dictionary` son requeridos; lo que se
-        // prueba es que el campo NUEVO es opcional.)
+        // Config vieja (sin el campo): también plegado al leerla. (Los campos
+        // viejos como `dictionary` son obligatorios; aquí se prueba que el campo
+        // NUEVO es opcional.)
         let legacy: Config = serde_json::from_str(r#"{"dictionary":[]}"#).unwrap();
         assert!(!legacy.advanced_open());
-        // Expandido → serializado → vuelve a leerse expandido.
+        // Abierto → se guarda → se vuelve a leer abierto.
         let cfg = Config {
             advanced_settings_open: Some(true),
             ..Default::default()
@@ -1465,7 +1453,7 @@ mod tests {
         assert_eq!(cfg.bubble_opacity(), 100);
         assert_eq!(cfg.bubble_hide_timeout(), BubbleHideTimeout::Never);
         assert_eq!(cfg.bubble_position(), None, "sin arrastre no hay posición");
-        // Opacidad fuera de rango (config.json a mano) se clampea a 20..=100.
+        // Opacidad fuera de rango (config.json tocado a mano) se lleva a 20..=100.
         let baja = Config {
             bubble_opacity: Some(5),
             ..Default::default()
@@ -1476,7 +1464,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(alta.bubble_opacity(), 100);
-        // Posición solo con la pareja completa.
+        // La posición solo se guarda con las dos coordenadas.
         let solo_x = Config {
             bubble_x: Some(10),
             ..Default::default()
@@ -1488,7 +1476,7 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(par.bubble_position(), Some((10, 20)));
-        // Timeouts: Nunca = None, el resto segundos exactos.
+        // Esperas: Nunca = None, el resto los segundos exactos.
         assert_eq!(BubbleHideTimeout::Never.secs(), None);
         assert_eq!(BubbleHideTimeout::S5.secs(), Some(5));
         assert_eq!(BubbleHideTimeout::S60.secs(), Some(60));
@@ -1496,7 +1484,7 @@ mod tests {
 
     #[test]
     fn serializa_y_relee_campos_nuevos_de_ui() {
-        // Roundtrip por JSON (lo que pasa con config.json en disco).
+        // Guardar y volver a leer por JSON (lo que pasa con el fichero en disco).
         let original = Config {
             theme_mode: Some(ThemeMode::Auto),
             font_size: Some(FontSize::Large),
@@ -1519,8 +1507,8 @@ mod tests {
         assert_eq!(leida.bubble_hide_timeout(), BubbleHideTimeout::S10);
         assert_eq!(leida.bubble_position(), Some((1400, 920)));
 
-        // Compatibilidad hacia atrás: un config.json viejo sin los campos
-        // nuevos se deserializa sin error y los getters devuelven los defaults.
+        // Compatibilidad: un config.json viejo sin los campos nuevos se lee sin
+        // error y los getters dan los valores por defecto.
         let viejo = r#"{"dictionary":[]}"#;
         let cfg: Config = serde_json::from_str(viejo).expect("json viejo");
         assert_eq!(cfg.theme_mode(), ThemeMode::Oscuro, "legacy → dark");
@@ -1548,9 +1536,9 @@ mod tests {
 
     #[test]
     fn llama_server_path_roundtrip_y_legacy() {
-        // Default: autodetección (None) — sin campo no hay ruta fija.
+        // Por defecto: que lo busque solo (None) — sin campo no hay ruta fija.
         assert_eq!(Config::default().llama_server_path(), None);
-        // Ruta explícita → se persiste y se relee.
+        // Ruta puesta a mano → se guarda y se vuelve a leer.
         let cfg = Config {
             llama_server_path: Some("D:\\LlamaCPP\\llama-server.exe".into()),
             ..Default::default()
@@ -1565,10 +1553,10 @@ mod tests {
             leida.llama_server_path(),
             Some("D:\\LlamaCPP\\llama-server.exe")
         );
-        // Config legacy (sin el campo) se deserializa → None (autodetección).
+        // Config vieja (sin el campo) se lee → None (que lo busque solo).
         let legacy: Config = serde_json::from_str(r#"{ "dictionary": [] }"#).unwrap();
         assert_eq!(legacy.llama_server_path(), None);
-        // Campo en blanco → None (autodetección; no persiste basura).
+        // Campo en blanco → None (no se guarda basura).
         assert_eq!(
             Config {
                 llama_server_path: Some("   ".into()),
@@ -1590,8 +1578,8 @@ mod tests {
         assert!(!json.contains("secret-value"));
         assert!(!json.contains("llm_api_key"));
 
-        // El formato legado se sigue leyendo para poder migrarlo, pero nunca
-        // vuelve a salir al serializar.
+        // El formato viejo se sigue leyendo para poder pasarlo, pero nunca
+        // vuelve a salir al guardar.
         let legacy: Config =
             serde_json::from_str(r#"{"dictionary":[],"llm_api_key":"legacy-secret"}"#)
                 .expect("legacy config");
@@ -1611,7 +1599,7 @@ mod tests {
 
     #[test]
     fn image_paths_roundtrip_y_legacy() {
-        // Default: ninguna ruta (todo en None).
+        // Por defecto: ninguna ruta (todo a None).
         assert_eq!(Config::default().bg_image_path(), None);
         assert_eq!(Config::default().bubble_image_path(), None);
         assert_eq!(Config::default().bubble_frames_path(), None);
@@ -1620,7 +1608,7 @@ mod tests {
             crate::custom_image::DEFAULT_BUBBLE_FPS
         );
 
-        // Cuatro rutas personalizadas → roundtrip.
+        // Cuatro rutas puestas → se guardan y se releen.
         let cfg = Config {
             bg_image_path: Some("C:\\fondo.png".into()),
             bubble_image_path: Some("C:\\bubble.png".into()),
@@ -1639,8 +1627,8 @@ mod tests {
         assert_eq!(reloaded.bubble_frames_path(), Some("C:\\frames"));
         assert_eq!(reloaded.bubble_animation_fps(), 24);
 
-        // Cadenas en blanco / con espacios → None (no se persisten
-        // rutas inútiles que dispararían fallback).
+        // Cadenas en blanco o con espacios → None (no se guardan rutas que no
+        // sirven y que harían saltar el aspecto de siempre).
         let blank = Config {
             bg_image_path: Some("   ".into()),
             bubble_image_path: Some(String::new()),
@@ -1651,8 +1639,8 @@ mod tests {
         assert_eq!(blank.bubble_image_path(), None);
         assert_eq!(blank.bubble_frames_path(), None);
 
-        // Config legacy (sin los campos nuevos) se deserializa y los
-        // getters devuelven defaults (compatibilidad hacia atrás).
+        // Config vieja (sin los campos nuevos) se lee y los getters dan los
+        // valores por defecto (compatibilidad).
         let legacy: Config =
             serde_json::from_str(r#"{ "dictionary": [] }"#).unwrap();
         assert_eq!(legacy.bg_image_path(), None);
@@ -1663,7 +1651,7 @@ mod tests {
             crate::custom_image::DEFAULT_BUBBLE_FPS
         );
 
-        // FPS fuera de rango cae al default (clamp centralizado).
+        // Imágenes por segundo fuera de rango → las de por defecto (se ajusta en un solo sitio).
         let high = Config {
             bubble_animation_fps: Some(99),
             ..Default::default()
@@ -1684,9 +1672,9 @@ mod tests {
 
     #[test]
     fn legacy_filler_settings_are_honored_when_loading() {
-        // Config legacy de Juanfri (muletillas desactivadas + listas vacías):
-        // el refactor auditado las ignoraba; ahora deben cargar SIN ROMPER y
-        // volver a mandar (cleanup desactivado, fillers vacíos, no defaults).
+        // Config vieja de Juanfri (muletillas apagadas y listas vacías): el
+        // reparto que se revisó las ignoraba; ahora tienen que cargar SIN ROMPER
+        // y volver a guardarse (limpieza apagada, listas vacías, no las de serie).
         let raw = r#"{"dictionary":[],"cleanup_enabled":false,"fillers":{"unambiguous":[],"ambiguous":[],"start_of_turn":[]}}"#;
         let cfg: Config = serde_json::from_str(raw).expect("legacy config");
         assert!(
@@ -1700,8 +1688,8 @@ mod tests {
 
     #[test]
     fn filler_defaults_limpian_muletillas_comunes() {
-        // Config sin el campo → default sensato: limpiar las muletillas
-        // comunes por defecto, con opción de desactivar en Ajustes.
+        // Config sin el campo → lo sensato: limpiar las muletillas comunes por
+        // defecto, con opción de apagarlo en Ajustes.
         let cfg: Config = serde_json::from_str(r#"{"dictionary":[]}"#).expect("json");
         assert!(cfg.cleanup_enabled());
         assert_eq!(
@@ -1712,7 +1700,7 @@ mod tests {
             cfg.fillers().ambiguous,
             ["este", "esto", "tipo", "like", "pues"]
         );
-        // Un `fillers` parcial cae por campo al default (semántica de ee614dc).
+        // Un `fillers` a medias se completa campo a campo (como en ee614dc).
         let parcial: Config =
             serde_json::from_str(r#"{"dictionary":[],"fillers":{"unambiguous":["vale"]}}"#)
                 .expect("json");
@@ -1725,7 +1713,7 @@ mod tests {
 
     #[test]
     fn fillers_roundtrip_a_traves_del_json() {
-        // Lo que se ve en Ajustes se persiste y se relee igual.
+        // Lo que se ve en Ajustes se guarda y se vuelve a leer igual.
         let original = Config {
             cleanup_enabled: Some(false),
             fillers: Some(FillerWords {
@@ -1753,10 +1741,10 @@ mod tests {
 
     #[test]
     fn config_corrupta_vacia_y_antigua_nunca_rompen_el_arranque() {
-        // Requisito de robustez: cualquier config.json dañado cae a defaults
-        // sin pánico ni arranque roto. Casos: vacío, corrupto a mitad de
-        // escritura (corte de luz), basura total, y un JSON válido con
-        // claves de una versión futura desconocida.
+        // Cualquier config.json roto cae a los valores por defecto sin pánico
+        // ni arranque roto. Casos: vacío, roto a mitad de escritura (corte de
+        // luz), basura total, y un JSON válido con claves de una versión futura
+        // que no conocemos.
         assert_eq!(Config::parse_or_default(""), Config::default());
         assert_eq!(
             Config::parse_or_default("{ \"model\": \"sm"),
@@ -1772,13 +1760,13 @@ mod tests {
             Config::default(),
             "bytes nulos (fichero truncado por corte de luz) → defaults"
         );
-        // Claves desconocidas se ignoran y las conocidas se respetan.
+        // Las claves que no se conocen se ignoran y las que sí, se respetan.
         let futura = Config::parse_or_default(
             r#"{"model":"tiny","claves_del_futuro":{"x":1}}"#,
         );
         assert_eq!(futura.selected_model(), Model::Tiny);
-        // Una config SIN la clave `dictionary` (versión antigua, edición a
-        // mano) conserva el resto de ajustes: el parse no falla entero.
+        // Una config SIN la clave `dictionary` (versión vieja, editada a mano)
+        // conserva el resto de ajustes: el parse no falla entero.
         let sin_dictionary = Config::parse_or_default(r#"{"model":"base"}"#);
         assert_eq!(
             sin_dictionary.selected_model(),
@@ -1790,10 +1778,10 @@ mod tests {
 
     #[test]
     fn palette_roundtrip_y_legacy() {
-        // Default: paleta totalmente por defecto (None).
+        // Por defecto: la paleta entera por defecto (None).
         assert_eq!(Config::default().palette, None);
 
-        // Config personalizada → se persiste y se relee igual.
+        // Config personalizada → se guarda y se vuelve a leer igual.
         let cfg = Config {
             palette: Some(PaletteConfig {
                 accent: Some("#00AAFF".into()),
@@ -1812,22 +1800,22 @@ mod tests {
             leida.palette.as_ref().and_then(|p| p.text.clone()),
             Some("#101010".into())
         );
-        // Campos None se omiten en el JSON para configs limpios.
+        // Los campos None se dejan fuera del JSON para que el config quede limpio.
         assert!(!raw.contains("\"bg\":"));
         assert!(!raw.contains("\"surface\":"));
 
-        // Config legacy sin el campo → None (default completo).
+        // Config vieja sin el campo → None (todo por defecto).
         let legacy: Config = serde_json::from_str(r#"{ "dictionary": [] }"#).unwrap();
         assert_eq!(legacy.palette, None);
 
-        // PaletteConfig con todos los campos None = is_empty + se omite.
+        // Un PaletteConfig con todos los campos None = is_empty y se omite.
         let vacia = Config {
             palette: Some(PaletteConfig::default()),
             ..Default::default()
         };
         let raw_vacia = serde_json::to_string(&vacia).unwrap();
-        // El objeto PaletteConfig interno se serializa como {} (todos sus
-        // campos son None); pero el Option<PaletteConfig> = Some → presente.
+        // El PaletteConfig de dentro se guarda como {} (todos sus campos son
+        // None); pero el Option<PaletteConfig> = Some → aparece.
         assert!(raw_vacia.contains("\"palette\":{"));
     }
 }
