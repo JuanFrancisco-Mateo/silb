@@ -1,19 +1,19 @@
-//! Tokens de diseño 2026 para Silb.
+//! Colores, espacios, esquinas y tamaños de letra de Silb (diseño 2026).
 //!
-//! Única fuente de verdad de la capa visual: colores, espaciado, radios y
-//! tamaños de fuente. CERO literales mágicos en la UI (app.rs).
-//! Principios: calm design, dark mode por defecto, un solo acento violeta,
-//! sin blur/glassmorphism, sin animaciones decorativas, grid de 8 px.
+//! Todo el aspecto visual sale de aquí: nada de colores ni medidas sueltas
+//! en la interfaz (`app.rs`). Ideas: diseño tranquilo, oscuro por defecto, un
+//! solo acento violeta, sin desenfoques, sin animaciones de adorno y rejilla
+//! de 8 px.
 //!
-//! Personalización (R7 — Personalización II): el usuario puede sobreescribir
-//! CADA campo de la paleta desde Ajustes → Apariencia con un código hex
-//! (`#RRGGBB` o `#RGB`). Los overrides viven en `Config::palette`; este
-//! módulo expone `resolve_palette` para fundir los defaults con los overrides
-//! (un campo inválido cae al default por modo, NUNCA panic). El resultado se
-//! inyecta vía `set_palette_override` para que los estilos de widgets
-//! (`primary`, `secondary`, …) lean la paleta activa sin tocar los 50
-//! callsites que las invocan (thread-local; solo se setea en `view()` y se
-//! restaura al salir — fuera de `view()` se usan los defaults DARK/LIGHT).
+//! Personalización (R7 — Personalización II): en Ajustes → Apariencia el
+//! usuario puede cambiar CADA color de la paleta con un hex (`#RRGGBB` o
+//! `#RGB`). Los cambios se guardan en `Config::palette`; `resolve_palette`
+//! junta los colores de serie con los del usuario (un hex mal escrito usa el
+//! color de serie, nunca rompe). El resultado se deja en un hueco del hilo
+//! (`set_palette_override`) para que los estilos de los controles lean la
+//! paleta activa sin tocar las 50 llamadas que los usan; solo está puesto
+//! mientras se dibuja y se quita al salir (fuera de ahí valen los colores de
+//! serie oscuro/claro).
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -29,7 +29,7 @@ use iced::{Background, Border, Color, Padding, Radians, Shadow, Theme};
 
 use crate::config::Config;
 
-/// Color desde hex `0xRRGGBB` (const, evaluado en compilación).
+/// Color desde hex `0xRRGGBB` (fijo, calculado al compilar).
 macro_rules! rgb {
     ($r:expr, $g:expr, $b:expr) => {
         Color::from_rgb($r as f32 / 255.0, $g as f32 / 255.0, $b as f32 / 255.0)
@@ -37,10 +37,11 @@ macro_rules! rgb {
 }
 
 // ─────────────────────────────── Tokens: color ───────────────────────────────
-// Paleta grafito (dark, por defecto). Acento violeta único #7C6CFF en ambos
-// modos; ok/warn/err se oscurecen ligeramente en light para contraste AA.
+// Paleta grafito (oscura, por defecto). El acento violeta #7C6CFF es el mismo
+// en los dos modos; ok/aviso/error se oscurecen un poco en claro para llegar
+// al contraste AA.
 //
-// Los valores de la paleta OSCURA son los medidos en el diseño de Figma
+// Los valores de la paleta OSCURA son los medidos en Figma
 // (`design/openwhispr-figma/raw/TOKENS.md`): tarjeta #1D1E24, campo #191A20,
 // texto #F1F0F5, secundario #A9A8B5, borde #303139 y acento activo #8D7AFF.
 pub const BG: Color = rgb!(0x17, 0x18, 0x1C); // grafito fondo
@@ -50,16 +51,16 @@ pub const TEXT: Color = rgb!(0xF1, 0xF0, 0xF5);
 pub const DIM: Color = rgb!(0xA9, 0xA8, 0xB5);
 pub const ACCENT: Color = rgb!(0x7C, 0x6C, 0xFF); // violeta único
 pub const ACCENT_HOVER: Color = rgb!(0x8D, 0x7A, 0xFF);
-// Variante de acento SEGURA como color de texto normal: #7C6CFF sobre la
-// tarjeta grafito queda en ~4.2:1 (por debajo del AA 4.5:1 de WCAG para
-// texto pequeño). #8F82FF (y #6652F2 en claro) miden ≥ 4.5:1 sobre fondo Y
-// tarjeta en ambos modos (tests en este módulo). El violeta de marca se
-// reserva para rellenos, elementos grandes (≥ 3:1) y estados.
+// Acento para TEXTO normal (el violeta de marca no llega): #7C6CFF sobre la
+// tarjeta grafito se queda en ~4.2:1 (por debajo del 4.5:1 que pide WCAG para
+// texto pequeño). #8F82FF (y #6652F2 en claro) llegan a 4.5:1 o más sobre el
+// fondo y sobre la tarjeta en los dos modos (hay tests). El violeta de marca
+// se queda para rellenos, piezas grandes (≥ 3:1) y estados.
 pub const ACCENT_TEXT: Color = rgb!(0x8F, 0x82, 0xFF);
 pub const OK: Color = rgb!(0x3F, 0xB9, 0x5F);
 pub const WARN: Color = rgb!(0xF5, 0xA6, 0x23);
-// Rojo medido para AA sobre tarjeta oscura: #E54B4F quedaba en ~4.2:1; este
-// pasa 4.5:1 sobre fondo y tarjeta (ver test de contraste).
+// Rojo medido para AA sobre la tarjeta oscura: #E54B4F se quedaba en ~4.2:1;
+// este pasa de 4.5:1 sobre el fondo y la tarjeta (ver el test de contraste).
 pub const ERR: Color = rgb!(0xEB, 0x57, 0x57);
 pub const BORDER: Color = rgb!(0x30, 0x31, 0x39);
 
@@ -68,50 +69,48 @@ pub const SURFACE_LIGHT: Color = rgb!(0xFF, 0xFF, 0xFF);
 pub const SURFACE_ALT_LIGHT: Color = rgb!(0xEB, 0xEB, 0xEF);
 pub const TEXT_LIGHT: Color = rgb!(0x17, 0x18, 0x1C);
 pub const DIM_LIGHT: Color = rgb!(0x6B, 0x6B, 0x76);
-// Hover del acento en claro: más CLARO que el acento (a diferencia del
-// oscuro, cuyo hover sube de luminancia). Motivo medido: la tinta de los
-// botones primarios (#17181C) sobre un hover oscuro (#6652F2) daba 3.42:1
-// (< AA); sobre #9A8CFF mide 6.4:1. El hover más claro es además el patrón
-// natural en modo claro.
+// Hover del acento en claro: más CLARO que el acento (en oscuro el hover sube
+// de luz). Motivo medido: la tinta de los botones (#17181C) sobre un hover
+// oscuro (#6652F2) daba 3.42:1 (por debajo de AA); sobre #9A8CFF da 6.4:1. Y
+// el hover más claro es lo normal en modo claro.
 pub const ACCENT_HOVER_LIGHT: Color = rgb!(0x9A, 0x8C, 0xFF);
-// Acento-texto en modo claro (mismo rol que ACCENT_TEXT en oscuro): mide
-// ≥ 4.5:1 sobre fondo claro y sobre tarjeta blanca. NO es el hover: son
-// requisitos de contraste distintos (texto sobre fondo vs tinta sobre
-// relleno) y cada uno necesita su tono.
+// Acento para texto en claro (hace lo mismo que ACCENT_TEXT en oscuro): llega
+// a 4.5:1 sobre el fondo claro y sobre la tarjeta blanca. NO es el hover: son
+// dos cosas distintas (texto sobre fondo frente a tinta sobre relleno) y cada
+// una necesita su tono.
 pub const ACCENT_TEXT_LIGHT: Color = rgb!(0x66, 0x52, 0xF2);
 // Verde y ámbar oscurecidos para AA en claro: los de antes (#2F9E53,
-// #D98E0B) quedaban en ~3.1:1 y ~2.7:1 sobre blanco (texto pequeño < 4.5).
+// #D98E0B) se quedaban en ~3.1:1 y ~2.7:1 sobre blanco (texto pequeño < 4.5).
 pub const OK_LIGHT: Color = rgb!(0x1F, 0x7A, 0x3E);
 pub const WARN_LIGHT: Color = rgb!(0x8F, 0x63, 0x00);
 pub const ERR_LIGHT: Color = rgb!(0xC9, 0x3E, 0x3E);
 pub const BORDER_LIGHT: Color = rgb!(0xD9, 0xD9, 0xE0);
 
-/// Tinta para texto sobre un botón RELLENO de acento (p. ej. «Aplicar»):
-/// un casi-negro grafito que mide ≥ 4.5:1 sobre #7C6CFF en ambos modos
-/// (el fondo del modo NO se puede usar aquí: en claro daría ~3.5:1).
+/// Tinta para texto sobre un botón LLENO de acento (por ejemplo «Aplicar»):
+/// un casi negro que llega a 4.5:1 sobre #7C6CFF en los dos modos (el fondo
+/// del modo no vale aquí: en claro daría ~3.5:1).
 pub const INK_ON_ACCENT: Color = rgb!(0x17, 0x18, 0x1C);
 
-// ─────────── Chrome del rediseño (frame Dictado de Figma) ────────────────────
-// Superficies que NO son campos de la paleta semántica personalizable (el
-// usuario no las edita en Ajustes → Apariencia): son la «piel» del marco del
-// diseño. Se resuelven por modo desde [`chrome`], que además toma de la paleta
-// activa el texto, el secundario y el acento (así un override del usuario
-// sigue mandando en la marca y en los textos).
+// ─────────── Marco del rediseño (pantalla Dictado de Figma) ───────────────────
+// Colores que NO se pueden cambiar en Ajustes → Apariencia: son la «piel» del
+// marco del diseño. Se sacan por modo desde [`chrome`], que además toma de la
+// paleta activa el texto, el secundario y el acento (así lo que cambie el
+// usuario manda también en la marca y en los textos).
 pub const SIDEBAR: Color = rgb!(0x13, 0x14, 0x18); // barra lateral
 pub const WINDOW_BAR: Color = rgb!(0x15, 0x16, 0x1A); // barra de ventana propia
 pub const KEYCAP: Color = rgb!(0x24, 0x25, 0x2D); // keycaps de atajo, badges
 pub const NAV_ACTIVE: Color = rgb!(0x28, 0x23, 0x38); // nav activo (violeta tenue)
 pub const DIVIDER: Color = rgb!(0x27, 0x28, 0x2F); // separadores internos
-                                                   // Texto tenue (labels, versión, pistas): 11 px del diseño. MEDIDO: 4.54:1
-                                                   // sobre el fondo de ventana y sobre la sidebar, pero 4.25:1 sobre la tarjeta
-                                                   // y 4.44:1 sobre el campo — por debajo del AA 4.5:1 para texto pequeño (ver
-                                                   // `test` de contraste: la desviación queda registrada, no corregida por
-                                                   // cuenta propia, porque el valor viene del diseño).
+                                                    // Texto tenue (rótulos, versión, pistas): 11 px del diseño. MEDIDO: 4.54:1
+                                                    // sobre el fondo de la ventana y la barra lateral, pero 4.25:1 sobre la
+                                                    // tarjeta y 4.44:1 sobre el campo — por debajo de AA 4.5:1 para texto
+                                                    // pequeño (el test de contraste lo deja anotado: el valor viene del
+                                                    // diseño y no se cambia por cuenta propia).
 pub const FAINT: Color = rgb!(0x7F, 0x80, 0x8D);
 
-// Equivalentes en modo claro (el diseño de Figma es solo oscuro: estos tonos
-// son la traducción a claro del mismo rol, elegidos para mantener la jerarquía
-// fondo < sidebar < tarjeta y el contraste del texto tenue).
+// Los mismos papeles en modo claro (Figma solo trae el oscuro: estos tonos son
+// la traducción a claro, elegidos para mantener el orden fondo < barra <
+// tarjeta y el contraste del texto tenue).
 pub const SIDEBAR_LIGHT: Color = rgb!(0xF0, 0xF0, 0xF4);
 pub const WINDOW_BAR_LIGHT: Color = rgb!(0xF3, 0xF3, 0xF7);
 pub const KEYCAP_LIGHT: Color = rgb!(0xE8, 0xE8, 0xEE);
@@ -120,10 +119,10 @@ pub const DIVIDER_LIGHT: Color = rgb!(0xE3, 0xE3, 0xEA);
 pub const FAINT_LIGHT: Color = rgb!(0x5F, 0x5F, 0x6A);
 
 // ─────────────────────── Contraste WCAG (medido, no estimado) ────────────────
-// Fórmulas de WCAG 2.1: luminancia relativa + ratio (1..21). Públicas porque
-// los tests de accesibilidad de la UI (R4) miden con ellas los pares REALES
-// de tokens que usa la app; ajustar un color sin re-medir queda prohibido
-// por los propios tests.
+// Fórmulas de WCAG 2.1: luminancia relativa y ratio (1..21). Son públicas
+// porque los tests de accesibilidad (R4) miden con ellas los pares REALES de
+// colores que usa la app; cambiar un color sin volver a medir no pasa los
+// tests.
 
 /// Luminancia relativa WCAG de un color opaco (0..1).
 fn relative_luminance(c: Color) -> f64 {
@@ -138,8 +137,8 @@ fn relative_luminance(c: Color) -> f64 {
     0.2126 * channel(c.r) + 0.7152 * channel(c.g) + 0.0722 * channel(c.b)
 }
 
-/// Ratio de contraste WCAG (1..21). AA texto normal ≥ 4.5; texto grande y
-/// componentes gráficos ≥ 3.
+/// Ratio de contraste WCAG (1..21). AA para texto normal ≥ 4.5; texto grande y
+/// piezas gráficas ≥ 3.
 pub fn contrast_ratio(fg: Color, bg: Color) -> f64 {
     let l1 = relative_luminance(fg);
     let l2 = relative_luminance(bg);
@@ -157,8 +156,8 @@ pub struct UiPalette {
     pub dim: Color,
     pub accent: Color,
     pub accent_hover: Color,
-    /// Acento apto para TEXTO normal (AA ≥ 4.5:1 sobre bg y surface).
-    /// Usar `accent` para rellenos y elementos grandes (≥ 3:1).
+    /// Acento para TEXTO normal (AA ≥ 4.5:1 sobre fondo y tarjeta).
+    /// `accent` se usa para rellenos y piezas grandes (≥ 3:1).
     pub accent_text: Color,
     pub ok: Color,
     pub warn: Color,
@@ -199,16 +198,15 @@ pub const LIGHT: UiPalette = UiPalette {
 // ─────────────────────────── Personalización (R7-II) ──────────────────────────
 //
 // `Config::palette` guarda `Option<PaletteConfig>`: cada campo es un hex
-// opcional (`"#RRGGBB"` o `"#RGB"`, con o sin `#`; case-insensitive). Cada
-// override se aplica sobre la paleta base del modo (DARK o LIGHT); un campo
-// ausente o inválido cae al default de ese modo (la app nunca rompe ni hace
-// panic por un hex basura). Diseño: per-field override, no wholesale
-// replacement — así un usuario puede tocar solo el acento sin perder el
-// resto del lenguaje visual.
+// opcional (`"#RRGGBB"` o `"#RGB"`, con `#` o sin él, da igual mayúsculas).
+// Cada cambio se aplica sobre la paleta base del modo (oscuro o claro); un
+// campo vacío o mal escrito usa el de serie de ese modo (la app no rompe ni
+// da pánico por un hex basura). Se cambia campo a campo, no la paleta
+// entera: así se puede tocar solo el acento sin perder el resto de colores.
 
-/// Override por campo de la paleta. Cada `Option<String>` es un hex válido o
-/// `None` (= usa el default del modo activo). Se serializa tal cual: los
-/// `None` se omiten del JSON para mantener los configs limpios.
+/// Cambios de color campo a campo. Cada `Option<String>` es un hex bueno o
+/// `None` (= el color de serie del modo activo). Los `None` no se escriben en
+/// el JSON, para que el config quede limpio.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct PaletteConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -238,7 +236,7 @@ pub struct PaletteConfig {
 }
 
 impl PaletteConfig {
-    /// ¿Tiene AL MENOS un override? `false` ≡ paleta totalmente default.
+    /// ¿Hay AL MENOS un color cambiado? `false` = paleta entera de serie.
     pub fn is_empty(&self) -> bool {
         self.bg.is_none()
             && self.surface.is_none()
@@ -254,8 +252,8 @@ impl PaletteConfig {
             && self.border.is_none()
     }
 
-    /// Vacía TODOS los overrides → vuelve a la paleta por defecto del modo
-    /// activo. La UI lo usa en el botón «Restaurar todo».
+    /// Borra TODOS los cambios → vuelve a la paleta de serie del modo activo.
+    /// La interfaz lo usa en el botón «Restaurar todo».
     pub fn clear(&mut self) {
         self.bg = None;
         self.surface = None;
@@ -271,8 +269,8 @@ impl PaletteConfig {
         self.border = None;
     }
 
-    /// Restaura un campo concreto a default (`None`). La UI lo usa en el
-    /// botón «Restaurar» junto a cada input.
+    /// Devuelve un campo concreto a su color de serie (`None`). La interfaz lo
+    /// usa en el botón «Restaurar» de cada campo.
     pub fn clear_field(&mut self, field: PaletteField) {
         let slot: &mut Option<String> = match field {
             PaletteField::Bg => &mut self.bg,
@@ -292,9 +290,9 @@ impl PaletteConfig {
     }
 }
 
-/// Identifica un campo concreto de `PaletteConfig` para que la UI pueda
-/// «restaurar este campo al default» sin tener que conocer la estructura
-/// interna. Usado por `Message::PaletteFieldReset`.
+/// Identifica un campo de `PaletteConfig` para que la interfaz pueda
+/// «restaurar este campo» sin conocer la estructura de dentro. Lo usa
+/// `Message::PaletteFieldReset`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PaletteField {
     Bg,
@@ -312,7 +310,7 @@ pub enum PaletteField {
 }
 
 impl PaletteField {
-    /// Todos los campos, en el orden estable que usa la UI.
+    /// Todos los campos, en el orden fijo que usa la interfaz.
     pub const ALL: &'static [PaletteField] = &[
         PaletteField::Bg,
         PaletteField::Surface,
@@ -328,7 +326,7 @@ impl PaletteField {
         PaletteField::Border,
     ];
 
-    /// Etiqueta humana en español para la fila de la UI (sin coletilla).
+    /// Nombre en español para la fila de la interfaz (tal cual).
     pub fn label(self) -> &'static str {
         match self {
             PaletteField::Bg => "Fondo de ventana",
@@ -346,9 +344,9 @@ impl PaletteField {
         }
     }
 
-    /// Texto de ayuda CORTO (lo técnico detrás de «Ajustes avanzados», pero
-    /// expuesto aquí porque personalizar colores ES la sección avanzada de
-    /// Apariencia y el usuario debe entender qué cambia cada campo).
+    /// Texto de ayuda CORTO (lo técnico va en «Ajustes avanzados», pero esto se
+    /// enseña igual porque cambiar colores ES la parte avanzada de Apariencia y
+    /// el usuario tiene que saber qué cambia cada campo).
     pub fn help(self) -> &'static str {
         match self {
             PaletteField::Bg => "Fondo de la ventana principal.",
@@ -369,13 +367,13 @@ impl PaletteField {
     }
 }
 
-/// Parsea un hex CSS (`#RRGGBB`, `#RGB`, con o sin `#`; case-insensitive) a
-/// `Color` opaco. Devuelve `None` si el formato es basura — la UI usa esto
-/// para «campo inválido → se ignora y se usa el default del modo» sin romper
-/// el render.
+/// Lee un hex de CSS (`#RRGGBB`, `#RGB`, con `#` o sin él; da igual
+/// mayúsculas) y devuelve un `Color` opaco. `None` si el texto no vale — la
+/// interfaz lo usa para «campo mal escrito → se ignora y se pinta el color de
+/// serie» sin romper el dibujo.
 ///
-/// Acepta 3 o 6 dígitos hex (CSS-style). 8 dígitos NO: alpha no es editable
-/// (la opacidad global es otro ajuste). El caracter `#` inicial es opcional.
+/// Acepta 3 o 6 dígitos hex (como CSS). 8 NO: la transparencia no se cambia
+/// (la opacidad global es otro ajuste). El `#` del principio es opcional.
 pub fn parse_hex(raw: &str) -> Option<Color> {
     let s = raw.trim();
     let s = s.strip_prefix('#').unwrap_or(s);
@@ -384,7 +382,7 @@ pub fn parse_hex(raw: &str) -> Option<Color> {
     let bytes = s.as_bytes();
     let rgb @ [r, g, b] = match bytes.len() {
         3 => {
-            // #RGB → expande a #RRGGBB (cada nibble se duplica).
+            // #RGB → se pasa a #RRGGBB (cada dígito se repite).
             let r = hex_nibble(bytes[0])?;
             let g = hex_nibble(bytes[1])?;
             let b = hex_nibble(bytes[2])?;
@@ -415,10 +413,10 @@ fn hex_nibble(b: u8) -> Option<u8> {
     }
 }
 
-/// Resuelve la paleta efectiva (defaults del modo + overrides por campo). Si
-/// `cfg.palette` es `None` o todos sus campos son `None`, devuelve una copia
-/// del `DARK` o `LIGHT` base (comportamiento idéntico al de antes de R7-II).
-/// Cada hex inválido se ignora silenciosamente y se usa el default del campo.
+/// Junta la paleta que se usa (colores de serie del modo + cambios del
+/// usuario). Si `cfg.palette` es `None` o todos sus campos son `None`,
+/// devuelve una copia de la base oscura o clara (igual que antes de R7-II).
+/// Cada hex mal escrito se ignora y se usa el color de serie del campo.
 pub fn resolve_palette(cfg: &Config, dark: bool) -> UiPalette {
     let base = if dark { DARK } else { LIGHT };
     let Some(overrides) = cfg.palette.as_ref() else {
@@ -459,13 +457,13 @@ pub fn resolve_palette(cfg: &Config, dark: bool) -> UiPalette {
 
 // ───────────── Presets (un clic cambia 12 campos a la vez) ───────────────
 //
-// Pensados para los dos modos principales (oscuro/claro) + 3 acentos
-// distintos. NO se mezclan con la paleta base — cada preset REEMPLAZA todos
-// los campos (incluido el acento). Pensado para «inspiraciones»: el usuario
-// clica uno y luego afina por campo.
+// Pensados para los dos modos (oscuro y claro) y 3 acentos distintos. NO se
+// mezclan con la paleta base: cada preset CAMBIA todos los campos (acento
+// incluido). Son para «inspirarse»: se pulsa uno y luego se afina campo a
+// campo.
 
-/// Preset de paleta completa: cambia los 12 campos de golpe (incluido el
-/// acento). Pensado como inspiración de un clic; luego se afina campo a campo.
+/// Paleta completa de un preset: cambia los 12 campos de golpe (acento
+/// incluido). Sirve de punto de partida; luego se afina campo a campo.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PalettePreset {
     /// Paleta oscura por defecto (violeta + grafito).
@@ -481,7 +479,7 @@ pub enum PalettePreset {
 }
 
 impl PalettePreset {
-    /// Todos los presets, en el orden en que se ofrecen en Ajustes.
+    /// Todos los presets, en el orden en que salen en Ajustes.
     pub const ALL: &'static [PalettePreset] = &[
         PalettePreset::Violeta,
         PalettePreset::Grafito,
@@ -490,7 +488,7 @@ impl PalettePreset {
         PalettePreset::Oceánico,
     ];
 
-    /// Nombre humano del preset, tal cual se muestra en el selector.
+    /// Nombre tal cual se enseña en el selector.
     pub fn label(self) -> &'static str {
         match self {
             PalettePreset::Violeta => "Violeta (oscuro por defecto)",
@@ -501,9 +499,9 @@ impl PalettePreset {
         }
     }
 
-    /// Preset aplicado a la rama DARK o LIGHT. Lo que devuelve es la paleta
-    /// entera (los 12 campos), por lo que se usa como «fuente de verdad»
-    /// para poblar `Config::palette`.
+    /// Paleta del preset para la rama oscura o clara. Devuelve la paleta
+    /// entera (los 12 campos), así que sirve de «fuente de verdad» para
+    /// rellenar `Config::palette`.
     pub fn colors(self, dark: bool) -> UiPalette {
         match (self, dark) {
             // Oscuros
@@ -599,9 +597,9 @@ impl PalettePreset {
     }
 }
 
-/// Convierte una `UiPalette` resuelta al `PaletteConfig` correspondiente
-/// (con cada campo escrito como `"#RRGGBB"`). Lo usa el botón «Aplicar
-/// preset» y la importación JSON → config.
+/// Pasa una `UiPalette` ya resuelta al `PaletteConfig` equivalente (cada
+/// campo como `"#RRGGBB"`). Lo usa el botón «Aplicar preset» y la
+/// importación de JSON al config.
 pub fn palette_to_config(p: UiPalette) -> PaletteConfig {
     fn hx(c: Color) -> String {
         let r = (c.r * 255.0).round().clamp(0.0, 255.0) as u8;
@@ -625,47 +623,45 @@ pub fn palette_to_config(p: UiPalette) -> PaletteConfig {
     }
 }
 
-// ───────────── Thread-local: inyecta la paleta resuelta en `tokens` ──────
+// ───────────── Hilo actual: deja la paleta resuelta para los estilos ─────
 //
-// Los widgets piden el `UiPalette` dentro de los style closures (que solo
-// reciben `&Theme` por la API de iced). Para que esos closures lean la
-// paleta resuelta del usuario sin tocar los 50 callsites, cacheamos la
-// paleta activa en un thread-local durante `view()`. Fuera de `view()`
-// `tokens(theme)` cae a los defaults DARK/LIGHT (los tests de contraste
-// cuentan con eso).
+// Los controles piden la `UiPalette` dentro de sus funciones de estilo (que
+// solo reciben `&Theme` por la API de iced). Para que lean la paleta del
+// usuario sin tocar las 50 llamadas, se guarda la paleta activa en el hilo
+// mientras se dibuja. Fuera del dibujo, `tokens(theme)` devuelve los colores
+// de serie oscuro/claro (los tests de contraste cuentan con eso).
 
 thread_local! {
     static OVERRIDE: RefCell<Option<Arc<UiPalette>>> = const { RefCell::new(None) };
 }
 
-/// Establece la paleta que verán los style closures hasta el próximo
-/// `clear_palette_override`. Pensado para envolver `WhisprApp::view()` y
-/// `bubble_view()` (mismo hilo UI). Pasar `None` ≡ sin override (DARK/LIGHT).
+/// Deja la paleta que verán los estilos hasta el próximo
+/// `clear_palette_override`. Se pone alrededor de `WhisprApp::view()` y
+/// `bubble_view()` (el mismo hilo de la interfaz). `None` = sin cambio.
 pub fn set_palette_override(p: Option<Arc<UiPalette>>) {
     OVERRIDE.with(|c| *c.borrow_mut() = p);
 }
 
-/// Limpia el override. Lo usa el destructor de `PaletteOverrideScope`.
+/// Quita el cambio. Lo llama el destructor de `PaletteOverrideScope`.
 pub fn clear_palette_override() {
     OVERRIDE.with(|c| *c.borrow_mut() = None);
 }
 
-/// RAII helper: setea el override al construirse, lo limpia al soltarse.
-/// Garantiza que un `?` o un panic en `view()` no deje la paleta fantasma
-/// para el siguiente frame.
+/// Ayudante que se pone al crearse y se quita al soltarse. Así un `?` o un
+/// pánico al dibujar no deja una paleta fantasma para la siguiente vuelta.
 pub struct PaletteOverrideScope {
     previous: Option<Arc<UiPalette>>,
 }
 
 impl PaletteOverrideScope {
-    /// Instala `p` como paleta activa y recuerda la anterior para devolverla
-    /// al soltar el scope (en `Drop`).
+    /// Pone `p` como paleta activa y se guarda la anterior para devolverla al
+    /// soltarse (en `Drop`).
     pub fn new(p: UiPalette) -> Self {
         let arc = Arc::new(p);
         let previous = OVERRIDE.with(|c| {
             let prev = c.borrow_mut().replace(arc);
-            // `prev` es `Option<Arc<UiPalette>>`; `replace` devuelve el
-            // valor anterior sin doble envoltura.
+            // `prev` es `Option<Arc<UiPalette>>`; `replace` devuelve el valor
+            // de antes sin envolverlo dos veces.
             prev
         });
         Self { previous }
@@ -683,8 +679,8 @@ fn override_active() -> Option<Arc<UiPalette>> {
     OVERRIDE.with(|c| c.borrow().clone())
 }
 
-// ─────────────────────────────── Tokens: geometría ───────────────────────────────
-// Grid de 8 px.
+// ─────────────────────────────── Medidas: geometría ───────────────────────────────
+// Rejilla de 8 px.
 pub const SPACE_1: u16 = 4; // medio paso
 pub const SPACE_2: u16 = 8;
 pub const SPACE_3: u16 = 16;
@@ -692,37 +688,37 @@ pub const SPACE_4: u16 = 24;
 pub const SPACE_5: u16 = 32;
 pub const SPACE_6: u16 = 48;
 
-// Radios 8–10 px (marco del rediseño: 12 px en tarjetas, 5 en keycaps).
+// Esquinas de 8–10 px (en el marco: 12 px en tarjetas, 5 en teclas).
 pub const RADIUS_SM: f32 = 8.0;
 pub const RADIUS_MD: f32 = 10.0;
-/// Radio de las tarjetas del rediseño (frame Dictado: 12 px).
+/// Esquina de las tarjetas del rediseño (pantalla Dictado: 12 px).
 pub const RADIUS_LG: f32 = 12.0;
-/// Radio de los keycaps de atajo y badges del rediseño (5 px).
+/// Esquina de las teclas de atajo y las etiquetas del rediseño (5 px).
 pub const RADIUS_KEYCAP: f32 = 5.0;
 /// Radio del botón circular de grabación (círculo de 80 px = radio 40).
 pub const RADIUS_CIRCLE: f32 = 40.0;
 
-/// Padding de los botones de acción del marco (36 px de alto con un icono de
-/// 16 px): el del diseño, «Action» y «Copiar texto» del frame Dictado.
+/// Relleno de los botones de acción del marco (36 px de alto con un icono de
+/// 16 px): el del diseño, «Action» y «Copiar texto» de la pantalla Dictado.
 pub const ACTION_BUTTON_PADDING: [f32; 2] = [10.0, 12.0];
-/// Padding de un keycap de atajo (alto 23 px con texto de 11 px).
+/// Relleno de una tecla de atajo (23 px de alto con texto de 11 px).
 pub const KEYCAP_PADDING: [f32; 2] = [4.0, 7.0];
 /// Alto de la barra de ventana propia (`Window bar` del diseño).
 pub const WINDOW_BAR_HEIGHT: f32 = 40.0;
 
-// ───────────── Rejilla única de las 5 pestañas de Ajustes (frame 3:604) ──────
+// ───────────── Rejilla única de las 5 pestañas de Ajustes (pantalla 3:604) ───
 //
-// La consistencia NO se copia de una pantalla: se DERIVA de esta rejilla, que
-// es la única fuente de las medidas de las cinco pestañas (General,
-// Apariencia, Dictado, Corrección IA, Avanzado). Cero literales en la UI.
-// Todas las medidas salen del design context del frame Ajustes
+// La coherencia no se copia de una pantalla: sale de esta rejilla, la única
+// fuente de medidas de las cinco pestañas (General, Apariencia, Dictado,
+// Corrección IA, Avanzado). Cero medidas sueltas en la interfaz.
+// Todas salen del diseño de la pantalla Ajustes
 // (`design/openwhispr-figma/raw/metadata-arbol-capas.txt`):
 //
 //   nodo            medida
 //   3:638 / 3:639   contenido 916 px (márgenes de página de 40, en shell.rs)
-//   3:656 (Fila)    68 px de alto · rótulo en x=20 → inset horizontal 20
+//   3:656 (Fila)    68 px de alto · rótulo en x=20 → margen lateral 20
 //   3:657 (Rótulo)  columna de rótulo/ayuda 606 px
-//   3:660 / 3:667   250 px de ancho, x=646 → borde derecho x=896 (= inset 20)
+//   3:660 / 3:667   250 px de ancho, x=646 → borde derecho x=896 (= margen 20)
 //   3:692 (Switch)  36×22, x=860 → el MISMO borde derecho x=896
 //   3:691 (Estado)  etiqueta de estado con borde derecho a 20 px del switch
 //   3:672           fila del modelo: 82 px (icono de 42 + 20 arriba y abajo)
@@ -741,10 +737,10 @@ pub const GRID_SECTION_TITLE_GAP: f32 = 10.0;
 pub const GRID_TAB_HEIGHT: f32 = 43.0;
 pub const GRID_TAB_GAP: f32 = 28.0;
 pub const GRID_TOGGLE_SIZE: f32 = 22.0;
-/// Ancho del interruptor del diseño (nodo `3:692`). NO se aplica al widget:
-/// iced pinta el suyo al doble del alto (`size` × 2 = 44 px) y su layout
-/// ignora el ancho pedido, así que la app lleva el switch 8 px más ancho que
-/// el frame. Lo que la rejilla fija es su BORDE DERECHO, que sí coincide.
+/// Ancho del interruptor del diseño (nodo `3:692`). NO se aplica al control:
+/// iced pinta el suyo al doble del alto (`size` × 2 = 44 px) y no hace caso al
+/// ancho pedido, así que la app lleva el interruptor 8 px más ancho que el
+/// diseño. Lo que la rejilla fija es su BORDE DERECHO, que sí coincide.
 pub const GRID_TOGGLE_WIDTH: f32 = 36.0;
 pub const GRID_TOGGLE_GAP: f32 = 20.0;
 /// Separación entre bloques de la página (cabecera → pestañas → contenido),
@@ -765,8 +761,8 @@ pub const FONT_XL: u16 = 20;
 pub const FONT_HERO: u16 = 24; // label del estado del micrófono
                                // (FONT_DOT se eliminó: el punto de estado del hero ahora usa FONT_XL)
 
-/// Tamaños de fuente resueltos por el tamaño seleccionado en Ajustes
-/// (`Config::font_size()`). Factor 1.0 = los `FONT_*` de baseline.
+/// Tamaños de letra según lo que se elija en Ajustes (`Config::font_size()`).
+/// Factor 1.0 = los `FONT_*` de base.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct FontSizes {
     pub xxs: u16,
@@ -777,9 +773,9 @@ pub struct FontSizes {
     pub hero: u16,
 }
 
-/// Escala los tamaños base (`FONT_XS..FONT_HERO`) por un factor. Clamp final
-/// 8..=64 px: un factor extremo (p. ej. 1.3 con hero=24 → 31) nunca produce
-/// tamaños absurdos. Redondeo al entero más cercano (la UI pide u16).
+/// Multiplica los tamaños base (`FONT_XS..FONT_HERO`) por un factor. Se limita
+/// a 8..=64 px: un factor raro (por ejemplo 1.3 con hero=24 → 31) nunca da
+/// tamaños absurdos. Se redondea al entero más cercano (la interfaz pide u16).
 pub fn font_sizes(factor: f32) -> FontSizes {
     let scale = |base: u16| ((base as f32 * factor).round() as u16).clamp(8, 64);
     FontSizes {
@@ -792,29 +788,30 @@ pub fn font_sizes(factor: f32) -> FontSizes {
     }
 }
 
-/// Escala tipográfica MEDIDA en el frame Dictado de Figma. Es independiente de
-/// [`FontSizes`] (la del panel de Ajustes, que viene de la UI anterior): cada
-/// tamaño sale del design context, no de la escala de 8 px. Se escala igual
-/// que `FontSizes` con el factor elegido en Ajustes → Apariencia.
+/// Tamaños de letra MEDIDOS en la pantalla Dictado de Figma. Van aparte de
+/// [`FontSizes`] (la de Ajustes, que viene de la interfaz anterior): cada uno
+/// sale del diseño, no de la rejilla de 8 px. Se multiplican igual que
+/// `FontSizes` con el factor de Ajustes → Apariencia.
 ///
-/// Los nombres son por ROL (no por px) porque son los del diseño: `chrome` es
-/// el texto de 11 px (título de ventana, atajos, versión, pistas), `body` el de
-/// 12 px (estado, privacidad), `control` el de 13 px (selects, subtítulo)…
+/// Los nombres son por PAPEL (no por px) porque son los del diseño: `chrome`
+/// es el texto de 11 px (título de ventana, atajos, versión, pistas), `body`
+/// el de 12 px (estado, privacidad), `control` el de 13 px (desplegables,
+/// subtítulo)…
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DesignType {
-    /// 9 px — sub-etiqueta de marca (hoy no se usa: el wordmark es solo «Silb»).
+    /// 9 px — sub-rótulo de marca (hoy no se usa: la marca es solo «Silb»).
     pub brand_sub: u16,
-    /// 10 px — badges.
+    /// 10 px — etiquetas pequeñas.
     pub badge: u16,
-    /// 11 px — barra de ventana, keycaps, versión, pistas, pie.
+    /// 11 px — barra de ventana, teclas de atajo, versión, pistas, pie.
     pub chrome: u16,
-    /// 12 px — estado de grabación, privacidad, labels de tarjeta.
+    /// 12 px — estado de grabación, privacidad, rótulos de tarjeta.
     pub body: u16,
-    /// 13 px — valores de los selects, subtítulo de página, botones.
+    /// 13 px — valores de los desplegables, subtítulo de página, botones.
     pub control: u16,
     /// 14 px — navegación y títulos de tarjeta.
     pub nav: u16,
-    /// 18 px — «Silb» del wordmark.
+    /// 18 px — el «Silb» de la marca.
     pub brand: u16,
     /// 19 px — texto transcrito (el cuerpo editable).
     pub transcript: u16,
@@ -824,8 +821,8 @@ pub struct DesignType {
     pub title: u16,
 }
 
-/// Aplica el factor de tamaño de fuente (mismo clamp 8..=64 px que
-/// [`font_sizes`]) a la escala del diseño.
+/// Aplica el factor de tamaño (el mismo límite 8..=64 px que [`font_sizes`])
+/// a los tamaños del diseño.
 pub fn design_type(factor: f32) -> DesignType {
     let scale = |base: u16| ((base as f32 * factor).round() as u16).clamp(8, 64);
     DesignType {
@@ -842,12 +839,11 @@ pub fn design_type(factor: f32) -> DesignType {
     }
 }
 
-/// Auto-tema: ¿el sistema operativo está en modo oscuro? Lee
-/// `AppsUseLightTheme` (REG_DWORD) de
+/// Auto-tema: ¿el sistema está en oscuro? Lee `AppsUseLightTheme`
+/// (REG_DWORD) de
 /// `HKCU\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize`,
-/// que Windows mantiene en caliente al cambiar el tema (claro/dark toggle).
-/// `true` = oscuro. Cualquier fallo de lectura cae a `true` (oscuro, el
-/// default de la app) — la configuración nunca rompe el arranque.
+/// que Windows actualiza al cambiar de tema. `true` = oscuro. Si no se puede
+/// leer, `true` (oscuro, lo de serie): la configuración nunca rompe el arranque.
 #[cfg(target_os = "windows")]
 pub fn system_dark_mode() -> bool {
     use winapi::um::winreg::{RegGetValueW, HKEY_CURRENT_USER, RRF_RT_REG_DWORD};
@@ -879,17 +875,16 @@ pub fn system_dark_mode() -> bool {
     }
 }
 
-/// Linux/UNIX: lectura de la preferencia de tema vía `gsettings get
-/// org.gnome.desktop.interface color-scheme` (el settings daemon GTK que
-/// Hyprland/Omarchy usan de facto). La variante `prefer-dark` = tema oscuro.
+/// Linux/UNIX: mira el tema con `gsettings get
+/// org.gnome.desktop.interface color-scheme` (lo que usan Hyprland/Omarchy).
+/// `prefer-dark` = oscuro.
 ///
-/// Por qué y no el portal D-Bus directamente: `gsettings` es el mismo dato
-/// (`color-scheme` es la clave gsettings que el portal `org.freedesktop.
-/// appearance` expone), sin duplicar el protocolo de cable de D-Bus a mano.
-/// Sin `gsettings` en PATH (dotfiles raros, servidor sin GNOME deps) o si la
-/// clave no existe → `true` (oscuro, el default de la app), fail-soft como
-/// el resto de la config. "A validar" en el binario: comportamiento en
-/// sistemas sin settings-gtk corriendo.
+/// Por qué `gsettings` y no el portal de D-Bus: es el mismo dato (`color-scheme`
+/// es la clave que expone el portal `org.freedesktop.appearance`) sin tener que
+/// hablar D-Bus a mano. Sin `gsettings` en el PATH (equipos raros, servidor sin
+/// GNOME) o si la clave no existe → `true` (oscuro, lo de serie), sin romper
+/// nada, como el resto de la config. «A validar» en el binario: qué pasa en
+/// sistemas sin settings-gtk en marcha.
 #[cfg(not(target_os = "windows"))]
 pub fn system_dark_mode() -> bool {
     use std::process::Command;
@@ -899,18 +894,18 @@ pub fn system_dark_mode() -> bool {
         .output();
     match output {
         Ok(out) if out.status.success() => {
-            // Respuesta con apóstrofes: `'prefer-dark'`, `'default'`, `'prefer-light'`.
+            // La respuesta viene con apóstrofes: `'prefer-dark'`, `'default'`, `'prefer-light'`.
             let raw = String::from_utf8_lossy(&out.stdout);
             raw.contains("prefer-dark")
         }
         Ok(_) => {
-            // La clave existe pero gsettings salió con error: sesión sin
-            // settings-gtk (Hyprland pelado sin el portal) o schema viejo.
+            // La clave existe pero gsettings falló: sesión sin settings-gtk
+            // (Hyprland pelado sin el portal) o esquema viejo.
             crate::log_debug!("theme", "gsettings sin respuesta válida; asumo oscuro");
             true
         }
         Err(err) => {
-            // Sin binario gsettings: entorno mínimo, cabeza al default.
+            // Sin el programa gsettings: entorno mínimo, se va a lo de serie.
             crate::log_debug!("theme", "gsettings no disponible ({err}); asumo oscuro");
             true
         }
@@ -920,20 +915,20 @@ pub fn system_dark_mode() -> bool {
 
 // ─────────────────────────────── Temas iced ───────────────────────────────
 
-/// Tema custom con la paleta del modo activo (defaults DARK/LIGHT si no hay
-/// override de usuario). Pensado para tests / arranque sin `Config`.
+/// Tema con la paleta del modo activo (oscuro/claro de serie si el usuario no
+/// ha cambiado nada). Para tests y para arrancar sin `Config`.
 pub fn custom(dark: bool) -> Theme {
     custom_with_palette(if dark { &DARK } else { &LIGHT })
 }
 
-/// Tema custom construido desde una `UiPalette` ya resuelta. El caller
-/// (WhisprApp) pasa `resolve_palette(cfg, dark)` para que el `Theme` iced
-/// refleje los overrides del usuario (los 5 campos del `Palette` de iced
-/// salen del `UiPalette` resuelto, así el fondo de ventana y los defaults
-/// de widgets no estilizados también respetan la personalización).
+/// Tema hecho desde una `UiPalette` ya resuelta. Quien llama (WhisprApp) pasa
+/// `resolve_palette(cfg, dark)` para que el `Theme` de iced tenga los cambios
+/// del usuario (los 5 colores del `Palette` de iced salen de la paleta
+/// resuelta, así el fondo de la ventana y los controles sin estilo propio
+/// también respetan la personalización).
 pub fn custom_with_palette(p: &UiPalette) -> Theme {
     Theme::custom(
-        // El nombre no se usa para lógica; dejamos uno estable por modo.
+        // El nombre no se usa para nada; se deja uno fijo por modo.
         format!(
             "Silb — {}",
             if is_palette_dark(p) {
@@ -952,9 +947,9 @@ pub fn custom_with_palette(p: &UiPalette) -> Theme {
     )
 }
 
-/// ¿Esta paleta «es oscura»? Criterio: la luminancia relativa del fondo
-/// (WCAG) está por debajo del 50 %. Es la misma fórmula que `contrast_ratio`
-/// usa internamente, así que coincide con la intuición visual.
+/// ¿Esta paleta «es oscura»? Se mira la luminancia relativa del fondo (WCAG):
+/// por debajo del 50 %. Es la misma fórmula que usa `contrast_ratio` por
+/// dentro, así que coincide con lo que ve el ojo.
 fn is_palette_dark(p: &UiPalette) -> bool {
     let lum = |c: Color| -> f64 {
         let channel = |v: f32| {
@@ -970,10 +965,10 @@ fn is_palette_dark(p: &UiPalette) -> bool {
     lum(p.bg) < 0.5
 }
 
-/// `true` si el tema activo es el oscuro. Con override activo se decide por
-/// luminancia de la paleta resuelta (antes se comparaba `bg == arc.bg`, que
-/// siempre era `true` con override y rompía el modo claro + la paleta
-/// personalizada). Sin override se usa la luminancia del fondo del `Theme`.
+/// `true` si el tema activo es el oscuro. Con cambios del usuario se decide
+/// por la luminancia de la paleta resuelta (antes se comparaba `bg == arc.bg`,
+/// que daba siempre `true` con cambios y rompía el modo claro con paleta
+/// propia). Sin cambios, por la luminancia del fondo del `Theme`.
 pub fn is_dark(theme: &Theme) -> bool {
     if let Some(arc) = override_active() {
         return is_palette_dark(&arc);
@@ -984,15 +979,14 @@ pub fn is_dark(theme: &Theme) -> bool {
     })
 }
 
-/// Paleta semántica del tema activo. Si hay un override activo
-/// (establecido por `set_palette_override` / `PaletteOverrideScope`,
-/// tipicamente durante `view()`), se devuelve una referencia al `Arc`
-/// resuelto. Si no, se devuelve `DARK` o `LIGHT` por static-promote
-/// (comportamiento idéntico al de antes de R7-II).
+/// Paleta del tema activo. Si hay cambios puestos (con
+/// `set_palette_override` / `PaletteOverrideScope`, normalmente al dibujar),
+/// devuelve una referencia al `Arc` resuelto. Si no, devuelve `DARK` o
+/// `LIGHT` (igual que antes de R7-II).
 ///
-/// Los style closures de widgets iced se ejecutan en el hilo UI durante
-/// `view()`; el override siempre está activo en ese momento, así que en
-/// la práctica SIEMPRE se devuelve la paleta resuelta.
+/// Las funciones de estilo de iced se ejecutan en el hilo de la interfaz al
+/// dibujar, y ahí los cambios siempre están puestos, así que en la práctica
+/// SIEMPRE se devuelve la paleta resuelta.
 pub fn tokens(theme: &Theme) -> std::borrow::Cow<'static, UiPalette> {
     if let Some(arc) = override_active() {
         return std::borrow::Cow::Owned((*arc).clone());
@@ -1001,9 +995,9 @@ pub fn tokens(theme: &Theme) -> std::borrow::Cow<'static, UiPalette> {
     std::borrow::Cow::Borrowed(base)
 }
 
-/// Superficies y bordes del rediseño (frame Dictado de Figma) que NO son
-/// campos de la paleta personalizable. Se resuelven una vez por frame con
-/// [`chrome`]: así la UI no escribe ni un literal de color.
+/// Colores y bordes del marco del rediseño (pantalla Dictado) que NO se pueden
+/// cambiar en Ajustes. Se calculan una vez por vuelta con [`chrome`]: así la
+/// interfaz no escribe ni un color suelto.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Chrome {
     /// Fondo de la barra de ventana propia.
@@ -1026,7 +1020,7 @@ pub struct Chrome {
     pub text: Color,
     /// Texto secundario.
     pub secondary: Color,
-    /// Texto tenue (medido por debajo de AA sobre tarjeta: ver [`FAINT`]).
+    /// Texto tenue (medido por debajo de AA sobre la tarjeta: ver [`FAINT`]).
     pub faint: Color,
     /// Acento de marca.
     pub accent: Color,
@@ -1034,9 +1028,9 @@ pub struct Chrome {
     pub accent_active: Color,
 }
 
-/// Resuelve el chrome del marco para el tema activo. Toma de la paleta
-/// resuelta (con los overrides del usuario) el texto, el secundario, los
-/// bordes y el acento; el resto son los tonos medidos del diseño.
+/// Calcula los colores del marco para el tema activo. De la paleta resuelta
+/// (con los cambios del usuario) toma el texto, el secundario, los bordes y el
+/// acento; el resto son los tonos medidos del diseño.
 pub fn chrome(theme: &Theme) -> Chrome {
     let t = tokens(theme);
     let dark = is_dark(theme);
@@ -1065,8 +1059,8 @@ fn border(color: Color, width: f32, radius: f32) -> Border {
     }
 }
 
-/// Alpha absoluta (la API de iced 0.13 solo ofrece scale_alpha). Pública:
-/// la burbuja la usa para la opacidad configurable (slider 20–100 %).
+/// Transparencia absoluta (la API de iced 0.13 solo deja multiplicar). Es
+/// pública: la burbuja la usa para la opacidad del ajuste (20–100 %).
 pub fn with_alpha(c: Color, a: f32) -> Color {
     Color {
         r: c.r,
@@ -1080,8 +1074,8 @@ pub fn with_alpha(c: Color, a: f32) -> Color {
 
 // ─────────────────────────── Estilos del marco (diseño) ───────────────────────────
 
-/// Barra de ventana propia (`Window bar`): fondo propio, sin borde (el
-/// separador inferior lo pinta la UI con [`divider_rule`]).
+/// Barra de ventana propia (`Window bar`): fondo propio y sin borde (la línea
+/// de abajo la pinta la interfaz con [`divider_rule`]).
 pub fn window_bar(theme: &Theme) -> container::Style {
     let c = chrome(theme);
     container::Style {
@@ -1091,8 +1085,8 @@ pub fn window_bar(theme: &Theme) -> container::Style {
     }
 }
 
-/// Barra lateral (`Sidebar`): fondo propio; el separador derecho lo pinta la
-/// UI con un `rule` vertical.
+/// Barra lateral (`Sidebar`): fondo propio; la línea de la derecha la pinta la
+/// interfaz con un `rule` vertical.
 pub fn sidebar(theme: &Theme) -> container::Style {
     let c = chrome(theme);
     container::Style {
@@ -1102,7 +1096,7 @@ pub fn sidebar(theme: &Theme) -> container::Style {
     }
 }
 
-/// Separador interno del marco (1 px, color `Divider` del diseño).
+/// Línea separadora del marco (1 px, color `Divider` del diseño).
 pub fn divider_rule(theme: &Theme) -> rule::Style {
     rule::Style {
         color: chrome(theme).divider,
@@ -1112,7 +1106,7 @@ pub fn divider_rule(theme: &Theme) -> rule::Style {
     }
 }
 
-/// Keycap de atajo (fondo keycap + borde de campo + radio 5).
+/// Tecla de atajo (fondo de tecla + borde de campo + esquina de 5).
 pub fn keycap(theme: &Theme) -> container::Style {
     let c = chrome(theme);
     container::Style {
@@ -1123,8 +1117,8 @@ pub fn keycap(theme: &Theme) -> container::Style {
     }
 }
 
-/// Botón de icono del chrome (controles de ventana, ayuda, atajos a Ajustes):
-/// transparente; al hover, superficie keycap.
+/// Botón de icono del marco (botones de ventana, ayuda, atajos a Ajustes):
+/// transparente; al pasar por encima, fondo de tecla.
 pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     let c = chrome(theme);
     let bg = match status {
@@ -1139,8 +1133,8 @@ pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Elemento de navegación de la barra lateral: el activo lleva fondo
-/// `nav_active` y texto primario; el resto, texto secundario.
+/// Elemento de la barra lateral: el activo lleva fondo `nav_active` y texto
+/// principal; el resto, texto secundario.
 pub fn nav_item(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let c = chrome(theme);
     let bg = if active {
@@ -1159,8 +1153,8 @@ pub fn nav_item(theme: &Theme, status: button::Status, active: bool) -> button::
     }
 }
 
-/// Botón circular de grabación (80 px de acento): el hover sube al acento
-/// activo del diseño.
+/// Botón redondo de grabación (80 px de acento): al pasar por encima sube al
+/// acento activo del diseño.
 pub fn record(theme: &Theme, status: button::Status) -> button::Style {
     let c = chrome(theme);
     let bg = match status {
@@ -1175,7 +1169,7 @@ pub fn record(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Interruptor del marco (`Corrección IA`): apagado en superficie keycap,
+/// Interruptor del marco (`Corrección IA`): apagado con fondo de tecla,
 /// encendido en acento.
 pub fn toggler(theme: &Theme, status: toggle::Status) -> toggle::Style {
     let c = chrome(theme);
@@ -1200,8 +1194,8 @@ pub fn toggler(theme: &Theme, status: toggle::Status) -> toggle::Style {
     }
 }
 
-/// Punto de estado del marco (color de estado del micrófono: el punto solo
-/// nunca comunica, va siempre con su etiqueta al lado).
+/// Punto de estado del marco (color del micrófono: el punto solo no dice nada,
+/// siempre va con su texto al lado).
 pub fn dot(color: Color) -> container::Style {
     container::Style {
         text_color: None,
@@ -1211,7 +1205,7 @@ pub fn dot(color: Color) -> container::Style {
     }
 }
 
-/// Barra del medidor de nivel del micrófono (3 px de ancho, radio 2).
+/// Barra del medidor de nivel del micrófono (3 px de ancho, esquina 2).
 pub fn level_bar(theme: &Theme) -> container::Style {
     let c = chrome(theme);
     container::Style {
@@ -1222,9 +1216,9 @@ pub fn level_bar(theme: &Theme) -> container::Style {
     }
 }
 
-/// Editor del transcript sobre la tarjeta (`Editable text` del diseño): sin
-/// relleno propio ni borde en reposo — el texto vive en la tarjeta. El foco
-/// sigue siendo visible (1.5 px de acento), requisito de accesibilidad.
+/// Editor del texto dictado sobre la tarjeta (`Editable text` del diseño): sin
+/// fondo propio ni borde en reposo — el texto vive en la tarjeta. El foco se
+/// sigue viendo (1.5 px de acento), que es obligatorio por accesibilidad.
 pub fn transcript_editor(theme: &Theme, status: editor::Status) -> editor::Style {
     let c = chrome(theme);
     let (border_color, border_width) = match status {
@@ -1241,7 +1235,7 @@ pub fn transcript_editor(theme: &Theme, status: editor::Status) -> editor::Style
     }
 }
 
-/// Tarjeta base: superficie + borde sutil + radio de tarjeta del diseño.
+/// Tarjeta base: fondo + borde suave + esquina de tarjeta del diseño.
 pub fn card(theme: &Theme) -> container::Style {
     let t = tokens(theme);
     container::Style {
@@ -1252,7 +1246,7 @@ pub fn card(theme: &Theme) -> container::Style {
     }
 }
 
-/// Tarjeta sin borde (zonas planas, p. ej. el transcript).
+/// Tarjeta sin borde (zonas planas, por ejemplo el texto dictado).
 pub fn flat(theme: &Theme) -> container::Style {
     let t = tokens(theme);
     container::Style {
@@ -1263,9 +1257,9 @@ pub fn flat(theme: &Theme) -> container::Style {
     }
 }
 
-/// Botón primario (acción principal): fondo acento violeta, texto con la
-/// tinta medida para AA sobre el acento (ver `INK_ON_ACCENT`: usar el color
-/// de fondo del modo dejaba el claro en ~3.5:1).
+/// Botón principal (la acción importante): fondo de acento violeta y texto con
+/// la tinta medida para AA sobre el acento (ver `INK_ON_ACCENT`: usando el
+/// fondo del modo, en claro se quedaba en ~3.5:1).
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
     let bg = match status {
@@ -1286,20 +1280,20 @@ pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Padding de los botones secundarios («Copiar», «Limpiar», …). Área de hit
-/// táctil (UI-FUTURA P1): el padding por defecto de iced deja botones bajos de
-/// más para un dedo o un toque rápido. 8 px verticales × 16 horizontales.
+/// Relleno de los botones secundarios («Copiar», «Limpiar», …). Zona cómoda
+/// para el dedo (UI-FUTURA P1): el relleno de serie de iced deja los botones
+/// demasiado bajos para un toque rápido. 8 px arriba/abajo y 16 a los lados.
 pub const SECONDARY_BUTTON_PADDING: [f32; 2] = [SPACE_2 as f32, SPACE_3 as f32];
 
-/// Padding interior común de los campos de formulario (`text_input` y
-/// `pick_list`): los dos comparten inset para que el texto arranque en la
-/// misma x (iced trae 10 px a la izquierda en el `pick_list` y 5 en el
-/// `text_input`, y la diferencia se veía como desalineación).
+/// Relleno interior común de los campos (`text_input` y `pick_list`): los dos
+/// con el mismo margen para que el texto empiece en la misma x (iced trae 10 px
+/// a la izquierda en el `pick_list` y 5 en el `text_input`, y se notaba
+/// desalineado).
 ///
-/// Valores del diseño (nodos `3:560`/`3:660`): selects de **36 px de alto**
-/// con **12 px** de inset horizontal. Con texto de 13 px, 10 px arriba/abajo
-/// dan esos 36 px; con el padding viejo (5/10) los campos de Ajustes se veían
-/// aplastados (~27 px) y con el texto pegado al borde izquierdo.
+/// Valores del diseño (nodos `3:560`/`3:660`): desplegables de **36 px de
+/// alto** con **12 px** de margen lateral. Con texto de 13 px, 10 px arriba y
+/// abajo dan esos 36 px; con el relleno viejo (5/10) los campos de Ajustes se
+/// veían aplastados (~27 px) y con el texto pegado al borde izquierdo.
 pub const FIELD_PADDING: Padding = Padding {
     top: 10.0,
     right: 12.0,
@@ -1307,16 +1301,16 @@ pub const FIELD_PADDING: Padding = Padding {
     left: 12.0,
 };
 
-/// Ancho reservado a la derecha de cada fila de Ajustes para el texto auxiliar
-/// del campo (tamaño del modelo, ayuda del idioma) y para el botón de borrado
-/// de las listas. Con la MISMA reserva en todas las filas, campos, botones y
-/// «✕» acaban en la misma x (columna derecha unificada).
+/// Hueco que se deja a la derecha en cada fila de Ajustes para el texto de
+/// apoyo del campo (tamaño del modelo, ayuda del idioma) y para el botón de
+/// borrar de las listas. Con el MISMO hueco en todas las filas, campos,
+/// botones y «✕» acaban en la misma x (una sola columna derecha).
 pub const AUX_COL_WIDTH: f32 = 64.0;
 
-/// Botón secundario (acciones discretas): transparente, texto dim → texto al hover.
-/// `Disabled` (un botón sin `on_press`): texto aún más apagado, para que se
-/// VEA que la acción no está disponible (iced da `Status::Disabled` cuando el
-/// botón no tiene mensaje al pulsar).
+/// Botón secundario (acciones discretas): transparente, texto tenue → texto
+/// normal al pasar por encima. `Disabled` (un botón sin `on_press`): texto aún
+/// más apagado, para que se VEA que no se puede usar (iced da
+/// `Status::Disabled` cuando el botón no tiene mensaje al pulsar).
 pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
     let (bg, fg) = match status {
@@ -1332,11 +1326,11 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     }
 }
 
-/// Pestaña de sección (Ajustes y la ventana principal comparten este estilo).
-/// La activa lleva fondo `surface_alt`, texto de acento y borde de 2 px; las
-/// inactivas son el botón secundario de siempre. El indicador `●` de la
-/// etiqueta lo pone la barra de pestañas: la sección activa se distingue sin
-/// depender solo del color (requisito de accesibilidad R7).
+/// Pestaña de sección (la usan Ajustes y la ventana principal). La activa lleva
+/// fondo `surface_alt`, texto de acento y borde de 2 px; las demás son el botón
+/// secundario de siempre. El punto `●` de la etiqueta lo pone la barra de
+/// pestañas: la sección activa se distingue sin depender solo del color
+/// (accesibilidad, R7).
 pub fn tab(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     if !active {
         return secondary(theme, status);
@@ -1358,10 +1352,10 @@ pub fn tab(theme: &Theme, status: button::Status, active: bool) -> button::Style
     }
 }
 
-/// Pestaña de la navegación de Ajustes (`Settings navigation` del frame
-/// Ajustes): sin caja propia, texto primario la activa y secundario el resto;
-/// el subrayado de 2 px lo pinta la UI con [`tab_underline`] (el diseño lo
-/// cuelga del borde inferior de la pestaña, no de una caja).
+/// Pestaña de la navegación de Ajustes (`Settings navigation` del diseño): sin
+/// caja propia; la activa en texto principal y el resto en secundario. La raya
+/// de 2 px la pinta la interfaz con [`tab_underline`] (el diseño la cuelga del
+/// borde de abajo de la pestaña, no de una caja).
 pub fn settings_tab(theme: &Theme, status: button::Status, active: bool) -> button::Style {
     let c = chrome(theme);
     let text_color = match (active, status) {
@@ -1377,13 +1371,13 @@ pub fn settings_tab(theme: &Theme, status: button::Status, active: bool) -> butt
     }
 }
 
-/// Fondo de la pestaña de la navegación de Ajustes: solo la franja de 2 px del
-/// borde INFERIOR, en el acento del diseño (nada, si la pestaña no es la
-/// activa). iced 0.13 no tiene borde por lado (`Border` es un ancho único), así
-/// que la franja la pinta el fondo con un gradiente vertical con dos paradas
-/// pegadas al extremo de abajo — a `Radians(0.0)` el gradiente va de abajo
-/// arriba, así que el offset 0 es el borde inferior. Al ser el fondo del propio
-/// contenedor, el trazo mide exactamente lo que mide la etiqueta.
+/// Fondo de la pestaña de navegación de Ajustes: solo la franja de 2 px del
+/// borde INFERIOR, en el acento del diseño (nada si no es la activa). iced 0.13
+/// no deja poner borde por lado (`Border` es un ancho único), así que la franja
+/// la pinta el fondo con un degradado vertical de dos paradas pegadas abajo — a
+/// `Radians(0.0)` el degradado va de abajo arriba, así que el offset 0 es el
+/// borde inferior. Como es el fondo del propio contenedor, la raya mide justo
+/// lo que mide la etiqueta.
 pub fn tab_underline(theme: &Theme, active: bool, height: f32) -> Background {
     let accent = if active {
         chrome(theme).accent_active
@@ -1401,8 +1395,8 @@ pub fn tab_underline(theme: &Theme, active: bool, height: f32) -> Background {
     ))
 }
 
-/// Botón del micrófono (hero): transparente; la tarjeta interna comunica el estado.
-/// El cursor pointer del botón es el micro-feedback de hover.
+/// Botón del micrófono (hero): transparente; el estado lo comunica la tarjeta
+/// de dentro. El cursor de mano es el aviso de que se puede pulsar.
 pub fn mic(theme: &Theme, _status: button::Status) -> button::Style {
     let t = tokens(theme);
     button::Style {
@@ -1413,8 +1407,8 @@ pub fn mic(theme: &Theme, _status: button::Status) -> button::Style {
     }
 }
 
-/// Tarjeta del estado del micrófono: borde con el color de estado (feedback doble:
-/// color del borde + color del punto + label textual).
+/// Tarjeta del estado del micrófono: borde con el color del estado (tres
+/// avisos a la vez: borde, punto y texto).
 pub fn mic_card(theme: &Theme, state: Color) -> container::Style {
     let t = tokens(theme);
     container::Style {
@@ -1425,9 +1419,9 @@ pub fn mic_card(theme: &Theme, state: Color) -> container::Style {
     }
 }
 
-/// Campo de texto: fondo alt, borde acento al enfocar. El foco se dibuja
-/// con 1.5 px de acento (requisito de accesibilidad: el foco de teclado
-/// debe VERSR, no inferirse).
+/// Campo de texto: fondo alterno y borde de acento al enfocar. El foco se
+/// dibuja con 1.5 px de acento (accesibilidad: el foco del teclado tiene que
+/// VERSE, no suponerse).
 pub fn text_input(theme: &Theme, status: input::Status) -> input::Style {
     let t = tokens(theme);
     let (border_color, border_width) = match status {
@@ -1444,8 +1438,8 @@ pub fn text_input(theme: &Theme, status: input::Status) -> input::Style {
     }
 }
 
-/// Editor multilínea del transcript (requisito R3): mismo lenguaje visual
-/// que el campo de texto, con anillo de foco visible (1.5 px de acento).
+/// Editor de varias líneas del texto dictado (requisito R3): los mismos
+/// colores que el campo de texto, con anillo de foco visible (1.5 px de acento).
 pub fn text_editor(theme: &Theme, status: editor::Status) -> editor::Style {
     let t = tokens(theme);
     let (border_color, border_width) = match status {
@@ -1462,7 +1456,7 @@ pub fn text_editor(theme: &Theme, status: editor::Status) -> editor::Style {
     }
 }
 
-/// Selector desplegable: mismo lenguaje visual que el campo de texto.
+/// Desplegable: los mismos colores que el campo de texto.
 pub fn pick_list(theme: &Theme, status: pick::Status) -> pick::Style {
     let t = tokens(theme);
     let border_color = match status {
@@ -1478,7 +1472,7 @@ pub fn pick_list(theme: &Theme, status: pick::Status) -> pick::Style {
     }
 }
 
-/// Checkbox: casilla alt, check en acento.
+/// Casilla: fondo alterno y marca en acento.
 pub fn checkbox(theme: &Theme, status: check::Status) -> check::Style {
     let t = tokens(theme);
     let is_checked = match status {
@@ -1498,7 +1492,7 @@ pub fn checkbox(theme: &Theme, status: check::Status) -> check::Style {
     }
 }
 
-/// Área de scroll: contenedor plano y rieles discretos.
+/// Zona de desplazamiento: contenedor plano y barras discretas.
 pub fn scrollable(theme: &Theme, _status: scroll::Status) -> scroll::Style {
     let t = tokens(theme);
     let rail = scroll::Rail {
@@ -1517,7 +1511,7 @@ pub fn scrollable(theme: &Theme, _status: scroll::Status) -> scroll::Style {
     }
 }
 
-/// Separador horizontal sutil.
+/// Línea separadora horizontal suave.
 pub fn rule(theme: &Theme) -> rule::Style {
     rule::Style {
         color: tokens(theme).border,
@@ -1527,7 +1521,7 @@ pub fn rule(theme: &Theme) -> rule::Style {
     }
 }
 
-/// Barra de progreso con color específico (nivel de micrófono / descarga).
+/// Barra de progreso con color propio (nivel del micrófono / descarga).
 pub fn progress(theme: &Theme, color: Color) -> progress_bar::Style {
     let t = tokens(theme);
     progress_bar::Style {
@@ -1541,10 +1535,10 @@ pub fn progress(theme: &Theme, color: Color) -> progress_bar::Style {
 mod tests {
     use super::*;
 
-    /// El subrayado de la pestaña activa es la franja de 2 px del borde
-    /// INFERIOR: las dos primeras paradas del gradiente caen en el offset 0 y
-    /// en 2/alto, y a partir de ahí el color se apaga. Si alguien cambia el
-    /// reparto, el trazo deja de medir 2 px (o se pinta toda la caja).
+    /// La raya de la pestaña activa es la franja de 2 px del borde INFERIOR:
+    /// las dos primeras paradas del degradado caen en el offset 0 y en 2/alto, y
+    /// a partir de ahí el color se apaga. Si alguien cambia el reparto, la raya
+    /// deja de medir 2 px (o se pinta la caja entera).
     #[test]
     fn el_subrayado_de_pestana_es_la_franja_inferior_de_2_px() {
         let th = custom(true);
@@ -1569,7 +1563,7 @@ mod tests {
             "por encima de la franja, transparente"
         );
 
-        // Sin ser la activa no se pinta nada.
+        // Si no es la activa, no se pinta nada.
         let Background::Gradient(Gradient::Linear(inactive)) = tab_underline(&th, false, 43.0)
         else {
             panic!("el fondo del inactivo también es un gradiente");
@@ -1591,10 +1585,10 @@ mod tests {
         }
     }
 
-    /// La rejilla de las 5 pestañas de Ajustes cuadra con el frame `3:604`:
-    /// el contenido de 916 px = inset 20 + rótulo 606 + hueco 20 + control 250
-    /// + inset 20. Si alguien mueve una pieza, la fila deja de cuadrar con el
-    /// diseño y el test lo canta antes de que se vea descuadrado en la UI.
+    /// La rejilla de las 5 pestañas cuadra con la pantalla `3:604`: los 916 px
+    /// de contenido = margen 20 + rótulo 606 + hueco 20 + control 250 + margen
+    /// 20. Si alguien mueve una pieza, la fila deja de cuadrar con el diseño y el
+    /// test lo avisa antes de que se vea descuadrado en la interfaz.
     #[test]
     fn la_rejilla_de_ajustes_cuadra_con_el_frame_3604() {
         assert_eq!(
@@ -1608,14 +1602,14 @@ mod tests {
         );
         // El interruptor (36×22, nodo 3:692) cae DENTRO de la columna de
         // control de 250 y comparte su borde derecho (x=214 dentro de la caja).
-        // iced lo pinta 8 px más ancho (44 = size×2): se queda como está y se
-        // reporta; lo que la rejilla fija es el borde derecho.
+        // iced lo pinta 8 px más ancho (44 = size×2): se deja así y se deja
+        // anotado; lo que fija la rejilla es el borde derecho.
         assert_eq!(GRID_TOGGLE_WIDTH, 36.0, "nodo 3:692");
         assert_eq!(GRID_TOGGLE_SIZE, 22.0, "nodo 3:692");
         assert_eq!(GRID_CONTROL_WIDTH - GRID_TOGGLE_WIDTH, 214.0);
         // Fila: 15 + 38 (rótulo + ayuda) + 15 = 68 (nodo 3:656).
         assert_eq!(GRID_ROW_PAD_V * 2.0 + 38.0, GRID_ROW_HEIGHT);
-        // Pestañas y separaciones del frame.
+        // Pestañas y separaciones del diseño.
         assert_eq!(GRID_TAB_HEIGHT, 43.0, "nodo 3:642");
         assert_eq!(GRID_TAB_GAP, 28.0, "x=0 → 113, nodo 3:642");
         assert_eq!(GRID_SECTION_GAP, 20.0, "nodos 3:653 → 3:670");
@@ -1623,7 +1617,7 @@ mod tests {
     }
 
     /// Un botón sin acción (iced entrega `Status::Disabled`) no puede verse
-    /// igual que uno activo: es el requisito de coherencia de estado.
+    /// igual que uno activo: por coherencia de estado.
     #[test]
     fn el_boton_deshabilitado_se_ve_distinto() {
         reset_palette_override();
@@ -1650,7 +1644,7 @@ mod tests {
     fn radios_dentro_de_8_12px() {
         assert!(RADIUS_SM >= 8.0 && RADIUS_SM <= 10.0);
         assert!(RADIUS_MD >= 8.0 && RADIUS_MD <= 12.0);
-        // Del diseño: tarjeta 12, keycap 5.
+        // Del diseño: tarjeta 12, tecla 5.
         assert_eq!(RADIUS_LG, 12.0);
         assert_eq!(RADIUS_KEYCAP, 5.0);
         assert_eq!(RADIUS_CIRCLE, RECORD_BUTTON_SIZE / 2.0);
@@ -1669,9 +1663,9 @@ mod tests {
         assert_eq!(ty.transcript, 19);
         assert_eq!(ty.hero, 22);
         assert_eq!(ty.title, 28);
-        // Jerarquía: estrictamente creciente con el factor de baseline y NO
-        // decreciente en cualquier factor (con 0.85 los tamaños pequeños se
-        // redondean y dos escalones contiguos pueden coincidir: 9→8 y 10→9).
+        // El orden se respeta: crece con el factor base y nunca baja (con 0.85
+        // los tamaños pequeños se redondean y dos escalones seguidos pueden
+        // coincidir: 9→8 y 10→9).
         for f in [0.85, 1.0, 1.15, 1.3] {
             let t = design_type(f);
             let cadena = [
@@ -1708,7 +1702,7 @@ mod tests {
         assert_eq!(dark.nav_active, NAV_ACTIVE);
         assert_eq!(dark.divider, DIVIDER);
         assert_eq!(dark.faint, FAINT);
-        // Del diseño: tarjeta y campo salen de la paleta semántica.
+        // Del diseño: tarjeta y campo salen de la paleta de colores.
         assert_eq!(dark.card, SURFACE);
         assert_eq!(dark.field, SURFACE_ALT);
         assert_eq!(dark.border, BORDER);
@@ -1725,7 +1719,7 @@ mod tests {
         assert_eq!(light.sidebar, SIDEBAR_LIGHT);
         assert_eq!(light.card, SURFACE_LIGHT);
 
-        // Un override del usuario llega al chrome (marca y textos).
+        // Un cambio del usuario llega al marco (marca y textos).
         let cfg = Config {
             palette: Some(PaletteConfig {
                 accent: Some("#00AAFF".into()),
@@ -1741,10 +1735,10 @@ mod tests {
         assert_eq!(custom_chrome.text, parse_hex("#FFFFFF").unwrap());
     }
 
-    /// El texto tenue del diseño (#7F808D) NO pasa AA sobre la tarjeta ni
-    /// sobre el campo: se registra el ratio medido (la tarea pide reportarlo,
-    /// no cambiarlo por cuenta propia). Si alguien «arregla» el token sin
-    /// tocar este test, el número deja de cuadrar.
+    /// El texto tenue del diseño (#7F808D) NO pasa AA sobre la tarjeta ni sobre
+    /// el campo: se anota el contraste medido (la tarea pide dejarlo apuntado, no
+    /// cambiarlo por cuenta propia). Si alguien «arregla» el color sin tocar este
+    /// test, el número deja de cuadrar.
     #[test]
     fn faint_del_diseno_registra_su_ratio_medido() {
         let sobre_fondo = contrast_ratio(FAINT, BG);
@@ -1784,9 +1778,9 @@ mod tests {
 
     #[test]
     fn tokens_resuelven_por_modo() {
-        // Garantiza que ningún test anterior dejó un override colgado
-        // (thread-local). Sin esto, una paleta de un test anterior podría
-        // contaminar las mediciones de contraste WCAG.
+        // Se asegura de que ningún test anterior dejó cambios puestos en el
+        // hilo. Sin esto, la paleta de otro test podría estropear las mediciones
+        // de contraste WCAG.
         clear_palette_override();
         let dark_theme = custom(true);
         assert!(is_dark(&dark_theme));
@@ -1809,7 +1803,7 @@ mod tests {
 
     #[test]
     fn font_sizes_escala_y_mantiene_jerarquia() {
-        // 0.85 (pequeña): todo más pequeño pero el orden se conserva.
+        // 0.85 (pequeña): todo más pequeño, pero el orden se mantiene.
         let small = font_sizes(0.85);
         assert!(small.sm < FONT_SM);
         assert!(small.md < FONT_MD);
@@ -1817,7 +1811,7 @@ mod tests {
         let large = font_sizes(1.3);
         assert!(large.md > FONT_MD);
         assert!(large.hero > FONT_HERO);
-        // Jerarquía: cada nivel supera al anterior en cualquier factor.
+        // El orden se guarda: cada nivel supera al anterior con cualquier factor.
         for f in [0.85, 1.0, 1.15, 1.3] {
             let fs = font_sizes(f);
             assert!(
@@ -1833,7 +1827,7 @@ mod tests {
 
     #[test]
     fn font_sizes_clamp_evita_absurdos() {
-        // Factores extremos nunca salen del rango 8..=64 px.
+        // Factores extremos nunca se salen de 8..=64 px.
         for f in [0.0, 0.5, 2.0, 10.0] {
             let fs = font_sizes(f);
             for v in [fs.xxs, fs.sm, fs.md, fs.lg, fs.xl, fs.hero] {
@@ -1857,14 +1851,14 @@ mod tests {
         assert_eq!(with_alpha(BG, 0.2).r, BG.r, "RGB intacto");
     }
 
-    // ── Contraste WCAG medido (requisito R4: medido, no estimado) ─────────
+    // ── Contraste WCAG medido (requisito R4: medido, no estimado) ───────────
     //
-    // Se miden los pares REALES de la UI: cada color de texto de la paleta
-    // contra el fondo de ventana Y contra la tarjeta (los textos viven en
-    // ambos). Si un test falla, el token se ajusta y se vuelve a medir:
-    // cambiar un color sin pasar por aquí queda prohibido.
+    // Se miden los pares REALES de la interfaz: cada color de texto contra el
+    // fondo de la ventana Y contra la tarjeta (los textos están en los dos). Si
+    // un test falla, se ajusta el color y se vuelve a medir: cambiar un color
+    // sin pasar por aquí no vale.
 
-    /// AA texto normal (≥ 4.5:1) para todos los colores usados como texto.
+    /// AA para texto normal (≥ 4.5:1) en todos los colores que se usan como texto.
     #[test]
     fn contraste_aa_de_todo_el_texto_en_ambos_modos() {
         for (nombre, p) in [("dark", &DARK), ("light", &LIGHT)] {
@@ -1887,9 +1881,9 @@ mod tests {
         }
     }
 
-    /// AA texto grande y componentes gráficos (≥ 3:1): el violeta de marca
-    /// como texto GRANDE (hero/spinner, ≥ 24 px) y la tinta de los botones
-    /// rellenos de acento (que sí es texto normal → exije 4.5).
+    /// AA para texto grande y piezas gráficas (≥ 3:1): el violeta de marca como
+    /// texto GRANDE (hero/spinner, ≥ 24 px) y la tinta de los botones llenos de
+    /// acento (que sí es texto normal → pide 4.5).
     #[test]
     fn contraste_de_acento_grande_y_botones_rellenos() {
         for (nombre, p) in [("dark", &DARK), ("light", &LIGHT)] {
@@ -1900,8 +1894,8 @@ mod tests {
                     "{nombre}/{fondo_name}: accent grande mide {ratio:.2}:1 (< 3)"
                 );
             }
-            // Texto de botón primario: tinta fija sobre relleno de acento
-            // (y su hover, que también es un fondo posible).
+            // Texto del botón principal: tinta fija sobre relleno de acento
+            // (y sobre su hover, que también es un fondo posible).
             let sobre_acento = contrast_ratio(INK_ON_ACCENT, p.accent);
             let sobre_hover = contrast_ratio(INK_ON_ACCENT, p.accent_hover);
             assert!(
@@ -1911,9 +1905,9 @@ mod tests {
         }
     }
 
-    /// Sanity del cálculo contra los valores publicados de WCAG: negro sobre
-    /// blanco = 21:1 exacto; #767676 sobre blanco = 4.54:1 (el gris mínimo
-    /// AA citado por el W3C).
+    /// Comprobación del cálculo contra los valores publicados de WCAG: negro
+    /// sobre blanco = 21:1 exacto; #767676 sobre blanco = 4.54:1 (el gris mínimo
+    /// AA que cita el W3C).
     #[test]
     fn ratio_de_contraste_cae_con_los_valores_conocidos() {
         assert!((contrast_ratio(Color::BLACK, Color::WHITE) - 21.0).abs() < 0.01);
@@ -1925,8 +1919,9 @@ mod tests {
         );
     }
 
-    /// La tinta de los botones y el acento-texto son tokens independientes
-    /// del modo: un cambio de tema no puede romper el contraste por descuido.
+    /// La tinta de los botones y el acento para texto son colores
+    /// independientes del modo: cambiar de tema no puede romper el contraste
+    /// por descuido.
     #[test]
     fn tokens_de_acceso_no_cambian_con_el_modo() {
         assert_eq!(DARK.accent_text, ACCENT_TEXT);
@@ -1936,9 +1931,9 @@ mod tests {
 
     // ── Personalización II: paleta editable ──────────────────────────────────
 
-    /// Limpia el override antes de cada test que mide defaults WCAG (los
-    /// thread-locals pueden sobrevivir entre tests si una aserción paniquea
-    /// a mitad).
+    /// Quita los cambios antes de cada test que mide colores de serie (lo
+    /// guardado en el hilo puede sobrevivir entre tests si una comprobación
+    /// falla a mitad).
     fn reset_palette_override() {
         clear_palette_override();
     }
@@ -1946,25 +1941,25 @@ mod tests {
     #[test]
     fn parse_hex_acepta_rrggbb_y_rgb_y_tolerancias() {
         reset_palette_override();
-        // #RRGGBB mayúsculas y minúsculas.
+        // #RRGGBB en mayúsculas y minúsculas.
         let c1 = parse_hex("#FF8800").unwrap();
         assert_eq!(c1.r, 1.0);
         assert!((c1.g - 136.0 / 255.0).abs() < 0.001);
         assert_eq!(c1.b, 0.0);
-        // #RGB se expande a #RRGGBB duplicando nibble.
+        // #RGB se pasa a #RRGGBB repitiendo cada dígito.
         let c2 = parse_hex("#f0a").unwrap();
         assert_eq!(c2.r, 1.0); // f → ff
         assert_eq!(c2.g, 0.0); // 0 → 00
         assert!((c2.b - 170.0 / 255.0).abs() < 0.001); // a → aa
-                                                       // Sin `#`, lowercase.
+                                                        // Sin `#`, en minúsculas.
         let c3 = parse_hex("7c6cff").unwrap();
         assert_eq!(c3.r, 0x7C as f32 / 255.0);
         assert_eq!(c3.g, 0x6C as f32 / 255.0);
         assert_eq!(c3.b, 0xFF as f32 / 255.0);
-        // Trim de espacios.
+        // Espacios de alrededor.
         let c4 = parse_hex("  #ABCDEF  ").unwrap();
         assert_eq!(c4.r, 0xAB as f32 / 255.0);
-        // Prefijo 0x también aceptado.
+        // También se acepta el prefijo 0x.
         let c5 = parse_hex("0x101010").unwrap();
         assert_eq!(c5.r, 16.0 / 255.0);
     }
@@ -1972,18 +1967,18 @@ mod tests {
     #[test]
     fn parse_hex_rechaza_basura_sin_panicar() {
         reset_palette_override();
-        // Longitudes no soportadas.
+        // Longitudes que no se aceptan.
         assert!(parse_hex("").is_none());
         assert!(parse_hex("#").is_none());
         assert!(parse_hex("#FF").is_none());
         assert!(parse_hex("#FFFF").is_none()); // 4 = ARGB hex CSS, NO lo aceptamos
         assert!(parse_hex("#FFFFFFFF").is_none()); // 8 dígitos con alpha no es editable
-                                                   // Caracteres no hex.
+                                                    // Caracteres que no son hex.
         assert!(parse_hex("#GGGGGG").is_none());
         assert!(parse_hex("#XX00FF").is_none());
         assert!(parse_hex("no es hex").is_none());
         assert!(parse_hex("##").is_none());
-        // NUNCA panic; la app puede llamar a esto desde UI sin try/catch.
+        // NUNCA rompe; la interfaz puede llamar aquí sin protegerse.
         let opts = [
             "",
             "#",
@@ -2014,8 +2009,8 @@ mod tests {
         assert_eq!(d, DARK, "sin override oscuro = DARK");
         assert_eq!(l, LIGHT, "sin override claro = LIGHT");
 
-        // Config con palette = Some(PaletteConfig::default()) (todos None)
-        // también cae al default completo.
+        // Un config con palette = Some(PaletteConfig::default()) (todo None)
+        // también acaba en la paleta de serie entera.
         let cfg_empty = Config {
             palette: Some(PaletteConfig::default()),
             ..Default::default()
@@ -2037,16 +2032,16 @@ mod tests {
             ..Default::default()
         };
         let p = resolve_palette(&cfg, true);
-        // Solo accent y surface_alt cambiaron.
+        // Solo cambiaron accent y surface_alt.
         assert_eq!(p.accent, parse_hex("#00AAFF").unwrap());
         assert_eq!(p.surface_alt, parse_hex("#222").unwrap());
-        // El resto conserva los defaults oscuros.
+        // El resto se queda en los colores oscuros de serie.
         assert_eq!(p.bg, DARK.bg);
         assert_eq!(p.surface, DARK.surface);
         assert_eq!(p.text, DARK.text, "hex inválido cae al default");
         assert_eq!(p.err, DARK.err);
 
-        // En modo claro aplica los defaults LIGHT a los campos no override.
+        // En modo claro se usan los colores claros de serie en lo que no se cambió.
         let l = resolve_palette(&cfg, false);
         assert_eq!(l.accent, parse_hex("#00AAFF").unwrap());
         assert_eq!(l.surface_alt, parse_hex("#222").unwrap());
@@ -2065,13 +2060,13 @@ mod tests {
             ..Default::default()
         };
         let p = resolve_palette(&cfg, true);
-        // Antes del scope: tokens cae a DARK (no override).
+        // Antes del bloque: `tokens` da la paleta oscura (sin cambios).
         let theme_default = custom(true);
         assert_eq!(*tokens(&theme_default), DARK);
-        // Dentro del scope: tokens devuelve la paleta resuelta.
+        // Dentro del bloque: `tokens` devuelve la paleta resuelta.
         let _scope = PaletteOverrideScope::new(p);
         assert_eq!(tokens(&theme_default).accent, parse_hex("#00FF00").unwrap());
-        // Tras soltar el scope: vuelve a DARK.
+        // Al soltar el bloque: vuelve a la oscura.
         drop(_scope);
         assert_eq!(*tokens(&theme_default), DARK);
     }
@@ -2088,8 +2083,8 @@ mod tests {
             },
             true,
         );
-        // Cada campo debe coincidir con el original (con tolerancia epsilon
-        // por el redondeo de f32 → u8 → f32).
+        // Cada campo tiene que coincidir con el original (con un margen por el
+        // redondeo de f32 → u8 → f32).
         fn approx(a: Color, b: Color) -> bool {
             (a.r - b.r).abs() < 0.01 && (a.g - b.g).abs() < 0.01 && (a.b - b.b).abs() < 0.01
         }
@@ -2112,7 +2107,7 @@ mod tests {
         ] {
             assert!(approx(orig, res), "{field}: {orig:?} vs {res:?}");
         }
-        // Forma del hex: #RRGGBB mayúsculas.
+        // Forma del hex: #RRGGBB en mayúsculas.
         assert_eq!(cfg.bg.as_deref(), Some("#17181C"));
     }
 
@@ -2120,7 +2115,7 @@ mod tests {
     fn presets_tienen_cinco_opciones_y_cubre_oscuro_y_claro() {
         reset_palette_override();
         assert_eq!(PalettePreset::ALL.len(), 5);
-        // Cada preset tiene una rama DARK y una LIGHT definidas.
+        // Cada preset tiene una rama oscura y una clara.
         for preset in PalettePreset::ALL {
             let _ = preset.colors(true);
             let _ = preset.colors(false);
@@ -2130,7 +2125,7 @@ mod tests {
     #[test]
     fn aviso_de_contraste_segun_wcag() {
         reset_palette_override();
-        // Texto casi-del-mismo-color que el fondo: contraste < 3:1 → ilegible.
+        // Texto casi del mismo color que el fondo: contraste < 3:1 → no se lee.
         let bajo = Color::from_rgb(0.5, 0.5, 0.5);
         let fondo = Color::from_rgb(0.5, 0.5, 0.5);
         let ratio = contrast_ratio(bajo, fondo);
@@ -2138,11 +2133,11 @@ mod tests {
             ratio < 3.0,
             "mismo gris sobre mismo gris debe ser <3:1, midió {ratio:.2}"
         );
-        // Combinación legible: blanco sobre negro.
+        // Combinación que se lee: blanco sobre negro.
         assert!(contrast_ratio(Color::WHITE, Color::BLACK) >= 3.0);
-        // Texto blanco sobre fondo blanco: contraste = 1:1 (ilegible).
+        // Texto blanco sobre fondo blanco: contraste = 1:1 (no se lee).
         assert!(contrast_ratio(Color::WHITE, Color::WHITE) < 3.0);
-        // Texto blanco sobre gris claro: contraste ≤ 3:1 → ILEGIBLE.
+        // Texto blanco sobre gris claro: contraste ≤ 3:1 → NO se lee.
         let gris_claro = rgb!(0xCC, 0xCC, 0xCC);
         assert!(
             contrast_ratio(Color::WHITE, gris_claro) < 3.0,
@@ -2153,17 +2148,17 @@ mod tests {
     #[test]
     fn contrast_ratio_dispara_aviso_si_text_o_dim_bajan_de_3_sobre_bg() {
         reset_palette_override();
-        // Helper: la UI muestra el aviso cuando text o dim bajan de 3:1
-        // sobre el fondo de ventana (requisito UX: «no negociable»).
+        // Ayudante: la interfaz enseña el aviso cuando text o dim bajan de 3:1
+        // sobre el fondo de la ventana (pedido de UX: «no negociable»).
         fn legible(c: Color, bg: Color) -> bool {
             contrast_ratio(c, bg) >= 3.0
         }
-        // Defaults: SIEMPRE legibles.
+        // Los colores de serie: SIEMPRE se leen.
         assert!(legible(DARK.text, DARK.bg));
         assert!(legible(DARK.dim, DARK.bg));
         assert!(legible(LIGHT.text, LIGHT.bg));
         assert!(legible(LIGHT.dim, LIGHT.bg));
-        // Override patológico: texto casi del mismo color que el fondo.
+        // Cambio absurdo: texto casi del mismo color que el fondo.
         let cfg = Config {
             palette: Some(PaletteConfig {
                 text: Some("#181818".into()), // 1 px sobre el #17181C de DARK.bg → ilegible

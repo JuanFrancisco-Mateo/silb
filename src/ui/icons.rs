@@ -1,14 +1,15 @@
-//! Iconos vectoriales del rediseño (frame Dictado de Figma).
+//! Iconos del rediseño (pantalla Dictado de Figma).
 //!
-//! Los 19 SVG que usa el marco se extrajeron del propio Figma
+//! Los 19 SVG del marco se sacaron de Figma
 //! (`design/openwhispr-figma/raw/icons/`) y se copiaron a `assets/icons/`;
-//! aquí se incrustan en el binario con `include_bytes!` (cero I/O en runtime,
-//! cero dependencia de rutas en disco). Son iconos lucide monocromos: el
-//! color viene DENTRO del SVG (`stroke="white"` en los que van sobre el
-//! acento, `#A9A8B5`/`#7F808D` en los demás), así que no hace falta tintar
-//! nada desde el código: el color de cada icono es parte del diseño.
+//! aquí van dentro del binario con `include_bytes!` (sin abrir ficheros ni
+//! depender de rutas). Son iconos lucide de un color: el color viene DENTRO
+//! del SVG (`stroke="white"` en los que van sobre el acento, `#A9A8B5`/`#7F808D`
+//! en los demás), así que no hay que teñir nada desde el código: el color de
+//! cada icono es parte del diseño.
 //!
-//! El widget `svg` de iced rasteriza el vectorial al tamaño pedido, así que
+//! El control `svg` de iced dibuja el vector al tamaño pedido, así que el
+//! mismo icono vale a 12, 15, 18 o 30 px sin pixelarse.
 //! un mismo icono sirve a 12, 15, 18 o 30 px sin pixelarse.
 
 use iced::widget::{svg, Svg};
@@ -44,7 +45,7 @@ pub const SPARKLES: &[u8] = include_bytes!("../../assets/icons/sparkles-db3e2.sv
 pub const HARD_DRIVE: &[u8] = include_bytes!("../../assets/icons/harddrive-1d1c3.svg");
 
 /// Icono vectorial cuadrado de `size` px. El [`Handle`] apunta a los bytes
-/// incrustados: no hay fichero que abrir ni ruta que pueda faltar.
+/// metidos en el binario: no hay fichero que abrir ni ruta que pueda faltar.
 ///
 /// [`Handle`]: iced::widget::svg::Handle
 pub fn icon(bytes: &'static [u8], size: f32) -> Svg<'static, iced::Theme> {
@@ -54,13 +55,13 @@ pub fn icon(bytes: &'static [u8], size: f32) -> Svg<'static, iced::Theme> {
         .content_fit(iced::ContentFit::Contain)
 }
 
-/// Icono vectorial teñido con `color`: el filtro de color de iced sustituye el
-/// RGB de los píxeles opacos del SVG, así un mismo trazo sirve para el icono
-/// activo (acento), el inactivo (texto secundario) o el deshabilitado (tenue).
+/// Icono vectorial teñido con `color`: el filtro de iced cambia el RGB de los
+/// píxeles opacos del SVG, así el mismo trazo vale para el icono activo
+/// (acento), el inactivo (texto secundario) o el deshabilitado (tenue).
 ///
-/// Es lo que exige el diseño: el icono de «Dictado» va en acento cuando la
+/// Es lo que pide el diseño: el icono de «Dictado» va en acento cuando la
 /// sección está activa y en secundario cuando no, y los iconos de acciones
-/// (`Limpiar`, `Copiar texto`) heredan el tono del texto de su botón en vez de
+/// (`Limpiar`, `Copiar texto`) toman el tono del texto de su botón en vez de
 /// quedarse blancos sobre un botón deshabilitado.
 pub fn icon_colored(bytes: &'static [u8], size: f32, color: Color) -> Svg<'static, iced::Theme> {
     svg(svg::Handle::from_memory(bytes))
