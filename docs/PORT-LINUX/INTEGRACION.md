@@ -11,7 +11,7 @@ va encima de otra; las fusiones son entre hermanas):
 | # | Rama | Commit | Conflicto | Resolución |
 |---|---|---|---|---|
 | 1 | `feature/port-linux-inventario` (8fa4905) | — merge limpio (fast-forward por contenido) | — | — |
-| 2 | `feature/port-linux-codigo-core` (401c5e0) | 434245c | Cargo.toml | La rama P2 abrió `[target.'cfg(windows)'.dependencies]` y dejó engullidos aturos/tray/audio dentro; se resuelve a favor del layout de P1 (winapi ya en esa tabla al final, el resto universal) y se conserva la nota «GATEADO» de P2 en el comentario del winapi |
+| 2 | `feature/port-linux-codigo-core` (401c5e0) | 434245c | Cargo.toml | La rama P2 abrió `[target.'cfg(windows)'.dependencies]` y dejó engullidos arboard/tray-icon/cpal dentro; se resuelve a favor del layout de P1 (winapi ya en esa tabla al final, el resto universal) y se conserva la nota «GATEADO» de P2 en el comentario del winapi |
 | 3 | `feature/port-linux-audio-runtime` (84d350b) | ed1d75a | Cargo.toml | La rama P3 dejó la tabla `[features]` tragándose arboard/enigo/global-hotkey/crossbeam-channel/ureq y la tabla `[target.'cfg(unix)'.dependencies]` tragándose rfd/serde/serde_json/dirs/fancy-regex/uuid/chrono. Se reordenan a sus secciones correctas |
 | 4 | `feature/port-linux-dominio-ui` (678cdf2, solo en clon local upstream) | 8f40f24 | Cargo.toml, src/inject.rs, src/transcribe.rs | Ver abajo (los 3 conflicto real con adjudicacion de sentencias) |
 
