@@ -186,7 +186,7 @@ Nota que pesa mucho en el diseño: el servidor llama.cpp es un binario nativo **
 decisión del proyecto (AGENTS.md)**, no por su API; en el port a Linux el binario
 también sería llama.cpp compilado en local (`pacman -S llama-server` no existe
 como paquete — comprobado con `pacman -Si llama-server`: no encontrado).
-Para la máquina de Juanfri no se recomienda compilar llama.cpp aquí en esta fase;
+Para una máquina de pruebas no se recomienda compilar llama.cpp aquí en esta fase;
 la alternativa de bajo riesgo es apuntar `base_url` a un endpoint que ya esté
 corriendo (en esta partición todavía no hay servidor). **Dejar I18-I21 como
 apartado opcional «binario llama-server para Linux», separado de la app.**
