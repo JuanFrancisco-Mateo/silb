@@ -4,6 +4,60 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.6.0] — 2026-10-29
+
+Versión de **peso y port**: el instalador pasa de 549 MB a 15 MB y el port a
+Linux se puede probar de verdad. Sin cambios en el formato de datos ni en la
+config: actualizar por encima de una 0.5.0 no pide reconfigurar nada.
+
+### Cambiado
+
+- **El instalador ya no pesa medio giga.** El base es **CPU-only** y pesa
+  ~15,4 MB: lleva el exe de CPU y deja fuera `vendor\llama\cuda\` (656 MB de
+  DLLs de NVIDIA). La GPU se sirve en un **pack CUDA aparte** (~522 MB) que se
+  instala encima del base y añade `silb-cuda.exe`.
+- **El pack CUDA comprueba el runtime antes de copiar.** `silb-cuda.exe` importa
+  `cudart64_12.dll` y `cublas64_12.dll`: si el equipo no los tiene, el
+  instalador del pack se para, no toca nada y remite al instalador CPU. Antes
+  se podía dejar instalado un exe que Windows no llegaba a arrancar.
+- **Actualizar del pack al base conserva `cuda\`** (el servidor LLM sigue
+  usando la GPU aunque el dictado pase a CPU); el desinstalador sí borra esos
+  ficheros, así que no queda basura permanente.
+
+### Añadido
+
+- `scripts/linux-check.sh`: comprobación completa en Linux (`cargo check`,
+  tests, build release, tamaño y dependencias del binario) que deja informe en
+  `docs/VERIFICACION-LINUX-<fecha>.txt`. Si no hay binario, ahora cuenta como
+  fallo en vez de cerrar en verde.
+- `docs/PORT-LINUX/TESTEO-0.6.md`: guía de prueba del port con lo que hay que
+  comprobar y qué se considera correcto.
+
+### Corregido
+
+- **Selector de micrófono en Linux**: el host de audio lista todo el zoo de
+  plugins de ALSA (`null`, `lavrate`, `speexrate`, `jack`, `oss`, `upmix`,
+  `vdownmix`, `usbstream`…) como si fueran micrófonos. Ahora solo aparecen la
+  entrada por defecto (`default`, `pipewire`, `pulse`) y los PCM de tarjeta
+  (`hw:`, `plughw:`, `sysdefault:`, `front:`).
+- **El log dice qué micrófono se abre** (`dispositivo de entrada: «…»`): antes
+  no había forma de saber si dictabas con el micro interno o con el USB.
+- **Los scripts de Linux apuntaban a un binario inexistente**
+  (`target/release/whispr-open`); el binario real es `silb`.
+- **Rutas de modelos de llama.cpp en Linux**: ya no se listan `C:/` y `D:/`
+  como si fueran carpetas locales.
+- **Burbuja de dictado en Wayland**: se queda en el workspace donde arranca. No
+  se puede fijar desde la app; queda documentada la regla del compositor
+  (Hyprland: `float` + `pin`) en `docs/PORT-LINUX/CODIGO-UI.md`.
+
+### Verificado
+
+- `cargo test`: 341 correctos en Windows, 0 fallos (1 ignorado); suite completa
+  también en verde en Linux (Ryzen 5 PRO 5650U, Arch).
+- Rendimiento con el modelo `small` y `beam=5`: en CPU (6 hilos) 0,21–0,63 de
+  tiempo real según la duración del audio; en GPU (RTX 4070) 0,06–0,21, es
+  decir **3–4× más rápido**.
+
 ## [0.5.0] — 2026-10-26
 
 Primera versión que **compila y arranca en Linux** además de Windows. Sin
