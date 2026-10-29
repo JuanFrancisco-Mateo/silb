@@ -1,27 +1,29 @@
-//! UI de Silb con Iced: dictado por turnos, transcript acumulado,
-//! limpieza de muletillas, diccionario personal, selector de modelo e
-//! inyección en la app activa.
+//! Interfaz de Silb con Iced: dictado por turnos, texto acumulado, limpieza
+//! de muletillas, diccionario personal, selector de modelo y escritura en la
+//! app activa.
 //!
-//! # Mapa de módulos (refactor de organización; cero cambio de conducta)
+//! # Mapa de módulos (solo se repartió el fichero; nada cambió de comportamiento)
 //!
-//! Este fichero se queda con el estado y el esqueleto de la app: el struct
-//! `WhisprApp`, `new`, el despachador `update` (un `match` que delega en un
-//! manejador por familia de mensajes), `subscription`, `theme`, `view` y los
-//! helpers pequeños de estado. El resto de la UI vive en `src/ui/`:
-//!
-//! - `ui::settings`: las vistas del espacio de trabajo de Ajustes
-//!   (`settings_view`, `settings_nav`, `settings_section_*`) y los helpers de
-//!   paleta.
-//! - `ui::settings_handlers`: manejadores de Ajustes (`handle_note`,
+//! Este fichero se queda con el estado y el esqueleto de la app: la estructura
+//! `WhisprApp`, `new`, la función que reparte los mensajes `update` (un `match`
+//! que llama a una función por familia de mensajes), `subscription`, `theme`,
+//! `view` y los ayudantes pequeños de estado. El resto de la interfaz vive en
+//! `src/ui/`:
+//! `src/ui/`:
+//! - `ui::settings`: las pantallas de Ajustes
+//!   (`settings_view`, `settings_nav`, `settings_section_*`) y los ayudantes de
+//!   la paleta.
+//! - `ui::settings_handlers`: qué hace cada mensaje de Ajustes (`handle_note`,
 //!   `handle_lists`, `handle_dictation_engine`, `handle_appearance_settings`,
 //!   `handle_palette_settings`, `handle_corrector_settings`).
 //! - `ui::recording`: grabación y transcripción
 //!   (`handle_recording_control`, `handle_transcription_done`,
 //!   `handle_dictation_settings`).
-//! - `ui::poll`: el tick periódico (`handle_poll`).
-//! - `ui::bubble`: los eventos de la burbuja flotante
+//! - `ui::poll`: cada vuelta del reloj (`handle_poll`).
+//! - `ui::bubble`: lo que pasa en la burbuja flotante
 //!   (`handle_bubble_events`).
 //! - `ui::window_tray`: ventana, bandeja y arranque
+//!   (`handle_window_and_tray`).
 //!   (`handle_window_and_tray`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -51,14 +53,14 @@ use crate::theme::{self, UiPalette};
 use crate::transcribe::Model;
 
 #[derive(Debug, Clone, PartialEq)]
-/// Estado global de la app tal como lo lee la UI (hero, burbuja, bandeja).
-/// Un solo enum evita combinaciones imposibles («grabando y descargando»).
+/// Estado general de la app tal como lo ve la interfaz (botón grande, burbuja,
+/// bandeja). Un solo enum evita combinaciones imposibles («grabando y descargando»).
 pub enum Status {
     Idle,
     Recording,
     Transcribing,
-    /// El LLM corrector está trabajando sobre el último turno dictado
-    /// (docs/CORRECCION-VOZ.md §4.4: estado ámbar como Transcribing).
+    /// El corrector está trabajando en el último turno dictado
+    /// (docs/CORRECCION-VOZ.md §4.4: ámbar, como Transcribing).
     Correcting,
     Downloading {
         model: Model,
@@ -68,57 +70,56 @@ pub enum Status {
     Error(String),
 }
 
-/// Fase de arranque de la app (requisito UX 09/09/2026: «la app levanta todo
-/// por sí misma»). Mientras no está Ready la vista principal muestra SOLO la
-/// pantalla de carga (spinner + texto) y el dictado queda bloqueado: la
-/// primera pulsación del atajo no debe encontrarse el modelo de voz aún en
-/// disco.
+/// En qué punto va el arranque (UX del 09/09/2026: «la app se levanta sola»).
+/// Mientras no está Ready la vista principal enseña SOLO la pantalla de carga
+/// (spinner y texto) y el dictado está bloqueado: la primera pulsación del atajo
+/// no debe pillar el modelo de voz todavía en el disco.
 #[derive(Debug, Clone, PartialEq)]
 pub enum StartupPhase {
-    /// Whisper (y luego el server LLM si procede) cargándose en background.
+    /// Whisper (y luego el servidor LLM si toca) cargándose en segundo plano.
     Loading,
-    /// Todo listo: dictado disponible.
+    /// Todo listo: se puede dictar.
     Ready,
-    /// Fallo bloqueante de whisper (modelo ausente y descarga fallida, o
-    /// contexto que no carga): la app no puede transcribir. `error` es el
-    /// motivo legible. «Reintentar» relanza el arranque completo.
+    /// Fallo que deja la app sin poder transcribir (modelo ausente y descarga
+    /// fallida, o contexto que no carga). `error` es el motivo legible.
+    /// «Reintentar» vuelve a lanzar el arranque entero.
     Failed { error: String },
 }
 
-/// Estado del corrector LLM local tras el auto-inicio (o su ausencia). La
-/// corrección IA solo se enruta cuando está `Ready`; `Disabled` muestra el
-/// motivo en la UI (nunca silencioso) pero el dictado sigue funcionando.
+/// Estado del corrector local tras el arranque (o su ausencia). La corrección IA
+/// solo se manda cuando está `Ready`; `Disabled` enseña el motivo en la interfaz
+/// (nunca en silencio) pero el dictado sigue.
 #[derive(Debug, Clone, PartialEq)]
 pub enum LlmStatus {
-    /// Aún no comprobado (arranque en curso, o proveedor cloud/custom que
-    /// no necesita server local).
+    /// Aún sin comprobar (arranque en marcha, o proveedor en la nube o propio
+    /// que no necesita servidor local).
     Unknown,
-    /// Server LLM respondiendo: ya corría antes de abrir la app o lo lanzó
-    /// ella misma. `launched` distingue el caso (log).
+    /// El servidor LLM responde: ya corría antes de abrir la app o lo lanzó
+    /// ella. `launched` dice cuál de las dos (para el log).
     Ready { launched: bool },
-    /// Corrección IA desactivada en runtime con motivo visible. Razón vacía
-    /// = desactivada por el usuario en Ajustes (sin banner de error).
+    /// Corrección IA apagada con la app ya en marcha, con motivo a la vista.
+    /// Sin motivo = la apagó el usuario en Ajustes (sin aviso de error).
     Disabled(String),
 }
 
-/// Eventos del hilo de arranque en background (prerroll whisper + server
-/// LLM). Se entregan por `startup_rx` y se procesan en el Poll (patrón
-/// transcribe_rx/llm_rx: nunca bloquear el bucle de la UI).
+/// Avisos del hilo de arranque (carga de whisper y servidor LLM). Llegan por
+/// `startup_rx` y se atienden en el `Poll` (igual que transcribe_rx/llm_rx:
+/// nunca se bloquea el bucle de la interfaz).
 #[derive(Debug, Clone)]
 pub enum StartupEvent {
-    /// Progreso de la descarga del modelo whisper (0,0 = descarga arrancada;
-    /// con `total=0` aún no se conoce el tamaño).
+    /// Progreso de la descarga del modelo (0,0 = acaba de empezar; con
+    /// `total=0` todavía no se sabe el tamaño).
     WhisperProgress { downloaded: u64, total: u64 },
-    /// El modelo whisper está descargado y cargado en el cache de contexto.
+    /// El modelo está descargado y cargado en la caché de contexto.
     WhisperReady,
-    /// La carga/descarga de whisper falló: la app no puede transcribir.
+    /// Falló la carga o descarga de whisper: la app no puede transcribir.
     WhisperFailed(String),
-    /// La fase LLM comienza (verificando server / lanzándolo).
+    /// Empieza la parte del modelo (comprobar el servidor o lanzarlo).
     LlmStarting,
-    /// Server LLM listo (ya corría o lo lanzó la app) — arranque terminado.
+    /// Servidor LLM listo (ya corría o lo lanzó la app) — arranque terminado.
     LlmReady { launched: bool },
-    /// Server LLM no disponible (o corrección off): arranque terminado con
-    /// la corrección IA desactivada. Razón vacía = el usuario la apagó.
+    /// Servidor LLM no disponible (o corrección apagada): arranque terminado
+    /// con la corrección IA apagada. Sin motivo = la apagó el usuario.
     LlmDisabled(String),
 }
 

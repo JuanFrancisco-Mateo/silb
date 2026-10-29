@@ -1,13 +1,13 @@
-//! Cliente LLM OpenAI-compatible para la corrección hablada
-//! (docs/CORRECCION-VOZ.md §3). Sin dependencias nuevas: usa ureq 2.12 (ya
-//! está en Cargo.toml para las descargas de modelos GGML).
+//! Cliente de un modelo OpenAI-compatible para la corrección hablada
+//! (docs/CORRECCION-VOZ.md §3). Sin dependencias nuevas: usa ureq 2.12, que ya
+//! está en Cargo.toml para las descargas de modelos.
 //!
-//! Defaults: llama.cpp local (Ornith 9B) servido en `127.0.0.1:8081` — los
-//! overrides vienen de `Config::llm_settings()`. Cualquier endpoint
-//! OpenAI-compatible (Groq, Gemini…) funciona igual con base_url + api_key.
+//! Por defecto: llama.cpp en local (Ornith 9B) en `127.0.0.1:8081`; los cambios
+//! vienen de `Config::llm_settings()`. Cualquier servicio OpenAI-compatible
+//! (Groq, Gemini…) funciona igual con base_url + clave.
 //!
-//! PITFALL ureq sin feature `json`: no existe `into_json()`; se lee el cuerpo
-//! como texto (`into_string`) y se parsea con serde_json (dependencia directa).
+//! OJO con ureq sin la opción `json`: no existe `into_json()`; el cuerpo se lee
+//! como texto (`into_string`) y se parsea con serde_json (que sí está).
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -17,18 +17,18 @@ use serde::Serialize;
 use crate::config::CorrectionProvider;
 use crate::domain::corrective::Diff;
 
-/// Endpoint + modelo del corrector. Lo rellena `Config::llm_settings()` con
-/// los defaults locales; `base_url`/`model`/`api_key`/`timeout_secs` son
-/// override desde config.json.
+/// Dirección y modelo del corrector. Lo rellena `Config::llm_settings()` con
+/// los valores locales; `base_url`/`model`/`api_key`/`timeout_secs` se pueden
+/// cambiar desde config.json.
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub struct LlmConfig {
     pub provider: CorrectionProvider,
     pub base_url: String,
     pub model: String,
     pub api_key: Option<String>,
-    /// Timeout HTTP en segundos. Default 25 (cubre los ~4-6 s de un
-    /// modelo 9B en local con margen para endpoints remotos Groq/Gemini;
-    /// spec §3.4). Sale de `Config::llm_timeout_secs`.
+    /// Cuánto se espera la respuesta, en segundos. Por defecto 25 (los ~4-6 s de
+    /// un modelo 9B en local, con margen para servicios remotos; punto 3.4 del
+    /// documento). Sale de `Config::llm_timeout_secs`.
     pub timeout_secs: u64,
 }
 
@@ -44,19 +44,18 @@ impl Default for LlmConfig {
     }
 }
 
-/// Raíz de API de un endpoint OpenAI-compatible: sin espacios, sin barra
-/// final y con los sufijos de versión `/v1` REPETIDOS colapsados a uno
-/// solo.
+/// Dirección base de un servicio OpenAI-compatible: sin espacios, sin barra
+/// final y con los `/v1` repetidos juntados en uno solo.
 ///
-/// ÚNICA barrera de normalización de URLs del corrector (t_75732630). El
-/// bug que la motiva es `/v1/v1/models` → 404 → `server_alive` = false →
-/// `wait_for_server` devolvía «server LLM sin respuesta tras 0 s» aunque
-/// el server respondiera en 2 ms. La base puede venir con `/v1`, sin él o
-/// con `/v1/v1` (config editada a mano, defaults antiguos, o un endpoint
-/// pegado dos veces): TODAS deben acabar en una URL válida. Ojo, el `/v1`
-/// NO se quita cuando aparece una sola vez — es el prefijo de versión que
-/// llama.cpp, OpenAI y Groq esperan (`/v1/models`,
-/// `/v1/chat/completions`): quitarlo rompería el proveedor Cloud.
+/// Es el ÚNICO sitio que limpia direcciones del corrector (t_75732630). El
+/// fallo que lo motivó: `/v1/v1/models` → 404 → `server_alive` = false →
+/// `wait_for_server` decía «servidor LLM sin respuesta tras 0 s» aunque el
+/// servidor contestara en 2 ms. La dirección puede venir con `/v1`, sin él o
+/// con `/v1/v1` (config tocada a mano, valores viejos o una dirección pegada
+/// dos veces): TODAS tienen que acabar en una dirección válida. Eso sí, el
+/// `/v1` NO se quita cuando aparece una sola vez — es el prefijo de versión
+/// que esperan llama.cpp, OpenAI y Groq (`/v1/models`, `/v1/chat/completions`):
+/// quitarlo rompería el proveedor en la nube.
 pub fn api_base(base_url: &str) -> String {
     let mut base = base_url.trim().trim_end_matches('/');
     // Colapsa `/v1/v1`, `/v1/v1/v1`… a un único `/v1`.
