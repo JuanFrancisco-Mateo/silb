@@ -7,7 +7,7 @@
 //! (Groq, Gemini…) funciona igual con base_url + clave.
 //!
 //! OJO con ureq sin la opción `json`: no existe `into_json()`; el cuerpo se lee
-//! como texto (`into_string`) y se parsea con serde_json (que sí está).
+//! como texto (`into_string`) y se lee con serde_json (que sí está).
 
 use std::sync::atomic::Ordering;
 use std::time::Duration;
@@ -827,30 +827,28 @@ const NUM_WORDS: &[&str] = &[
     "mil",
 ];
 
-/// Marcadores correctivos que separan NUM_A y NUM_B. Deben ser
-/// inequívocos: si el LLM ya entendió bien la frase, este guard no
-/// debe intervenir. Por eso usamos los mismos que `has_unambiguous_in_turn_marker`
-/// más «no X sino Y» y «X en vez/lugar de Y».
+/// Marcas de corrección que separan NUM_A y NUM_B. Tienen que ser
+/// inequívocas: si el modelo ya entendió bien la frase, esta protección no debe
+/// meterse. Por eso se usan las mismas que `has_unambiguous_in_turn_marker` más
+/// «no X sino Y» y «X en vez/lugar de Y».
 ///
-/// Diseño: el regex devuelve DOS grupos cuando es posible:
-/// - grupo 1 (opcional): el «antes» del marcador que debe eliminarse.
-///   En «no X sino» X es lo que se va a sustituir; necesitamos que
-///   esté en el grupo para extraer NUM_A correctamente.
-/// - grupo 2: el marcador en sí.
+/// Cómo está montada: la expresión regular devuelve DOS grupos cuando puede:
+/// - grupo 1 (opcional): el «antes» de la marca que hay que quitar. En «no X
+///   sino» X es lo que se va a cambiar; hace falta tenerlo en el grupo para
+///   sacar NUM_A bien.
+/// - grupo 2: la marca en sí.
 ///
-/// NOTA sobre (1): la lógica de auto-corrección ya existe en
-/// `src/domain/corrective.rs` (`IN_TURN_MARKERS`,
-/// `apply_diff`/`apply_diff_inferido`). Sin embargo, ese módulo es
-/// declarativo/clasificador: su regex casa el marcador con meta-lengua
-/// general (digo, en vez de, no X sino…) y exige estructura «antes /
-/// después» con longitudes mínimas. NO está pensado para reconstruir
-/// la sustitución (no devuelve qué numeral se sustituye por cuál), y
-/// su lista de marcadores cubre más casos (incluido «mejor», «dime»
-/// como súplicas) que NO queremos tocar aquí. Reutilizar ese regex
-/// directo aquí haría al guard más permisivo de lo necesario y
-/// dispararía falsos positivos en frases coloquiales que el LLM
-/// resuelve bien. Mantener la regex acotada en este módulo es la
-/// decisión correcta: el guard es pequeño, surgical, y auto-contenido.
+/// NOTA sobre el grupo (1): la lógica de autocorrección ya existe en
+/// `src/domain/corrective.rs` (`IN_TURN_MARKERS`, `apply_diff`/
+/// `apply_diff_inferido`). Pero ese módulo describe y clasifica: su expresión
+/// regular casa la marca con la frase de corrección en general (digo, en vez
+/// de, no X sino…) y pide estructura «antes / después» con un mínimo de
+/// longitud. NO está pensado para rehacer la sustitución (no dice qué número se
+/// cambia por cuál), y su lista de marcas cubre más casos (incluido «mejor»,
+/// «dime» como súplica) que aquí NO se quieren tocar. Reutilizar esa expresión
+/// regular aquí haría la protección demasiado permisiva y saltaría con frases
+/// coloquiales que el modelo resuelve bien. Tener la expresión regular acotada
+/// en este módulo es lo correcto: la protección es pequeña y se basta sola.
 const NUMERIC_MARKER_REGEX: &str = r"(?i)\b(?:no\s+(.+?)\s+sino\b|(digo\b|diga\b|dime\b|quiero decir\b|quise decir\b|mejor dicho\b|en vez de\b|en lugar de\b))";
 
 /// Expresión regular ya compilada y guardada (fancy-regex cuesta compilarla).
@@ -2596,17 +2594,17 @@ mod tests {
 
     // ── Regresión H1 (t_d64797c2): frases NATURALES, no habla telegráfica ─
     //
-    // Casos reales del log del usuario (14/09 03:19 y 13/09 01:37): entre
-    // el numeral y el marcador hay sintagma nominal y/o verbo («a tres
-    // personas, digo cuatro personas»). El LLM local se quedaba con el
-    // numeral VIEJO, borraba la meta-lengua y soltaba una frase plausible
-    // y FALSA; el guard no lo cazaba porque exigía que NUM_A fuese el
-    // último token antes del marcador.
+    // Casos reales del log del usuario (14/09 03:19 y 13/09 01:37): entre el
+    // número y la marca hay sintagma nominal y/o verbo («a tres personas, digo
+    // cuatro personas»). El modelo local se quedaba con el número VIEJO, borraba
+    // la frase de corrección y soltaba una frase creíble y FALSA; la protección
+    // no lo cazaba porque exigía que NUM_A fuese la última palabra antes de la
+    // marca.
 
     #[test]
     fn guard_numeric_corrige_caso_real_log_1_numeral_con_sintagma() {
-        // Caso 1 del log: input con «tres personas, digo cuatro personas»,
-        // output del LLM con el numeral VIEJO y sin meta-lengua.
+        // Caso 1 del log: texto con «tres personas, digo cuatro personas» y
+        // respuesta del modelo con el número VIEJO y sin la frase de corrección.
         let input = "El otro día me encontré a tres personas, digo cuatro personas, que iban por la acera de enfrente.";
         let output = "El otro día me encontré a tres personas que iban por la acera de enfrente.";
         let result = guard_numeric_substitution(input, output).expect(
@@ -2625,10 +2623,10 @@ mod tests {
             contains_token(&result.to_lowercase(), "cuatro"),
             "el numeral corregido DEBE estar en el texto inyectado: {result:?}"
         );
-        // La reconstrucción no debe caer en el guard anti-truncación (es
-        // el mismo criterio que aplica app.rs antes de inyectar) ni
-        // contener meta-lengua residual (eso haría que app.rs inyectase el
-        // texto bruto y se perdiese la corrección).
+        // Lo reconstruido no debe caer en la protección anti-truncación (el mismo
+        // criterio que aplica app.rs antes de escribir) ni llevar restos de la
+        // frase de corrección (eso haría que app.rs escribiera el texto bruto y se
+        // perdiera la corrección).
         assert_eq!(
             guard_anti_truncacion(input, &result),
             result,
@@ -2642,9 +2640,9 @@ mod tests {
 
     #[test]
     fn guard_numeric_corrige_caso_real_log_2_digitos_concatenados() {
-        // Caso 2 del log: input con «23 personas que iban, digo, a 24
-        // personas», output del LLM con los DOS numerales pegados y sin
-        // meta-lengua (frase rota).
+        // Caso 2 del log: texto con «23 personas que iban, digo, a 24 personas»,
+        // respuesta del modelo con los DOS números pegados y sin la frase de
+        // corrección (frase rota).
         let input = "El otro día me encontré a 23 personas que iban, digo, a 24 personas que iban por la calle y es que, buah, flipante.";
         let output = "El otro día me encontré a 23 personas que iban a 24 personas que iban por la calle y es que, buah, flipante.";
         let result = guard_numeric_substitution(input, output)
@@ -2671,8 +2669,8 @@ mod tests {
 
     #[test]
     fn guard_numeric_corrige_frases_naturales_con_contexto_entre_numeral_y_marcador() {
-        // La ampliación no es ad-hoc para el log: cubre cualquier texto
-        // (funcional o de contenido) entre NUM_A y el marcador.
+        // La ampliación no es un parche solo para el log: vale para cualquier
+        // texto (de enlace o de contenido) entre NUM_A y la marca.
         for (input, output, esperado) in [
             (
                 "había dos coches en la puerta, mejor dicho tres coches",
@@ -2698,10 +2696,9 @@ mod tests {
 
     #[test]
     fn guard_numeric_control_sin_autocorreccion_no_toca_nada() {
-        // CONTROL: dictado normal sin meta-lengua ni rectificación. El
-        // guard NO aplica y el output del LLM (idéntico al input) se
-        // inyecta tal cual: nunca se altera texto que no es una
-        // auto-corrección.
+        // CONTROL: dictado normal sin frase de corrección ni rectificación. La
+        // protección NO aplica y la respuesta del modelo (igual al texto) se
+        // escribe tal cual: nunca se cambia texto que no es una autocorrección.
         for texto in [
             "Ayer fui al mercado y compré naranjas para toda la semana.",
             "Quedamos a las cuatro en la puerta del teatro.",
@@ -2716,15 +2713,15 @@ mod tests {
 
     #[test]
     fn guard_numeric_negativo_no_inventa_con_numerales_ambiguos() {
-        // NEGATIVO: dos numerales candidatos antes del marcador (¿cuál
-        // rectifica el usuario?) → precisión > recall, no se toca nada.
+        // NEGATIVO: dos números candidatos antes de la marca (¿cuál rectifica el
+        // usuario?) → mejor no tocar que tocar mal, no se toca nada.
         let input = "tengo 3 perros y 4 gatos, digo 5";
         let output = "tengo 3 perros y 5"; // conjetura (posible) del LLM
         assert!(
             guard_numeric_substitution(input, output).is_err(),
             "con dos numerales antes del marcador el patrón no es inequívoco"
         );
-        // Y sin marcador correctivo, dos numerales sueltos tampoco.
+        // Y sin marca de corrección, dos números sueltos tampoco.
         let sin_marcador = "había 3 personas y 4 coches en la calle";
         assert!(
             guard_numeric_substitution(sin_marcador, sin_marcador).is_err(),
@@ -2734,8 +2731,8 @@ mod tests {
 
     #[test]
     fn guard_numeric_canonico_moto_digo_coche_sigue_funcionando() {
-        // Caso canónico del usuario: corrección SIN numerales. El guard
-        // numérico no aplica y la corrección del LLM pasa intacta.
+        // Caso de siempre del usuario: corrección SIN números. La protección
+        // numérica no aplica y la corrección del modelo pasa intacta.
         let input = "se cruzó una moto digo se cruzó un coche";
         let output = "se cruzó un coche";
         assert!(
@@ -2757,15 +2754,15 @@ mod tests {
 
     #[test]
     fn correct_falla_con_endpoint_caido_y_devuelve_error_con_prefijo_http() {
-        // Garantiza que cuando el servidor LLM NO está corriendo
-        // (`connect refused` o similar), el error lleva el prefijo «HTTP:»
-        // para que la UI pueda mostrar el hint «¿está el servidor LLM
-        // arrancado?». Sin prefijo, la UI no sabe categorizar el error y
-        // el usuario queda a ciegas (bug Juanfri 09/09/2026: «no llama al
-        // LLM» sin diagnóstico).
+        // Asegura que cuando el servidor NO está corriendo (`connect refused` o
+        // parecido), el error lleva el prefijo «HTTP:» para que la interfaz pueda
+        // enseñar la pista «¿está el servidor LLM arrancado?». Sin prefijo, la
+        // interfaz no sabe clasificar el error y el usuario se queda a ciegas
+        // (fallo del 09/09/2026: «no llama al LLM» sin ninguna pista).
         //
-        // Usamos un puerto casi seguro libre: 1 (reservado, nadie escucha).
-        // Si por lo que sea alguien escucha ahí, el test falla y lo vemos.
+        // Se usa un puerto que casi seguro está libre: el 1 (reservado, nadie
+        // escucha). Si por lo que sea alguien escucha ahí, la prueba falla y nos
+        // enteramos.
         let cfg = LlmConfig {
             provider: CorrectionProvider::Default,
             base_url: "http://127.0.0.1:1".to_string(),
@@ -2783,8 +2780,8 @@ mod tests {
 
     #[test]
     fn server_alive_es_falso_con_puerto_cerrado() {
-        // Puerto 1: reservado, nadie escucha — connect refused inmediato
-        // (sin penalizar el test con los 2 s del timeout).
+        // Puerto 1: reservado, nadie escucha — el «connect refused» es inmediato
+        // (y la prueba no se come los 2 s de espera).
         assert!(!server_alive("http://127.0.0.1:1/v1"));
     }
 
@@ -2802,7 +2799,7 @@ mod tests {
     fn puerto_extraido_de_base_url() {
         assert_eq!(port_from_base_url("http://127.0.0.1:8081/v1"), 8081);
         assert_eq!(port_from_base_url("http://[::1]:9000/v1"), 9000);
-        // Sin puerto explícito o URL remota → default histórico 8081.
+        // Sin puerto puesto o dirección remota → 8081, el de siempre.
         assert_eq!(port_from_base_url("http://127.0.0.1/v1"), 8081);
         assert_eq!(port_from_base_url("https://api.openai.com/v1"), 8081);
     }
@@ -2818,15 +2815,15 @@ mod tests {
         let found = resolve_model_path_with("mi-modelo-q8_0.gguf", &[dir.clone()]);
         assert_eq!(found.as_deref(), Some(gguf.as_path()));
 
-        // Nombre inexistente → None (sin pánico recorriendo raíces vacías).
+        // Nombre que no existe → None (no se rompe al recorrer carpetas vacías).
         assert_eq!(
             resolve_model_path_with("no-existe.gguf", &[dir.clone()]),
             None
         );
-        // Ruta directa con separador se usa literalmente si existe.
+        // Una ruta directa (con separador) se usa tal cual si existe.
         let direct = resolve_model_path_with(&gguf.to_string_lossy(), &[]);
         assert_eq!(direct.as_deref(), Some(gguf.as_path()));
-        // Ruta directa inexistente → None.
+        // Ruta directa que no existe → None.
         let missing = std::env::temp_dir().join("no-existe-dir").join("x.gguf");
         assert_eq!(
             resolve_model_path_with(&missing.to_string_lossy(), &[]),
@@ -2840,8 +2837,8 @@ mod tests {
 
     #[test]
     fn la_busqueda_de_modelo_no_cruza_el_limite_de_profundidad() {
-        // El recorrido está acotado a 6 niveles: un fichero a profundidad 8
-        // no se encuentra (evita escanear discos enteros).
+        // El recorrido está acotado a 6 niveles: un fichero a profundidad 8 no
+        // se encuentra (así no se peinan discos enteros).
         let dir = std::env::temp_dir().join(format!("whispr-llm-deep-{}", std::process::id()));
         let deep = dir
             .join("a")
@@ -2877,8 +2874,8 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn args_del_server_llevan_modelo_puerto_y_flags_gpu() {
-        // El spawn usa EXACTAMENTE build_server_args: aquí fijamos el
-        // contrato — modelo como ruta nativa, puerto, loopback y flags GPU.
+        // El lanzamiento usa EXACTAMENTE build_server_args: aquí se fija el trato
+        // — modelo como ruta nativa, puerto, loopback y flags de GPU.
         let model = std::path::Path::new(r"C:\models\qwen3.5-0.8b.gguf");
         let args = build_server_args(model, 8081);
         assert_eq!(
@@ -2918,7 +2915,7 @@ mod tests {
         let otro_exe = otros.join("llama-server.exe");
         std::fs::write(&otro_exe, b"stub").unwrap();
 
-        // No existe el primero, sí el segundo → elige el segundo (orden).
+        // El primero no existe y el segundo sí → coge el segundo (por el orden).
         let roots = vec![
             dir.join("no-existe.exe"),
             otro_exe.clone(),
@@ -2936,11 +2933,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&otros);
     }
 
-    /// Orden de resolución del server (14/10/2026): el que VIAJA con la app
-    /// (`vendor/llama/`) gana al config y a las rutas comunes; el config
-    /// inválido no rompe nada; sin vendado se autodetecta. Todo con
-    /// directorios temporales: ni `D:\LlamaCPP` ni el PATH de la máquina
-    /// entran en juego.
+    /// Orden de búsqueda del servidor (14/10/2026): el que VIAJA con la app
+    /// (`vendor/llama/`) gana a la config y a las rutas de siempre; una config
+    /// inválida no rompe nada; sin embarcado se autodetecta. Todo con carpetas
+    /// temporales: ni `D:\LlamaCPP` ni el PATH de la máquina entran en juego.
     #[cfg(target_os = "windows")]
     #[test]
     fn el_server_vendado_gana_al_config_y_a_la_autodeteccion() {
@@ -2954,7 +2950,7 @@ mod tests {
         std::fs::create_dir_all(app.join("vendor").join("llama")).unwrap();
         let vendado = app.join("vendor").join("llama").join("llama-server.exe");
         std::fs::write(&vendado, b"stub").unwrap();
-        // server «de antes» apuntado a mano en config.json, y uno «común»
+        // servidor «de antes» apuntado a mano en config.json, y uno «de siempre»
         let manual_dir = base.join("manual");
         std::fs::create_dir_all(&manual_dir).unwrap();
         let manual = manual_dir.join("llama-server.exe");
@@ -2965,13 +2961,13 @@ mod tests {
         std::fs::write(&comun, b"stub").unwrap();
         let comunes = vec![comun.clone()];
 
-        // 1) vendado + config válido distinto → gana el VENDADO (una ruta
+        // 1) embarcado + config válida distinta → gana el EMBARCADO (una ruta
         //    vieja en config.json no rompe una instalación nueva).
         assert_eq!(
             resolve_server_path_in(Some(&app), Some(&manual.to_string_lossy()), &comunes),
             Some(vendado.clone())
         );
-        // 2) vendado + config INVÁLIDO (no existe) → el vendado.
+        // 2) embarcado + config INVÁLIDA (no existe) → el embarcado.
         assert_eq!(
             resolve_server_path_in(
                 Some(&app),
@@ -2980,12 +2976,12 @@ mod tests {
             ),
             Some(vendado.clone())
         );
-        // 3) sin vendado + config válido → el config (override manual).
+        // 3) sin embarcado + config válida → la config (lo puesto a mano).
         assert_eq!(
             resolve_server_path_in(Some(&sin_vendor), Some(&manual.to_string_lossy()), &comunes),
             Some(manual.clone())
         );
-        // 4) sin vendado + config inválido → autodetección por rutas comunes.
+        // 4) sin embarcado + config inválida → autodetección por las rutas de siempre.
         assert_eq!(
             resolve_server_path_in(
                 Some(&sin_vendor),
@@ -2994,7 +2990,7 @@ mod tests {
             ),
             Some(comun.clone())
         );
-        // 5) sin nada → None (el arranque lo reporta como LlmDisabled).
+        // 5) sin nada → None (el arranque lo cuenta como LlmDisabled).
         assert_eq!(
             resolve_server_path_in(None, None, &[]),
             None,
@@ -3004,8 +3000,8 @@ mod tests {
     }
 
     /// El GGUF del corrector se busca también junto al exe (`vendor/models`) y
-    /// en la carpeta de modelos de la app (`%APPDATA%\whispr-open\models`),
-    /// ambas por delante de las raíces heredadas (LM Studio, D:\LlamaCPP…).
+    /// en la carpeta de modelos de la app (`%APPDATA%\whispr-open\models`), las
+    /// dos por delante de las carpetas heredadas (LM Studio, D:\LlamaCPP…).
     #[test]
     fn el_modelo_se_busca_en_vendor_models_y_en_la_carpeta_de_la_app() {
         let app = std::env::temp_dir().join(format!("whispr-vendor-model-{}", std::process::id()));
@@ -3027,8 +3023,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&app);
     }
 
-    /// El pack CUDA es solo un subdirectorio junto al server vendado: existe o
-    /// no existe, y sin él no se toca nada (el server corre en CPU).
+    /// El paquete CUDA es solo un subdirectorio junto al servidor embarcado: está
+    /// o no está, y sin él no se toca nada (el servidor va en CPU).
     #[test]
     fn el_pack_cuda_es_el_subdirectorio_cuda_junto_al_server() {
         let app = std::env::temp_dir().join(format!("whispr-cuda-{}", std::process::id()));
@@ -3042,8 +3038,8 @@ mod tests {
 
     #[test]
     fn kill_sin_server_lanzado_no_hace_nada() {
-        // Sin PID registrado, el path de salida no intenta matar nada
-        // (criterio: nunca tocar servers ajenos).
+        // Sin PID apuntado, la salida no intenta cerrar nada (regla: no tocar
+        // nunca servidores ajenos).
         assert_eq!(launched_server_pid(), 0);
         assert!(!kill_launched_server());
     }
@@ -3051,13 +3047,13 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn ruta_explicita_rota_o_falsa_se_ignora_deterministicamente() {
-        // Requisito de robustez («ruta rota»): la ruta explícita de Ajustes
-        // se valida sola, sin depender del disco real de la máquina ni del
+        // Requisito de robustez («ruta rota»): la ruta escrita en Ajustes se
+        // comprueba ella sola, sin depender del disco real de la máquina ni del
         // PATH (por eso la decisión vive en `explicit_server_path`).
         let dir = std::env::temp_dir().join(format!("whispr-explicit-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
 
-        // 1) No existe → None (el caller cae a autodetección).
+        // 1) No existe → None (quien llama pasa a la autodetección).
         assert_eq!(
             explicit_server_path(&dir.join("no-esta.exe").to_string_lossy()),
             None
@@ -3071,15 +3067,15 @@ mod tests {
             Some(buena.clone())
         );
 
-        // 3) Wrapper (llama.exe) con hermano bueno → se sanea al hermano.
+        // 3) Envoltorio (llama.exe) con un hermano bueno → se arregla al hermano.
         let _ = std::fs::write(dir.join("llama.exe"), b"wrapper");
         assert_eq!(
             explicit_server_path(&dir.join("llama.exe").to_string_lossy()),
             Some(buena)
         );
 
-        // 4) Wrapper SIN hermano → se ignora (None): nunca se lanza un exe
-        //    que no se pueda terminar limpiamente al salir.
+        // 4) Envoltorio SIN hermano → se ignora (None): nunca se lanza un exe que
+        //    después no se pueda cerrar limpio al salir.
         let solo = std::env::temp_dir()
             .join(format!("whispr-explicit-solo-{}", std::process::id()));
         std::fs::create_dir_all(&solo).unwrap();
@@ -3094,17 +3090,17 @@ mod tests {
 
     #[test]
     fn endpoint_que_responde_500_se_reporta_como_error_http() {
-        // Requisito de robustez: un endpoint VIVO pero roto (500, gateway
-        // caído…) debe degradarse a texto bruto con el mismo contrato de
-        // error que el endpoint caído (prefijo «HTTP:» para que la UI lo
-        // categorice). Se monta un server HTTP de mentira con std::net.
+        // Requisito de robustez: una dirección VIVA pero rota (500, pasarela
+        // caída…) tiene que acabar en texto bruto con el mismo trato de error que
+        // una caída (el prefijo «HTTP:» para que la interfaz lo clasifique). Se
+        // monta un servidor HTTP de mentira con std::net.
         use std::io::{Read, Write};
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind en puerto libre");
         let port = listener.local_addr().expect("addr").port();
         let server = std::thread::spawn(move || {
             if let Ok((mut stream, _)) = listener.accept() {
-                // Consumir la petición (cabeceras) antes de responder para
-                // que el cliente no resetee la conexión al leer.
+                // Se lee la petición (las cabeceras) antes de contestar, para que el
+                // cliente no reinicie la conexión al leer.
                 let mut buf = [0u8; 8192];
                 let _ = stream.read(&mut buf);
                 let _ = stream.write_all(
@@ -3130,23 +3126,23 @@ mod tests {
 
     #[test]
     fn terminate_server_pid_con_cero_no_hace_nada() {
-        // PID 0 (System Idle Process) jamás se toca: el guard corta antes de
-        // OpenProcess, por lo que tampoco puede matar un proceso ajeno.
+        // El PID 0 (System Idle Process) no se toca jamás: la protección corta
+        // antes de OpenProcess, así que tampoco puede cerrar un proceso ajeno.
         assert!(!terminate_server_pid(0));
     }
 
-    // ── Normalización de URL (t_75732630) ─────────────────────────────────
+    // ── Limpieza de direcciones (t_75732630) ──────────────────────────────
     //
-    // Bug real: config.json traía `http://127.0.0.1:8081/v1` y el código
-    // concatenaba `/models` a pelo → `http://127.0.0.1:8081/v1/v1/models`
-    // → 404 → `server_alive` = false → «server LLM sin respuesta tras 0 s»
-    // aunque el server respondiera en 2 ms. La normalización vive SOLO en
-    // `api_base`/`api_url`; estos tests fijan el contrato.
+    // Fallo real: config.json traía `http://127.0.0.1:8081/v1` y el código pegaba
+    // `/models` a pelo → `http://127.0.0.1:8081/v1/v1/models` → 404 →
+    // `server_alive` = false → «servidor LLM sin respuesta tras 0 s» aunque el
+    // servidor contestara en 2 ms. La limpieza vive SOLO en `api_base`/`api_url`;
+    // y estas pruebas fijan el trato.
 
     #[test]
     fn api_base_colapsa_el_v1_repetido_y_quita_la_barra_final() {
-        // Un `/v1` SOLO se conserva (es el prefijo de versión estándar);
-        // los repetidos se colapsan a uno.
+        // Un `/v1` SOLO se conserva (es el prefijo de versión estándar); los
+        // repetidos se juntan en uno.
         for (entrada, esperado) in [
             ("http://127.0.0.1:8081", "http://127.0.0.1:8081"),
             ("http://127.0.0.1:8081/", "http://127.0.0.1:8081"),
@@ -3163,9 +3159,9 @@ mod tests {
 
     #[test]
     fn api_url_es_la_misma_con_base_con_v1_duplicado() {
-        // El caso del bug: una base con `/v1/v1` debe acabar en la MISMA
-        // URL que la base con un solo `/v1` (la que un llama.cpp/OpenAI
-        // sano sirve), nunca en `/v1/v1/models` (404).
+        // El caso del fallo: una base con `/v1/v1` tiene que acabar en la MISMA
+        // dirección que la base con un solo `/v1` (la que sirve un llama.cpp/OpenAI
+        // sano), nunca en `/v1/v1/models` (404).
         for base in [
             "http://127.0.0.1:8081/v1",
             "http://127.0.0.1:8081/v1/v1",
@@ -3183,8 +3179,8 @@ mod tests {
                 "POST /chat/completions del corrector con base «{base}»"
             );
         }
-        // Compat hacia atrás: endpoints remotos que ya traen /v1 (OpenAI,
-        // Groq) siguen funcionando — el /v1 simple NO se elimina.
+        // Compatibilidad hacia atrás: las direcciones remotas que ya traen /v1
+        // (OpenAI, Groq) siguen funcionando — el /v1 simple NO se quita.
         assert_eq!(
             api_url("https://api.openai.com/v1", "models"),
             "https://api.openai.com/v1/models"
@@ -3193,30 +3189,30 @@ mod tests {
             api_url("https://api.groq.com/openai/v1", "chat/completions"),
             "https://api.groq.com/openai/v1/chat/completions"
         );
-        // Base sin /v1 (default histórico, servida por llama.cpp en
-        // /models — verificado en el log real: «respondiendo en
-        // http://127.0.0.1:8081/v1/models (2 ms)» con base sin sufijo).
+        // Base sin /v1 (la de siempre; llama.cpp la sirve en /models — está en el
+        // log real: «respondiendo en http://127.0.0.1:8081/v1/models (2 ms)» con
+        // base sin sufijo).
         assert_eq!(api_url("http://127.0.0.1:8081", "models"), "http://127.0.0.1:8081/models");
-        // Un path con barra inicial no duplica la barra.
+        // Una ruta con barra delante no duplica la barra.
         assert_eq!(
             api_url("http://127.0.0.1:8081/v1", "/models"),
             "http://127.0.0.1:8081/v1/models"
         );
-        // Un path de versión pegado a mano tampoco rompe: `/v1` + `/v1/models`
-        // se colapsa igual.
+        // Una ruta de versión pegada a mano tampoco rompe: `/v1` + `/v1/models` se
+        // junta igual.
         assert_eq!(api_base("http://127.0.0.1:8081/v1" ), "http://127.0.0.1:8081/v1");
     }
 
     #[test]
     fn server_alive_y_wait_for_server_usan_la_url_normalizada() {
-        // Contrato de integración sin red: con la base del bug
-        // (`/v1`), el único puerto que se consulta es el normalizado. Un
-        // puerto cerrado responde «no vivo» sin esperar el timeout largo.
+        // Trato de integración sin red: con la base del fallo (`/v1`), el único
+        // puerto que se consulta es el ya limpio. Un puerto cerrado contesta «no
+        // vivo» sin esperar la espera larga.
         assert!(!server_alive("http://127.0.0.1:1/v1"));
         assert!(!server_alive_auth("http://127.0.0.1:1/v1/v1", Some("clave")));
     }
 
-    // ── Saneado del ejecutable del server (t_75732630) ────────────────────
+    // ── Arreglo del ejecutable del servidor (t_75732630) ──────────────────
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -3224,8 +3220,8 @@ mod tests {
         use std::path::Path;
         assert!(is_server_exe(Path::new(r"D:\LlamaCPP\llama-server.exe")));
         assert!(is_server_exe(Path::new(r"D:\LlamaCPP\LLAMA-SERVER.EXE")));
-        // El wrapper histórico y el server ELF de WSL NO son válidos: el
-        // proceso lanzado debe ser matable por nombre de imagen al salir.
+        // El envoltorio viejo y el servidor ELF de WSL NO valen: el proceso
+        // lanzado tiene que poder cerrarse por nombre de imagen al salir.
         assert!(!is_server_exe(Path::new(r"D:\LlamaCPP\llama.exe")));
         assert!(!is_server_exe(Path::new("/usr/bin/wsl.exe")));
         assert!(!is_server_exe(Path::new(r"D:\LlamaCPP\llama-server")));
@@ -3242,13 +3238,13 @@ mod tests {
         std::fs::write(&wrapper, b"stub").unwrap();
         std::fs::write(&real, b"stub").unwrap();
 
-        // `llama.exe` → `llama-server.exe` hermano (el caso de config.json).
+        // `llama.exe` → el `llama-server.exe` de al lado (el caso de config.json).
         assert_eq!(sanitize_server_exe(&wrapper).as_deref(), Some(real.as_path()));
-        // Un nombre ya válido se devuelve tal cual.
+        // Un nombre que ya vale se devuelve tal cual.
         assert_eq!(sanitize_server_exe(&real).as_deref(), Some(real.as_path()));
 
-        // Sin hermano `llama-server.exe` no hay ruta válida (el caller
-        // autodetecta por rutas comunes).
+        // Sin un `llama-server.exe` al lado no hay ruta válida (quien llama
+        // autodetecta por las rutas de siempre).
         let otros = std::env::temp_dir().join(format!("whispr-sanitize-otro-{}", std::process::id()));
         std::fs::create_dir_all(&otros).unwrap();
         let solo_wrapper = otros.join("llama.exe");
@@ -3259,16 +3255,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&otros);
     }
 
-    // ── Regresión VIVA contra un server real (t_75732630) ─────────────────
+    // ── Regresión EN VIVO contra un servidor real (t_75732630) ────────────
     //
     // Se ejecuta a mano con un llama-server NATIVO ya escuchando en
     // 127.0.0.1:8081 (Qwen3.5-0.8B-Q8_0.gguf):
     //   D:\LlamaCPP\llama-server.exe -m <gguf> --host 127.0.0.1 --port 8081
     //   cargo.exe test regresion_viva -- --ignored --nocapture
     //
-    // Fija el criterio 4 de la task: `server_alive`/`wait_for_server` pasan
-    // (sin «sin respuesta tras 0 s») con la base `/v1` del config del
-    // usuario, y la URL cruda duplicada `/v1/v1/models` —el bug— da 404.
+    // Fija el criterio 4 de la tarea: `server_alive`/`wait_for_server` pasan (sin
+    // «sin respuesta tras 0 s») con la base `/v1` de la config del usuario, y la
+    // dirección cruda duplicada `/v1/v1/models` —el fallo— da 404.
     #[test]
     #[ignore = "requiere llama-server.exe nativo en 127.0.0.1:8081"]
     fn regresion_viva_normalizacion_url_contra_server_real() {
@@ -3293,8 +3289,8 @@ mod tests {
             "el health check debe pasar en el primer intento"
         );
 
-        // La URL CRUDA duplicada sí es un 404: es exactamente el bug que
-        // arregla `api_url` (nadie la construye ya así).
+        // La dirección CRUDA duplicada sí da 404: es exactamente el fallo que
+        // arregla `api_url` (ya nadie la construye así).
         let cruda = ureq::get("http://127.0.0.1:8081/v1/v1/models")
             .timeout(Duration::from_secs(2))
             .call();
