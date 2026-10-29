@@ -1,55 +1,97 @@
 # AGENTS.md — Reglas de entorno para agentes autónomos
 
-Proyecto: **Silb** — dictado por voz local NATIVO de escritorio
-(Iced + whisper.cpp vía whisper-rs). Cero frontend web (sin webview, sin
-React/TS/Vite — eso vive en la rama `main` como versión legada).
-Rama activa: `native-iced`. Ruta: `whispr-open` (desde WSL: `whispr-open`).
+Proyecto: **Silb** — dictado por voz local, app de escritorio nativa
+(Rust + Iced + whisper.cpp vía whisper-rs). Nada de webview ni Tauri.
 Leer este archivo ANTES de tocar nada.
 
-## Entorno de ejecución (CRÍTICO — verificado el 02/09/2026)
+- Repo público: `github.com/JuanFrancisco-Mateo/silb`. Rama de trabajo: `main`.
+- El repo privado `whispr-open` es el archivo histórico: no se publica desde ahí.
+- Todos los comandos se lanzan desde la raíz del repo clonado; no se asume
+  ninguna carpeta concreta ni un usuario de Windows concreto.
+- Sin WSL: todo (compilar, tests, lanzar la app) se hace en Windows nativo.
+  Las únicas partes de Linux son el port (`docs/PORT-LINUX/`) y los scripts
+  `*-linux.sh`.
 
-- El proyecto vive en un disco Windows (E:). Rust/cargo es el de Windows:
-  `cargo` (`cmd.exe` NO tiene cargo en PATH).
-- NO compilar apuntando al cargo de WSL (target Linux, faltan deps).
+## Entorno de ejecución (verificado el 29/10/2026)
+
+- Rust/cargo es el de Windows. `cargo test` y `cargo build --release` desde una
+  consola normal o `cmd.exe /c "cargo test"`; no está en el PATH de MSYS.
 - La primera compilación completa tarda 5–10 min (iced + whisper.cpp). Es normal.
-- TOOLCHAIN: cmake 4.x y MSVC (VS2019 BuildTools, 14.29) presentes — necesarios
-  para compilar whisper-rs (whisper.cpp en C). `where cl` desde WSL falla pero
-  cargo encuentra MSVC vía vswhere, así que compila igual.
-- whisper-rs: DEBE ser 0.16+ (0.12/0.14 fallan contra whisper.cpp actual:
-  campos de `whisper_full_params` cambiados). API 0.16:
-  `SamplingStrategy`, `state.get_segment(i) -> Option<WhisperSegment>`, `seg.to_str()`.
-- Modelos GGML (whisper.cpp, de HF ggerganov) en `%APPDATA%/whispr-open/models/`.
-- REGLA DE PRODUCTO: el server LLM NUNCA se lanza desde WSL (wsl.exe). TODO
-  arranque lo hace la app con el binario NATIVO Windows
-  `D:\\LlamaCPP\\llama-server.exe` (build Clang 20/CUDA 13, cublas64_13.dll en
-  el mismo dir).
+- Toolchain: cmake 4.x y MSVC (VS2019 BuildTools 14.29) para whisper-rs;
+  cargo encuentra MSVC solo vía vswhere, no hace falta abrir su consola.
+- whisper-rs debe ser 0.16+ (la 0.12/0.14 no compila contra whisper.cpp actual:
+  cambiaron los campos de `whisper_full_params`).
+- Datos de la app: `%APPDATA%\whispr-open\` en Windows y
+  `~/.local/share/whispr-open/` en Linux (`src/paths.rs`). Dentro:
+  `config.json`, `models\` (modelos GGML de whisper), `models-llm\` (GGUF del
+  servidor de corrección) y `whispr-open.log`.
+- El servidor de corrección (`llama-server`) se lanza SIEMPRE como proceso
+  nativo desde la app (`src/llm.rs`), con el binario de `vendor\llama\` o el que
+  haya configurado el usuario. Nada de `wsl.exe`.
 
 ## Definición de "done" (criterios innegociables)
 
-1. `cmd.exe /c "cd /d whispr-open && cargo test"` → 295 tests verdes.
-2. `... cargo.exe check` → sin errores (warnings tolerados).
-3. Commit en git por fase lógica, mensaje en español.
+1. `cargo test` → **341 pasan, 0 fallan, 1 ignorado**.
+2. `cargo check` → sin errores (los 2 avisos conocidos de `src/hotkey.rs` se
+   toleran).
+3. Commit por fase lógica, mensaje en español.
+4. Si toca el instalador: recompilar con `ISCC.exe packaging\whispr-open.iss` y
+   comprobar el tamaño (el base debe rondar los 15 MB).
 
 ## Arquitectura actual (mapa de ficheros)
 
-- `src/main.rs` — entrypoint Iced 0.13 (patrón funcional: application + run_with).
-- `src/app.rs` — UI completa (WhisprApp): status, transcript, controles,
-  selector de modelo, diccionario, checkboxes. Hilos std para audio/transcripción,
-  eventos por canales mpsc + subscription de poll cada 100 ms.
-- `src/domain/correction.rs` — rectificaciones habladas (port fiel de TS).
-- `src/domain/cleanup.rs` — muletillas + repeticiones (port fiel de TS).
-- `src/domain/dictionary.rs` — diccionario personal (port fiel de TS).
-- `src/audio.rs` — captura micrófono cpal (f32 mono, por turnos).
-- `src/transcribe.rs` — Model (tiny/base/small), descarga GGML con progreso
-  (ureq), WhisperEngine (Mutex<WhisperContext>).
-- `src/inject.rs` — inyección de texto en app activa (arboard + enigo, Ctrl+V).
-- `src/hotkey.rs` — atajo global Ctrl+Shift+D (global-hotkey + crossbeam).
-- `src/config.rs` — config persistente JSON en %APPDATA%/whispr-open/config.json.
+- `src/main.rs` — arranque de Iced 0.13 (patrón funcional: `application` +
+  `run_with`) y comprobación de instancia única.
+- `src/app.rs` — la app entera: estado, mensajes y el reparto entre pantallas.
+  Es el fichero más grande; para orientarse, ir por las cabeceras de sección.
+- `src/ui/` — piezas de interfaz: `shell.rs` (marco y pestañas), `settings.rs`
+  (Ajustes), `settings_handlers.rs` (qué hace cada control), `recording.rs`
+  (pantalla de dictado), `bubble.rs` e `icons.rs` (indicadores), `poll.rs`
+  (latido de 100 ms) y `window_tray.rs` (bandeja del sistema).
+- `src/llm.rs` — corrección con IA: arranca y vigila `llama-server`, arma la
+  petición, limpia la respuesta y protege contra recortes.
+- `src/domain/` — reglas del texto, sin interfaz: `correction.rs`
+  (rectificaciones habladas), `corrective.rs` (corrección con IA),
+  `cleanup.rs` (muletillas y repeticiones) y `dictionary.rs` (diccionario
+  personal).
+- `src/audio.rs` — captura del micrófono con cpal (mono, por turnos), con el
+  filtro que descarta los plugins de ALSA en Linux.
+- `src/transcribe.rs` — modelos de whisper, descarga e motor
+  (`WhisperContext` protegido por `Mutex`).
+- `src/inject.rs` — escribir el texto en la app que esté en primer plano.
+- `src/hotkey.rs` — atajo global (Ctrl+Shift+D en Windows; en Wayland lo da el
+  compositor).
+- `src/bubble.rs` — la burbuja flotante que se ve mientras dictas.
+- `src/config.rs` — ajustes persistentes en JSON.
+- `src/paths.rs`, `src/log.rs`, `src/fonts.rs`, `src/theme.rs`,
+  `src/icon_header.rs`, `src/custom_image.rs`, `src/tray.rs`,
+  `src/single_instance.rs` — datos, registro, tipografías, colores, icono,
+  imágenes propias, bandeja y mutex de instancia única.
+
+## Empaquetado y documentación
+
+- `packaging\whispr-open.iss` — instalador Inno. Sin argumentos compila el base
+  **solo CPU** (~15 MB); con `/DMyCudaPack` compila el pack CUDA opcional
+  (~522 MB) que se instala encima y exige el runtime CUDA 12.
+- `scripts\` — utilidades: `linux-check.sh` (verificación del port, escribe un
+  informe en `docs/`), `build-linux.sh`, `run-linux.sh`, `make-brand-images.py`
+  (logo y banner), `capture-window.ps1` (captura de la ventana con
+  `PrintWindow`, no con la pantalla), `audit-doc-comments.py`.
+- `docs\` — arquitectura, empaquetado, guía de usuario, roadmap, checklist de
+  release y el port a Linux (`docs/PORT-LINUX/`).
+
+## Idioma
+
+- Comentarios, documentación y mensajes de commit en **español llano**: frases
+  cortas, sin jerga innecesaria (`fallback`, `handler`, `runtime`… se explican
+  o se sustituyen). Los nombres reales de la API de Iced no se traducen.
 
 ## No hacer
 
-- No lanzar el server LLM vía WSL/wsl.exe desde el código (ver Entorno).
-- No volver a introduce web frontend ni Tauri (es el objetivo de la rama native-iced).
-- No tocar la rama `main` desde aquí (versión web legada, se mantiene como referencia).
-- No tocar hardware ni cron del sistema.
-- El flujo real de micrófono lo prueba el usuario; verificación = tests/build.
+- No meter frontend web ni Tauri de vuelta: eso era la versión vieja.
+- No lanzar el servidor de IA por WSL/`wsl.exe`.
+- No tocar hardware ni tareas programadas del sistema.
+- No ejecutar `scripts\install-smoke.py`: desinstala la instalación real del
+  usuario.
+- El micrófono y la interfaz los prueba el usuario; aquí la verificación es
+  tests + build (y el informe de `linux-check.sh` para el port).
