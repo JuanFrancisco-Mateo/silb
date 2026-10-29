@@ -498,9 +498,12 @@ OpenAI-compatible…», etc.
   OpenAI. Por defecto: Local.»
 - **Endpoint LLM** (text input) + «Dirección del servidor de IA (API compatible
   con OpenAI). Local: http://127.0.0.1:8081/v1.»
-- **Modelo IA** (text input, placeholder «ornith-1.0-9b / gpt-4o-mini») + «El
-  modelo que corrige. Debe estar en tu servidor local o ser uno de los que
-  ofrece la nube.»
+- **Modelo IA local** (pick_list: Qwen2.5-0.5B · Llama 3.2 1B · Qwen2.5-1.5B ·
+  «Otro (repo o URL de Hugging Face)…») + botón **Descargar** con progreso. Con
+  «Otro» aparece el campo de texto para pegar `owner/repo` o la dirección del
+  `.gguf`. El fichero se baja a `models-llm/` (0.7).
+- **Modelo IA** (text input, solo Custom/Cloud) + «El modelo que corrige en la
+  nube.»
 - **API key** (solo Custom/Cloud, `secure(true)`) + «Clave del endpoint si la
   exige (Custom: opcional · Cloud: obligatoria). Se guarda en el Administrador
   de credenciales de Windows, nunca en la config.»

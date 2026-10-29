@@ -27,8 +27,9 @@ riesgo. Los documentos hermanos (`CORRECCION-VOZ.md`, `EMPAQUETADO.md`,
 | Build release | `target/release/silb.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
 | Licencia y documentación | `LICENSE`, `README.md`, `docs/` | MIT (10/09/2026); `docs/ARQUITECTURA.md` (recorrido del código para quien no ha tocado Rust), `docs/GUIA-USUARIO.md` y doc-comments públicos en español (11/09/2026). |
 
-Versión actual del paquete: **0.5.0** (`Cargo.toml`). Rama activa: `native-iced`
-(la rama `main` es la versión web antigua y desde aquí no se toca).
+Versión actual del paquete: **0.7.0** (`Cargo.toml`). Rama de la release:
+`release/0.7.0` (la rama `main` es la versión web antigua y desde aquí no se
+toca).
 
 > **Actualización 26/10/2026 (0.5.0)**: el roadmap de abajo se escribió en
 > septiembre y sus referencias de versión (0.2.0) están viejas. Lo que ha
@@ -65,7 +66,7 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 | 4 | **Hecho** | Cache del motor Whisper | `src/transcribe.rs` | Se conserva un contexto por modelo activo y se reemplaza solo al cambiar de modelo, evitando recargarlo en cada turno. |
 | 5 | P3 (backlog) | Transcripción casi-tiempo-real | — | Ventanas solapadas + re-decodificación parcial. Riesgo alto, toca el núcleo de grabación; requiere prueba manual de micrófono. |
 | 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |
-| 7 | **P2 (0.7)** | Elegir el modelo de IA desde Ajustes, descargándolo de Hugging Face | [`UI-FUTURA.md`](UI-FUTURA.md) | Visión del usuario (29/10/2026): el campo «Modelo IA local» pasa a ser un desplegable/menú de modelos de Hugging Face y la app se los baja. **No implementar todavía.** |
+| 7 | **Hecho** | Elegir el modelo de IA desde Ajustes, descargándolo de Hugging Face | [`UI-FUTURA.md`](UI-FUTURA.md) §8 | Implementado en la 0.7: desplegable con lista curada + «Otro» (repo o URL), botón «Descargar» con progreso y descarga a `models-llm/` (commits `1c0e7c9`, `7981f3c`, `f7ec5f0`). |
 
 ### Orden recomendado de trabajo
 

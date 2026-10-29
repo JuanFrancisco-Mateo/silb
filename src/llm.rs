@@ -127,6 +127,10 @@ pub const SMALL_LLM_MODELS: &[LocalLlmModel] = &[
     },
 ];
 
+/// Opción del desplegable para escribir un repo o una dirección de Hugging
+/// Face a mano (0.7). No es un modelo: es la puerta a cualquier GGUF público.
+pub const LLM_OTHER_CHOICE: &str = "Otro (repo o URL de Hugging Face)…";
+
 /// Carpeta de los modelos de corrección descargados cuando se piden
 /// (`%APPDATA%/whispr-open/models-llm/`).
 pub fn llm_models_dir() -> std::path::PathBuf {
@@ -1862,6 +1866,286 @@ fn resolve_model_path_with<'a>(
     roots.iter().find_map(|root| walk(root, name, 6))
 }
 
+// ---------------------------------------------------------------------------
+// Elegir y bajar el modelo de Hugging Face (0.7)
+// ---------------------------------------------------------------------------
+
+/// Lo que hay que bajar de Hugging Face: nombre del fichero y su dirección.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HfTarget {
+    pub file_name: String,
+    pub url: String,
+}
+
+/// Una referencia ya troceada, sin haber tocado la red todavía.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HfRef {
+    /// Dirección directa a un `.gguf`: no hay que preguntar nada más.
+    Direct(HfTarget),
+    /// `owner/repo`: hay que mirar qué ficheros tiene el repo.
+    Repo(String),
+}
+
+/// Lo que se dice cuando lo pegado no lleva a ningún GGUF.
+const HF_ONLY_GGUF: &str = "Solo vale un GGUF público de Hugging Face: pega \
+                            «owner/repo» o la dirección del fichero .gguf.";
+
+/// Último trozo de la ruta de una dirección, sin query ni ancla.
+fn url_file_name(url: &str) -> Option<String> {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let name = path.trim_end_matches('/').rsplit('/').next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
+/// Trocea lo que se pega en Ajustes. Esto NO hace red: decide si es una
+/// dirección `.gguf` (se usa tal cual), un `owner/repo` (hay que mirar sus
+/// ficheros) o algo que la app no sabe usar.
+pub fn split_hf_ref(raw: &str) -> Result<HfRef, String> {
+    let t = raw.trim();
+    if t.is_empty() {
+        return Err(HF_ONLY_GGUF.to_string());
+    }
+    let sin_query = t.split(['?', '#']).next().unwrap_or(t);
+    let lower = t.to_ascii_lowercase();
+
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        if sin_query.to_ascii_lowercase().ends_with(".gguf") {
+            let file_name = url_file_name(t).ok_or_else(|| HF_ONLY_GGUF.to_string())?;
+            return Ok(HfRef::Direct(HfTarget {
+                file_name,
+                url: sin_query.to_string(),
+            }));
+        }
+        // https://huggingface.co/owner/repo (con o sin /tree/main...)
+        let rest = sin_query.splitn(2, "://").nth(1).unwrap_or("");
+        let (host, path) = match rest.find('/') {
+            Some(i) => (&rest[..i], &rest[i + 1..]),
+            None => (rest, ""),
+        };
+        if !host.eq_ignore_ascii_case("huggingface.co") {
+            return Err(HF_ONLY_GGUF.to_string());
+        }
+        let mut trozos = path.split('/').filter(|s| !s.is_empty());
+        let owner = trozos.next().unwrap_or("");
+        let repo = trozos.next().unwrap_or("");
+        if owner.is_empty() || repo.is_empty() {
+            return Err(HF_ONLY_GGUF.to_string());
+        }
+        return Ok(HfRef::Repo(format!("{owner}/{repo}")));
+    }
+
+    // `owner/repo` escrito a mano.
+    let mut trozos = t.split('/');
+    let owner = trozos.next().unwrap_or("").trim();
+    let repo = trozos.next().unwrap_or("").trim();
+    if !owner.is_empty()
+        && !repo.is_empty()
+        && trozos.next().is_none()
+        && !t.contains(char::is_whitespace)
+    {
+        return Ok(HfRef::Repo(format!("{owner}/{repo}")));
+    }
+    Err(HF_ONLY_GGUF.to_string())
+}
+
+/// Elige el GGUF dentro de la lista de ficheros de un repo. Si hay varios gana
+/// el que lleve `q4_k_m` (el equilibrio tamaño/calidad de la app); si no hay
+/// ninguno así, el primero. Sin GGUF no hay nada que bajar.
+pub fn pick_gguf(siblings: &[String]) -> Option<String> {
+    let ggufs: Vec<&String> = siblings
+        .iter()
+        .filter(|s| s.to_ascii_lowercase().ends_with(".gguf"))
+        .collect();
+    if ggufs.is_empty() {
+        return None;
+    }
+    ggufs
+        .iter()
+        .find(|s| s.to_ascii_lowercase().contains("q4_k_m"))
+        .or_else(|| ggufs.first())
+        .map(|s| (**s).clone())
+}
+
+/// Agente de red de las descargas: límite al conectar y al leer cada trozo, sin
+/// límite global (una descarga lenta pero viva tiene que poder terminar).
+fn download_agent() -> ureq::Agent {
+    ureq::AgentBuilder::new()
+        .timeout_connect(Duration::from_secs(15))
+        .timeout_read(Duration::from_secs(60))
+        .build()
+}
+
+/// Resuelve lo que se pega en Ajustes hasta un fichero concreto de Hugging
+/// Face. Un `owner/repo` se consulta en la API pública (sin clave) y se queda
+/// con su GGUF; una dirección `.gguf` no necesita red.
+pub fn parse_hf_ref(raw: &str) -> Result<HfTarget, String> {
+    match split_hf_ref(raw)? {
+        HfRef::Direct(target) => Ok(target),
+        HfRef::Repo(repo) => {
+            let api = format!("https://huggingface.co/api/models/{repo}");
+            let body = download_agent()
+                .get(&api)
+                .call()
+                .map_err(|e| match e {
+                    ureq::Error::Status(404, _) => format!(
+                        "no existe el repo «{repo}» en Hugging Face, o no es público. \
+                         Revisa el nombre o pega la dirección del .gguf."
+                    ),
+                    _ => format!("no se pudo consultar Hugging Face: {e}"),
+                })?
+                .into_string()
+                .map_err(|e| format!("respuesta ilegible de Hugging Face: {e}"))?;
+            let json: serde_json::Value = serde_json::from_str(&body)
+                .map_err(|e| format!("respuesta de Hugging Face que no se entiende: {e}"))?;
+            let siblings: Vec<String> = json["siblings"]
+                .as_array()
+                .map(|lista| {
+                    lista
+                        .iter()
+                        .filter_map(|v| v["rfilename"].as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let file_name = pick_gguf(&siblings).ok_or_else(|| {
+                format!(
+                    "el repo «{repo}» no tiene ningún .gguf. Solo se descargan GGUF: \
+                     busca un repo con GGUF o pega la dirección del .gguf."
+                )
+            })?;
+            Ok(HfTarget {
+                url: format!("https://huggingface.co/{repo}/resolve/main/{file_name}"),
+                file_name,
+            })
+        }
+    }
+}
+
+/// ¿`path` empieza por la marca de un GGUF? Sirve para no dar por bueno un
+/// fichero que en realidad es una página de error o una descarga cortada.
+fn is_gguf_file(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(mut file) = std::fs::File::open(path) else {
+        return false;
+    };
+    let mut magic = [0u8; 4];
+    file.read_exact(&mut magic).is_ok() && &magic == b"GGUF"
+}
+
+/// ¿Está ya el GGUF en alguna carpeta de la app? Mira fichero a fichero, sin
+/// recorrer árboles: lo pregunta Ajustes en cada repintado. (Un modelo que solo
+/// esté en LM Studio no se ve aquí: la app ofrecería bajarlo a su carpeta, que
+/// es lo que hace igualmente `resolve_model_path` al arrancar.)
+pub fn llm_model_on_disk(file_name: &str) -> bool {
+    let Some(name) = std::path::Path::new(file_name.trim())
+        .file_name()
+        .and_then(|n| n.to_str())
+    else {
+        return false;
+    };
+    let mut carpetas = vec![llm_models_dir(), crate::transcribe::models_dir()];
+    if let Some(exe) = exe_dir() {
+        carpetas.push(exe.join("vendor").join("models"));
+    }
+    carpetas.iter().any(|dir| dir.join(name).is_file())
+}
+
+static LLM_DOWNLOAD_LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+
+/// Se asegura de que el GGUF está en `models-llm/` y, si falta, lo baja. Copia
+/// el patrón de `transcribe::ensure_model`: escribe a `<fichero>.part` y solo
+/// renombra al final, avisa del progreso como mucho una vez por 1 % (o por MB si
+/// el servidor no dice el tamaño) y avisa también al cerrar.
+///
+/// El `.part` NO se borra al fallar a propósito (pedido de la 0.7): así el
+/// reintento puede empezar sin pelearse con un temporal de otro proceso. Pero
+/// cada intento vuelve a empezar de cero (`File::create` trunca): no hay
+/// reanudación por trozos.
+pub fn ensure_llm_model(
+    url: &str,
+    file_name: &str,
+    on_progress: impl Fn(u64, u64),
+) -> Result<std::path::PathBuf, String> {
+    use std::io::{Read, Write};
+
+    let lock = LLM_DOWNLOAD_LOCK.get_or_init(|| std::sync::Mutex::new(()));
+    let _guard = lock
+        .lock()
+        .map_err(|e| format!("bloqueo de descarga envenenado: {e}"))?;
+
+    let name = std::path::Path::new(file_name.trim())
+        .file_name()
+        .and_then(|n| n.to_str())
+        .ok_or_else(|| format!("«{file_name}» no es un nombre de fichero válido"))?
+        .to_string();
+    let dir = llm_models_dir();
+    std::fs::create_dir_all(&dir)
+        .map_err(|e| format!("no se pudo crear models-llm: {e}"))?;
+    let path = dir.join(&name);
+
+    // Ya está y es un GGUF: no se baja otra vez.
+    if is_gguf_file(&path) {
+        return Ok(path);
+    }
+
+    let resp = download_agent()
+        .get(url)
+        .call()
+        .map_err(|e| format!("no se pudo descargar el modelo: {e}"))?;
+    let total = resp
+        .header("Content-Length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+    let tmp = dir.join(format!("{name}.part"));
+
+    let outcome = (|| -> Result<(), String> {
+        let mut file =
+            std::fs::File::create(&tmp).map_err(|e| format!("no se pudo crear {tmp:?}: {e}"))?;
+        let mut downloaded = 0u64;
+        let mut buf = [0u8; 64 * 1024];
+        let mut reader = resp.into_reader();
+        // Una descarga de 500 MB a trozos de 64 KB son ~8.000 avisos: la
+        // interfaz se quedaría clavada. Uno por 1 % llega de sobra.
+        let step = if total > 0 { (total / 100).max(1) } else { 1 << 20 };
+        let mut last_emit = 0u64;
+        loop {
+            let n = reader
+                .read(&mut buf)
+                .map_err(|e| format!("error de descarga: {e}"))?;
+            if n == 0 {
+                break;
+            }
+            file.write_all(&buf[..n])
+                .map_err(|e| format!("error escribiendo el modelo: {e}"))?;
+            downloaded += n as u64;
+            if downloaded - last_emit >= step {
+                last_emit = downloaded;
+                on_progress(downloaded, total);
+            }
+        }
+        on_progress(downloaded, total);
+        file.sync_all()
+            .map_err(|e| format!("error sincronizando el modelo: {e}"))?;
+        // Cerrar antes de renombrar: en Windows mover un fichero abierto puede
+        // fallar según cómo se abrió.
+        drop(file);
+        std::fs::rename(&tmp, &path)
+            .map_err(|e| format!("no se pudo finalizar la descarga: {e}"))?;
+        Ok(())
+    })();
+    outcome?;
+
+    // Un 200 con una página de error dentro se vería aquí y se descarta: mejor
+    // no dejar un «modelo» que el servidor no va a poder cargar.
+    if !is_gguf_file(&path) {
+        let _ = std::fs::remove_file(&path);
+        return Err(format!(
+            "la descarga de {name} no devolvió un GGUF válido. Prueba otra vez o con otro repo."
+        ));
+    }
+    crate::log!("llm", "modelo de corrección descargado: {}", path.display());
+    Ok(path)
+}
+
 /// Espera (preguntando cada 400 ms) a que `/v1/models` conteste. Devuelve `true`
 /// si el servidor quedó listo dentro del plazo y `false` si se agotó. Tiempos
 /// reales: un 0.8B Q8 carga en ~2-5 s en GPU; 60 s de margen cubren modelos
@@ -1892,6 +2176,94 @@ pub fn wait_for_server(base_url: &str, timeout: Duration) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Elección del GGUF dentro de un repo de Hugging Face (0.7): lo que no es
+    /// GGUF se descarta y, entre varios, gana el Q4_K_M (el de la app).
+    #[test]
+    fn pick_gguf_elige_el_q4_k_m_y_descarta_lo_que_no_es_gguf() {
+        assert_eq!(pick_gguf(&[]), None);
+        assert_eq!(
+            pick_gguf(&["README.md".to_string(), "config.json".to_string()]),
+            None
+        );
+        let varios = vec![
+            "modelo-f16.gguf".to_string(),
+            "modelo-q4_k_m.gguf".to_string(),
+            "modelo-q8_0.gguf".to_string(),
+        ];
+        assert_eq!(pick_gguf(&varios), Some("modelo-q4_k_m.gguf".to_string()));
+        // Compara sin mirar mayúsculas: los repos escriben Q4_K_M y q4_k_m.
+        let mayusculas = vec!["Modelo-Q4_K_M.GGUF".to_string(), "otro.gguf".to_string()];
+        assert_eq!(pick_gguf(&mayusculas), Some("Modelo-Q4_K_M.GGUF".to_string()));
+    }
+
+    /// Sin Q4_K_M se queda el primero de la lista (nunca «no hay ninguno» si
+    /// hay GGUF).
+    #[test]
+    fn pick_gguf_sin_q4_k_m_se_queda_el_primero() {
+        let lista = vec!["a-f16.gguf".to_string(), "b-q8_0.gguf".to_string()];
+        assert_eq!(pick_gguf(&lista), Some("a-f16.gguf".to_string()));
+    }
+
+    /// Troceo de lo que se pega en Ajustes, sin tocar la red: dirección .gguf,
+    /// `owner/repo`, la página del repo y lo que no vale.
+    #[test]
+    fn split_hf_ref_entiende_direccion_repo_y_lo_que_no_vale() {
+        let directa = split_hf_ref(
+            "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/\
+             qwen2.5-0.5b-instruct-q4_k_m.gguf?download=true",
+        )
+        .expect("una dirección .gguf tiene que valer");
+        assert_eq!(
+            directa,
+            HfRef::Direct(HfTarget {
+                file_name: "qwen2.5-0.5b-instruct-q4_k_m.gguf".to_string(),
+                url: "https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/\
+                      qwen2.5-0.5b-instruct-q4_k_m.gguf"
+                    .to_string(),
+            })
+        );
+
+        let repo = "Qwen/Qwen2.5-0.5B-Instruct-GGUF";
+        assert_eq!(split_hf_ref(repo), Ok(HfRef::Repo(repo.to_string())));
+        assert_eq!(
+            split_hf_ref("https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF"),
+            Ok(HfRef::Repo(repo.to_string()))
+        );
+        assert_eq!(
+            split_hf_ref("https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/tree/main"),
+            Ok(HfRef::Repo(repo.to_string()))
+        );
+
+        // Nada de esto lleva a un GGUF: no se descarga y se avisa.
+        for malo in [
+            "",
+            "   ",
+            "qwen2.5-0.5b-instruct-q4_k_m.gguf",
+            "un repo con espacios",
+            "https://example.com/modelo.gguf.zip",
+            "https://example.com/Qwen/Qwen2.5",
+        ] {
+            let err = split_hf_ref(malo).expect_err("esto no puede valer");
+            assert!(err.contains("GGUF"), "mensaje poco claro para {malo:?}: {err}");
+        }
+    }
+
+    /// La marca GGUF: un fichero que no la lleva no cuenta como modelo (así no
+    /// se da por bueno una página de error guardada con extensión .gguf).
+    #[test]
+    fn is_gguf_file_mira_la_marca_no_el_nombre() {
+        let dir = std::env::temp_dir().join(format!("silb-gguf-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let bueno = dir.join("bueno.gguf");
+        std::fs::write(&bueno, b"GGUF\x03\x00\x00\x00").unwrap();
+        let malo = dir.join("malo.gguf");
+        std::fs::write(&malo, b"<html>404</html>").unwrap();
+        assert!(is_gguf_file(&bueno));
+        assert!(!is_gguf_file(&malo));
+        assert!(!is_gguf_file(&dir.join("no-existe.gguf")));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn catalogo_local_son_modelos_pequenos_y_descargables() {

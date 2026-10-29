@@ -15,7 +15,7 @@ use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 
 /// Palabra del diccionario: `from` es como la oye whisper y
-/// `to` como hay que escribirla (por ejemplo «codi» → «usuario»).
+/// `to` como hay que escribirla (por ejemplo «codi» → «COD_P»).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DictionaryEntry {
     pub from: String,

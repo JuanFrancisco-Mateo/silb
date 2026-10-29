@@ -4,6 +4,61 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.7.0] — 2026-10-29
+
+Versión de **comodidad**: el modelo que corrige ya no se busca a mano. Se elige
+en un desplegable dentro de Ajustes y la app lo baja de Hugging Face sola. Sin
+cambios en el formato de datos ni en la config: quien venga de la 0.6.0 conserva
+todo lo suyo.
+
+### Añadido
+
+- **El modelo de IA se elige en un desplegable.** El campo de texto «Modelo IA
+  local» pasa a ser una lista con tres modelos pequeños probados: Qwen2.5-0.5B
+  (~491 MB, el recomendado), Llama 3.2 1B (~808 MB) y Qwen2.5-1.5B (~1,1 GB,
+  el más fiel). Al lado está **«Otro (repo o URL de Hugging Face)…»**, que abre
+  un campo para pegar `owner/repo` o la dirección de un `.gguf`.
+- **Botón «Descargar».** Si el modelo elegido no está en el disco, el bloque
+  enseña el botón con lo que ocupa y lo baja a
+  `%APPDATA%\whispr-open\models-llm\` con progreso («Descargando… 123 MB de
+  491 MB (25 %)»); si el servidor no dice el tamaño, lo dice tal cual en vez de
+  inventarse un total. Al terminar avisa («Listo: … ya está en models-llm.») y
+  vuelve a arrancar el servidor de IA por el camino de siempre. Si el fichero
+  ya estaba, no ofrece descargarlo.
+- `src/llm.rs`: entender una referencia de Hugging Face (`parse_hf_ref`), mirar
+  los ficheros del repo y quedarse con el **GGUF** (`pick_gguf`: prefiere
+  `q4_k_m` y descarta lo que no es GGUF) y bajar el fichero comprobando su marca
+  GGUF (`ensure_llm_model`). Cuatro pruebas nuevas cubren esas piezas.
+
+### Cambiado
+
+- **Escribir a mano es la excepción.** El campo libre solo aparece detrás de
+  «Otro»; el camino normal es elegir de la lista.
+- **La descarga no toca el dictado.** El progreso y los fallos viven en el
+  bloque de Ajustes: una red caída deja un aviso ahí y el dictado sigue igual.
+- **Limpieza del repo**: fuera el cuaderno de trabajo y los informes sueltos que
+  no eran documentación del producto, y enlaces arreglados (`AGENTS.md` al día).
+
+### Corregido
+
+- **GGUF dentro de una subcarpeta del repo.** Se apuntaba la ruta del fichero
+  dentro del repo, y la app busca por nombre de fichero: el modelo recién
+  bajado no se habría encontrado. Ahora se guarda el nombre real del fichero que
+  queda en `models-llm/`.
+
+### Verificado
+
+- `cargo test`: 345 correctos, 0 fallos, 1 ignorado (eran 341 antes de esta
+  versión). `cargo check` sin errores, con los dos avisos conocidos de
+  `src/hotkey.rs`.
+- Llamada real a Hugging Face: `Qwen/Qwen2.5-0.5B-Instruct-GGUF` resuelve a
+  `…/resolve/main/qwen2.5-0.5b-instruct-q4_k_m.gguf`, y con ese mismo código se
+  bajó un GGUF de prueba (progreso, redirección del servidor y marca GGUF
+  comprobada).
+- Límites conocidos, dichos claros en la interfaz: **no se reanudan descargas a
+  medias** (cada intento empieza de cero) y **solo se aceptan GGUF públicos**;
+  si el repo no trae ninguno, se avisa y no se baja nada.
+
 ## [0.6.0] — 2026-10-29
 
 Versión de **peso y port**: el instalador pasa de 549 MB a 15 MB y el port a

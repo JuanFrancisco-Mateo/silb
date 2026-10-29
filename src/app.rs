@@ -100,6 +100,23 @@ pub enum LlmStatus {
     Disabled(String),
 }
 
+/// Cómo va la descarga del modelo de corrección (bloque «Modelo IA local» de
+/// Ajustes). Solo se pinta ahí: no cambia el estado general de la app ni toca el
+/// dictado, así que un fallo de red se queda en un aviso del bloque.
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlmDownload {
+    /// Bajando: bytes que hay y tamaño total (0 = el servidor no lo dice).
+    Downloading {
+        file_name: String,
+        downloaded: u64,
+        total: u64,
+    },
+    /// Terminó bien y el fichero quedó en `models-llm/`.
+    Done(String),
+    /// Terminó mal: el motivo, escrito para leerse.
+    Failed(String),
+}
+
 /// Avisos del hilo de arranque (carga de whisper y servidor LLM). Llegan por
 /// `startup_rx` y se atienden en el `Poll` (igual que transcribe_rx/llm_rx:
 /// nunca se bloquea el bucle de la interfaz).
@@ -119,6 +136,17 @@ pub enum StartupEvent {
     /// Servidor LLM no disponible (o corrección apagada): arranque terminado
     /// con la corrección IA apagada. Sin motivo = la apagó el usuario.
     LlmDisabled(String),
+    /// Cómo va la descarga del GGUF del corrector (0.7). El nombre del fichero
+    /// viaja desde el primer aviso para poder enseñarlo.
+    LlmModelProgress {
+        file_name: String,
+        downloaded: u64,
+        total: u64,
+    },
+    /// El GGUF del corrector ya está en `models-llm/`.
+    LlmModelDone { file_name: String },
+    /// No se pudo resolver la referencia o bajar el GGUF.
+    LlmModelFailed(String),
 }
 
 /// Lectura visual del estado del micrófono (feedback doble: color + texto).
@@ -209,6 +237,13 @@ pub enum Message {
     LlmEndpointChanged(String),
 /// Modelo del corrector. Si el campo queda vacío se usa `ornith-1.0-9b`.
     LlmModelChanged(String),
+/// Modelo elegido en el desplegable de la corrección local (0.7). Lo que
+/// llega es la etiqueta ya escrita de la lista curada o «Otro…», que abre el
+/// campo para pegar un repo o una dirección de Hugging Face.
+    LlmModelPicked(String),
+/// «Descargar» del bloque del modelo local (0.7): baja el GGUF desde
+/// Hugging Face al `models-llm/` de la app.
+    LlmDownloadRequested,
 /// Ruta al servidor LLM local, escrita a mano (vacío = que la busque
 /// sola). Está en Avanzado → Corrección IA (sprint final).
     LlmServerPathChanged(String),
@@ -594,6 +629,13 @@ pub struct WhisprApp {
     /// Contador para mover el spinner de carga (lo avanza el `Poll` 10 veces
     /// por segundo).
     pub(crate) startup_tick: u32,
+    // ── Modelo de corrección desde Hugging Face (0.7) ─────────────────────
+    /// Se eligió «Otro» en el desplegable del modelo local: se enseña el campo
+    /// de texto para pegar un repo o una dirección de Hugging Face.
+    pub(crate) llm_pick_other: bool,
+    /// Cómo va la descarga del GGUF (None = sin noticias desde que se abrió la
+    /// pantalla o desde que se cambió de modelo).
+    pub(crate) llm_dl: Option<LlmDownload>,
     // ── Robustez de grabación ────────────────────────────────────────────
     /// Cuándo empezó el turno en curso (`None` = no se está grabando). El `Poll`
     /// lo vigila: al llegar a `audio::MAX_RECORDING_SECS` el turno se corta solo
@@ -742,6 +784,8 @@ impl WhisprApp {
             llm_phase_cancel: None,
             startup_label: "Preparando la app…".to_string(),
             startup_tick: 0,
+            llm_pick_other: false,
+            llm_dl: None,
             recording_started: None,
             device_lost: false,
             pending_turn_note: None,
@@ -1512,10 +1556,100 @@ impl WhisprApp {
         Task::none()
     }
 
+    /// El modelo curado que está elegido ahora mismo: el de `config.llm_model`
+    /// o, si el campo está vacío, el recomendado (el primero de la lista).
+    /// `None` = «Otro»: lo que hay escrito es un repo o una dirección de
+    /// Hugging Face, no un nombre de fichero conocido.
+    pub(crate) fn llm_curated(&self) -> Option<&'static crate::llm::LocalLlmModel> {
+        if self.llm_pick_other {
+            return None;
+        }
+        match self.config.llm_model.as_deref().map(str::trim) {
+            None | Some("") => crate::llm::SMALL_LLM_MODELS.first(),
+            Some(actual) => crate::llm::SMALL_LLM_MODELS
+                .iter()
+                .find(|m| m.file_name == actual),
+        }
+    }
+
+    /// Qué se le da a la descarga al pulsar «Descargar»: la dirección del
+    /// modelo curado elegido o el repo/dirección escrita a mano.
+    pub(crate) fn llm_download_reference(&self) -> String {
+        match self.llm_curated() {
+            Some(m) => m.url.to_string(),
+            None => self.config.llm_model.clone().unwrap_or_default(),
+        }
+    }
+
+    /// Baja el GGUF del modelo local en un hilo aparte (0.7). Los avisos van por
+    /// el canal de arranque y los recoge el `Poll`: ni la interfaz ni el dictado
+    /// se quedan esperando a la red, y un fallo solo deja un aviso en el bloque.
+    pub(crate) fn start_llm_download(&mut self) {
+        if matches!(self.llm_dl, Some(LlmDownload::Downloading { .. })) {
+            return; // ya hay una en marcha: nada de dos a la vez
+        }
+        if self.startup_rx.is_some() {
+            self.llm_dl = Some(LlmDownload::Failed(
+                "la app está comprobando la corrección IA; espera un momento y \
+                 vuelve a pulsar «Descargar»"
+                    .to_string(),
+            ));
+            return;
+        }
+        let reference = self.llm_download_reference();
+        if reference.trim().is_empty() {
+            self.llm_dl = Some(LlmDownload::Failed(
+                "escribe un repo de Hugging Face o la dirección del .gguf".to_string(),
+            ));
+            return;
+        }
+        let (tx, rx) = mpsc::channel();
+        self.startup_rx = Some(rx);
+        self.llm_dl = Some(LlmDownload::Downloading {
+            file_name: String::new(),
+            downloaded: 0,
+            total: 0,
+        });
+        std::thread::spawn(move || {
+            let target = match crate::llm::parse_hf_ref(&reference) {
+                Ok(target) => target,
+                Err(e) => {
+                    let _ = tx.send(StartupEvent::LlmModelFailed(e));
+                    return;
+                }
+            };
+            let nombre = target.file_name.clone();
+            let resultado = crate::llm::ensure_llm_model(
+                &target.url,
+                &target.file_name,
+                |downloaded, total| {
+                    let _ = tx.send(StartupEvent::LlmModelProgress {
+                        file_name: nombre.clone(),
+                        downloaded,
+                        total,
+                    });
+                },
+            );
+            let _ = match resultado {
+                // El nombre que se guarda es el FICHERO (no la ruta dentro del
+                // repo): `resolve_model_path` busca por nombre y el GGUF se deja
+                // plano en models-llm/.
+                Ok(path) => tx.send(StartupEvent::LlmModelDone {
+                    file_name: path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or(target.file_name.as_str())
+                        .to_string(),
+                }),
+                Err(e) => tx.send(StartupEvent::LlmModelFailed(e)),
+            };
+        });
+    }
+
     /// Apaga la corrección IA en caliente y deja todo coherente (ciclo de vida
     /// 10/09/2026, requisito «descargar el modelo al desactivar»):
     ///
-    /// 1. Corrección pendiente → se queda el texto bruto (spec: no se pierde
+    /// 1. Corrección pendiente → se queda el texto bruto
     ///    texto; el turno se escribe tal cual, sin esperar al modelo).
     /// 2. Propuesta esperando confirmación → se tira (el texto bruto del target
     ///    ya está en el transcript).
@@ -1823,6 +1957,8 @@ impl WhisprApp {
                 | Message::ToggleAiCorrection(..)
                 | Message::LlmEndpointChanged(..)
                 | Message::LlmModelChanged(..)
+                | Message::LlmModelPicked(..)
+                | Message::LlmDownloadRequested
                 | Message::LlmApiKeyChanged(..)
                 | Message::LlmTimeoutChanged(..)
                 | Message::LlmThresholdChanged(..)
@@ -2008,6 +2144,53 @@ impl WhisprApp {
                 // «Inactiva — <motivo>» todo el rato. Antes salían los dos textos a
                 // la vez (aviso verde y fila) con la misma frase, y eso es justo el
                 // ruido que sobra en la interfaz.
+                Task::none()
+            }
+            StartupEvent::LlmModelProgress {
+                file_name,
+                downloaded,
+                total,
+            } => {
+                // Solo se apunta cuánto va: esto se pinta en el bloque del
+                // modelo local, no en el estado del dictado.
+                self.llm_dl = Some(LlmDownload::Downloading {
+                    file_name,
+                    downloaded,
+                    total,
+                });
+                Task::none()
+            }
+            StartupEvent::LlmModelDone { file_name } => {
+                self.startup_rx = None;
+                crate::log!("llm", "modelo de corrección descargado: {file_name}");
+                // El modelo que se acaba de bajar pasa a ser el de la app: así lo
+                // encuentra `resolve_model_path` en `models-llm/`.
+                self.config.llm_model = Some(file_name.clone());
+                self.llm_pick_other = false;
+                self.save_config();
+                self.llm_dl = Some(LlmDownload::Done(format!(
+                    "Listo: {file_name} ya está en models-llm/."
+                )));
+                // Con la corrección encendida se vuelve a pasar por el camino de
+                // siempre (`run_llm_phase`): comprueba el servidor y lo levanta —o
+                // lo recarga— con el modelo nuevo. Si el servidor lo lanzó esta
+                // app se cierra antes, para que no siga con el modelo viejo; uno
+                // que ya corría de antes no se toca.
+                if self.config.ai_correction_enabled() {
+                    if matches!(self.llm_status, LlmStatus::Ready { launched: true }) {
+                        crate::llm::kill_launched_server();
+                    }
+                    self.llm_status = LlmStatus::Unknown;
+                    return self.spawn_llm_startup();
+                }
+                Task::none()
+            }
+            StartupEvent::LlmModelFailed(e) => {
+                self.startup_rx = None;
+                crate::log!("llm", "no se pudo bajar el modelo de corrección: {e}");
+                self.llm_dl = Some(LlmDownload::Failed(format!(
+                    "No se pudo descargar el modelo: {e}"
+                )));
                 Task::none()
             }
         }
