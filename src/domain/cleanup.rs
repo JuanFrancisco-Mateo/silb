@@ -1,33 +1,33 @@
-//! Limpieza de muletillas — port directo de src/domain/cleanup.ts (Silb web).
+//! Limpieza de muletillas: lo mismo que hace cleanup.ts en Silb web.
 //!
-//! Detecta y elimina muletillas del habla transcrita ("eh", "um", "o sea", ...),
-//! colapsa repeticiones y normaliza puntuación, manteniendo el resto del texto.
+//! Busca y quita muletillas del habla transcrita («eh», «um», «o sea»…),
+//! junta las repeticiones y arregla la puntuación, dejando el resto igual.
 //!
-//! Las muletillas son configurables desde Ajustes (`FillerWords`): tres listas
-//! por categoría de regla (inequívocas / solo antes de pausa / solo al inicio
-//! del turno). La estructura serde permite persistirlas en config.json y en
-//! ausencia de configuración los defaults replican el comportamiento original.
+//! Las muletillas se cambian desde Ajustes (`FillerWords`): tres listas
+//! según la regla (seguras / solo antes de una pausa / solo al empezar el
+//! turno). Se guardan en config.json con serde y, si falta la configuración,
+//! se usan las listas de siempre.
 
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 
-/// Resultado de limpiar un turno: el texto final y las muletillas retiradas
-/// (la UI las muestra: qué se quitó y de dónde).
+/// Lo que sale de limpiar un turno: el texto final y las muletillas quitadas
+/// (la interfaz las enseña: qué se quitó y de dónde).
 #[derive(Debug, Clone, PartialEq)]
 pub struct CleanupResult {
     pub text: String,
     pub removed: Vec<String>,
 }
 
-/// Muletillas configurables agrupadas por categoría de regla.
+/// Muletillas que se pueden cambiar, agrupadas por tipo de regla.
 ///
-/// Los defaults (`Default`) replican las listas fijas originales:
-/// - `unambiguous`: "eh", "um", "uh", "o sea", "you know" — cualquier posición.
-/// - `ambiguous`: "este", "esto", "tipo", "like", "pues" — solo antes de pausa.
-/// - `start_of_turn`: "bueno", "pues" — solo abriendo el turno.
+/// Las listas por defecto (`Default`) son las de siempre:
+/// - `unambiguous`: «eh», «um», «uh», «o sea», «you know», en cualquier sitio.
+/// - `ambiguous`: «este», «esto», «tipo», «like», «pues», solo antes de una pausa.
+/// - `start_of_turn`: «bueno», «pues», solo al empezar el turno.
 ///
-/// Serde: cada campo cae a su default si falta en el JSON (configs antiguas
-/// sin `fillers` siguen limpiando igual que siempre).
+/// Con serde, cada campo se queda en su valor por defecto si falta en el JSON
+/// (un config viejo sin `fillers` limpia igual que siempre).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FillerWords {
     #[serde(default = "default_unambiguous")]
@@ -67,16 +67,16 @@ impl Default for FillerWords {
 }
 
 impl FillerWords {
-    /// Reemplaza las tres listas por completo (usado por el botón
-    /// «Por defecto» de Ajustes: None en config → defaults).
+    /// Cambia las tres listas enteras (lo usa el botón «Por defecto» de
+    /// Ajustes: sin nada en el config se usan las de siempre).
     pub fn is_default(&self) -> bool {
         *self == Self::default()
     }
 }
 
-/// Escapa los metacaracteres de regexp de una palabra de usuario antes de
-/// incrustarla en un patrón (una muletilla con "." o "+" no debe volverse
-/// un patrón salvaje).
+/// Escapa los caracteres especiales de una palabra del usuario antes de
+/// meterla en una regla (una muletilla con «.» o «+» no debe convertirse
+/// en una regla que se coma cualquier cosa).
 fn escape_regexp(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
@@ -95,14 +95,14 @@ struct CleanupRule {
     pattern: Regex,
 }
 
-/// Cada patrón captura dos grupos:
-///   grupo 1 -> texto que se CONSERVA (la frontera anterior a la muletilla,
-///              o la primera ocurrencia en una repetición)
-///   grupo 2 -> texto que se ELIMINA y se reporta en `removed`
+/// Cada regla atrapa dos grupos:
+///   grupo 1 -> texto que SE QUEDA (lo de antes de la muletilla,
+///              o la primera vez en una repetición)
+///   grupo 2 -> texto que SE QUITA y se apunta en `removed`
 fn rules(fillers: &FillerWords) -> Vec<CleanupRule> {
     let entries: Vec<(String, String)> = {
         let mut out: Vec<(String, String)> = vec![];
-        // Muletillas inequívocas (ES/EN): cualquier posición, palabra completa.
+        // Muletillas que no admiten duda (ES/EN): en cualquier sitio y palabra entera.
         for w in &fillers.unambiguous {
             let e = escape_regexp(w);
             out.push((
@@ -110,18 +110,18 @@ fn rules(fillers: &FillerWords) -> Vec<CleanupRule> {
                 format!(r#"(^|[\s(«"'¡¿…])({e})([,;:…]*)(?=$|[\s,;:.!?…])"#),
             ));
         }
-        // Muletillas ambiguas: solo seguidas de pausa (no romper usos legítimos).
+        // Muletillas de doble filo: solo si detrás hay pausa (para no romper usos normales).
         for w in &fillers.ambiguous {
             let e = escape_regexp(w);
             out.push((w.clone(), format!(r#"(^|[\s(«"'¡¿…])({e})([,;:…]+)"#)));
         }
-        // Muletillas solo al inicio del turno.
+        // Muletillas que solo valen al empezar el turno.
         for w in &fillers.start_of_turn {
             let e = escape_regexp(w);
             out.push((w.clone(), format!(r"(^)({e})([,;:.!?…]*)")));
         }
-        // Repeticiones de palabra y de bigrama -> una sola ocurrencia
-        // (reglas fijas, no configurable: no son muletillas).
+        // Repeticiones de palabra y de dos palabras -> una sola
+        // (reglas fijas, no se pueden cambiar: no son muletillas).
         out.push((
             "repetición de palabra".to_string(),
             r"\b(\p{L}+)(\s+\1)\b".to_string(),
@@ -135,11 +135,11 @@ fn rules(fillers: &FillerWords) -> Vec<CleanupRule> {
 
     entries
         .iter()
-        // Cero `expect` en rutas con input del usuario (requisito de
-        // robustez): el patrón incrusta la muletilla del usuario (escapada
-        // por `escape_regexp`, pero por si un caso futuro se escapa), una
-        // regla que no compila se descarta con log en vez de tumbar el
-        // turno con un pánico. Las reglas fijas están cubiertas por tests.
+        // Cero `expect` con texto del usuario: la regla lleva dentro la
+        // muletilla que escribió (ya escapada por `escape_regexp`, pero por
+        // si algún caso raro se escapa), así que una regla que no compila se
+        // descarta y se apunta en el log, en vez de tumbar el turno con un
+        // pánico. Las reglas fijas están cubiertas por tests.
         .filter_map(|(name, pattern)| {
             match Regex::new(&format!("(?iu){pattern}")) {
                 Ok(pattern) => Some(CleanupRule { pattern }),
@@ -169,8 +169,8 @@ fn normalize_punctuation(value: &str) -> String {
     space_after_open.replace_all(&step2, "$1").to_string()
 }
 
-/// Un turno que solo contiene pausas (o puntuación sin texto) no es texto que
-/// limpiar: se devuelve intacto para no destruir respuestas como "Bueno.".
+/// Un turno que solo tiene pausas (o puntuación sin texto) no es texto que
+/// limpiar: se devuelve tal cual para no cargarse respuestas como «Bueno.».
 fn is_filler_only(value: &str) -> bool {
     value.is_empty()
         || Regex::new(r#"^[\s,;:.!?…()«"'»¡¿\-]+$"#)
@@ -179,8 +179,8 @@ fn is_filler_only(value: &str) -> bool {
             .unwrap_or(false)
 }
 
-/// Limpieza con las muletillas indicadas (las de Ajustes; `Config::fillers()`
-/// resuelve los defaults si el usuario no personalizó nada).
+/// Limpieza con las muletillas que se pasan (las de Ajustes; `Config::fillers()`
+/// pone las de siempre si el usuario no ha tocado nada).
 pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResult {
     let original = normalize_spaces(input);
     if original.is_empty() {
@@ -200,8 +200,8 @@ pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResul
             iterations += 1;
             let before = text.clone();
 
-            // Reconstruye el texto aplicando la regla: se conserva el grupo 1
-            // y se descarta el grupo 2 (la muletilla o la repetición).
+            // Rehace el texto con la regla: se queda el grupo 1
+            // y se tira el grupo 2 (la muletilla o la repetición).
             let mut rebuilt = String::with_capacity(text.len());
             let mut last_end = 0;
             for caps in rule.pattern.captures_iter(&text) {
@@ -235,8 +235,8 @@ pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResul
     text = normalize_punctuation(&text);
     text = normalize_spaces(&text);
 
-    // Al eliminar una muletilla que abría el turno, la primera palabra pasa a
-    // encabezar la frase: se capitaliza sin tocar el resto.
+    // Al quitar una muletilla que abría el turno, la primera palabra pasa a
+    // empezar la frase: se pone en mayúscula sin tocar el resto.
     if removed_at_start {
         let capitalize_first = Regex::new(r"^([^\p{L}]*)(\p{Ll})").expect("regex válida");
         if let Ok(Some(c)) = capitalize_first.captures(&text) {
@@ -254,14 +254,14 @@ pub fn clean_transcript_with(input: &str, fillers: &FillerWords) -> CleanupResul
         };
     }
 
-    // Dedupe conservando el orden.
+    // Quita repetidos sin cambiar el orden.
     let mut seen = std::collections::HashSet::new();
     removed.retain(|r| seen.insert(r.clone()));
 
     CleanupResult { text, removed }
 }
 
-/// Limpieza con las muletillas por defecto (API original, sin configuración).
+/// Limpieza con las muletillas de siempre (la función original, sin configuración).
 pub fn clean_transcript(input: &str) -> CleanupResult {
     clean_transcript_with(input, &FillerWords::default())
 }
@@ -283,11 +283,10 @@ mod tests {
         );
     }
 
-    /// Requisito de robustez: texto con acentos, emoji, mayúsculas y saltos
-    /// de línea no rompe la limpieza. Los saltos se normalizan a un espacio
-    /// (el transcript es un flujo hablado, no un documento) y los emoji
-    /// (que no son `\p{L}`) pasan intactos sin disparar las reglas de
-    /// repetición.
+    /// Texto con acentos, emoji, mayúsculas y saltos de línea no rompe la
+    /// limpieza. Los saltos se convierten en un espacio (el texto dictado es
+    /// habla seguida, no un documento) y los emoji (que no son `\p{L}`) pasan
+    /// intactos sin activar las reglas de repetición.
     #[test]
     fn acentos_emoji_y_saltos_de_linea_sobreviven_a_la_limpieza() {
         let (text, removed) =
@@ -300,8 +299,8 @@ mod tests {
             "los saltos se normalizan a espacio (flujo hablado): {text:?}"
         );
         assert!(removed.is_empty(), "nada que quitar en texto limpio");
-        // Repetición con emoji en medio NO se colapsa (emoji no es palabra):
-        // el texto llega raro pero la regla no puede mentir sobre él.
+        // Repetición con un emoji en medio NO se junta (un emoji no es palabra):
+        // el texto llega raro, pero la regla no puede mentir sobre él.
         let (raro, _) = cleaned("hola 😊 hola");
         assert_eq!(raro, "hola 😊 hola");
     }
@@ -406,7 +405,7 @@ mod tests {
 
     #[test]
     fn removes_pues_at_start_and_before_pause() {
-        // "pues" vive en dos categorías por defecto: inicio de turno y pausa.
+        // «pues» está en dos categorías por defecto: al empezar y antes de pausa.
         assert_eq!(
             cleaned("Pues, vamos"),
             ("Vamos".into(), vec!["Pues".into()])
@@ -419,7 +418,7 @@ mod tests {
 
     #[test]
     fn collapses_word_repetition() {
-        // La repetición abre el turno -> la primera palabra se capitaliza.
+        // La repetición abre el turno -> la primera palabra se pone en mayúscula.
         assert_eq!(
             cleaned("el el proyecto"),
             ("El proyecto".into(), vec!["el".into()])
@@ -441,7 +440,7 @@ mod tests {
 
     #[test]
     fn removes_english_fillers() {
-        // "you know" es muletilla inequívoca: se elimina aunque no haya pausa.
+        // «you know» es muletilla segura: se quita aunque no haya pausa.
         assert_eq!(
             cleaned("I mean, like, you know"),
             ("I mean,".into(), vec!["you know".into(), "like".into()])
@@ -464,7 +463,7 @@ mod tests {
         let mut f = FillerWords::default();
         f.ambiguous.retain(|w| w != "este");
         let r = clean_transcript_with("Este, el informe del jueves", &f);
-        // Sin "este" en la lista ambigua, la regla ya no existe: se conserva.
+        // Sin «este» en la lista ambigua, la regla ya no existe: se queda.
         assert_eq!(r.text, "Este, el informe del jueves");
         assert!(r.removed.is_empty());
     }
@@ -482,7 +481,7 @@ mod tests {
     fn palabras_con_metacaracteres_se_escapan() {
         let mut f = FillerWords::default();
         f.unambiguous.push("a+b".to_string());
-        // El "+" no debe volverse repetidor de "a": solo casa "a+b" literal.
+        // El «+» no debe repetir la «a»: solo encaja «a+b» tal cual.
         let r = clean_transcript_with("dijo, a+b, algo", &f);
         assert_eq!(r.text, "dijo, algo");
         let r2 = clean_transcript_with("dijo, aaab, algo", &f);
@@ -493,7 +492,7 @@ mod tests {
     fn config_serde_sin_fillers_cae_a_defaults() {
         let parsed: FillerWords = serde_json::from_str("{}").unwrap();
         assert_eq!(parsed, FillerWords::default());
-        // Una lista parcial solo sustituye su campo (backward compatible).
+        // Una lista a medias solo cambia su campo (los configs viejos siguen valiendo).
         let parcial: FillerWords = serde_json::from_str(r#"{"unambiguous":["vale"]}"#).unwrap();
         assert_eq!(parcial.unambiguous, vec!["vale"]);
         assert_eq!(parcial.ambiguous, FillerWords::default().ambiguous);

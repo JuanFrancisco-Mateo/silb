@@ -1,37 +1,37 @@
-//! Diccionario personal — port directo de src/domain/dictionary.ts (Silb web).
+//! Diccionario personal: lo mismo que hace dictionary.ts en Silb web.
 //!
-//! Reemplazo de términos por palabra completa y case-insensitive,
-//! preservando la capitalización de `to`.
+//! Cambia una palabra por otra, solo cuando aparece entera y sin mirar
+//! mayúsculas, y respeta cómo esté escrita la palabra de destino.
 //!
-//! Además de la lógica de reemplazo, aquí viven la importación y exportación
-//! del diccionario a JSON (backup/restore manual del usuario; la ruta por
-//! defecto es `%APPDATA%/whispr-open/dictionary.json` (Windows) o
-//! `~/.config/whispr-open/dictionary.json` (Linux, XDG_CONFIG_HOME) vía
-//! `config::dictionary_path`).
+//! Aquí también están la importación y la exportación del diccionario a JSON
+//! (copias de seguridad a mano del usuario; por defecto el fichero vive en
+//! `%APPDATA%/whispr-open/dictionary.json` en Windows o
+//! `~/.config/whispr-open/dictionary.json` en Linux (XDG_CONFIG_HOME), según
+//! lo que devuelve `config::dictionary_path`).
 
 use std::path::Path;
 
 use fancy_regex::Regex;
 use serde::{Deserialize, Serialize};
 
-/// Término del diccionario personal: `from` tal y como lo transcribe whisper,
-/// `to` tal y como debe escribirse (p. ej. «codi» → «usuario»).
+/// Palabra del diccionario: `from` es como la oye whisper y
+/// `to` como hay que escribirla (por ejemplo «codi» → «usuario»).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DictionaryEntry {
     pub from: String,
     pub to: String,
 }
 
-/// Resultado de aplicar el diccionario: texto final y los términos que se
-/// sustituyeron realmente (para poder avisar en la UI).
+/// Lo que sale de pasar el diccionario por un texto: el texto final y las
+/// palabras que de verdad se cambiaron (para poder avisar en la interfaz).
 #[derive(Debug, Clone, PartialEq)]
 pub struct DictionaryResult {
     pub text: String,
     pub applied: Vec<String>,
 }
 
-/// Exporta el diccionario a un JSON legible (lista de `{from, to}`).
-/// Crea el directorio padre si falta. Errores con mensaje en español.
+/// Guarda el diccionario en un JSON que se puede leer (lista de `{from, to}`).
+/// Crea la carpeta si falta. Si algo falla, el error viene explicado en español.
 pub fn export_dictionary_to(path: &Path, entries: &[DictionaryEntry]) -> Result<(), String> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -42,11 +42,11 @@ pub fn export_dictionary_to(path: &Path, entries: &[DictionaryEntry]) -> Result<
     std::fs::write(path, raw).map_err(|e| format!("No se pudo escribir {}: {e}", path.display()))
 }
 
-/// Importa un diccionario desde JSON (lista de `{from, to}`).
-/// Reemplaza por completo la lista actual (semántica backup/restore
-/// predecible). Falla con mensaje claro si el fichero no es una lista de
-/// entradas válidas, y descarta ficheros con la lista vacía (una importación
-/// vacía no debe borrar el diccionario por accidente).
+/// Carga un diccionario desde un JSON (lista de `{from, to}`).
+/// Sustituye la lista entera (así una copia de seguridad se restaura tal cual,
+/// sin sorpresas). Falla con un mensaje claro si el fichero no es una lista de
+/// entradas válidas, y no acepta ficheros con la lista vacía (un fichero vacío
+/// no debe borrar el diccionario sin querer).
 pub fn import_dictionary_from(path: &Path) -> Result<Vec<DictionaryEntry>, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|e| format!("No se pudo leer {}: {e}", path.display()))?;
@@ -77,14 +77,14 @@ fn escape_regexp(value: &str) -> String {
     out
 }
 
-/// Patrón de palabra completa, case-insensitive y con límites Unicode:
-/// el término no puede estar rodeado de letras, números ni marcas de
-/// combinación (sí puede estar rodeado de espacios, puntuación o límites del texto).
+/// Regla para encontrar la palabra entera, sin mirar mayúsculas y con los
+/// límites que marca Unicode: no puede estar pegada a letras, números ni
+/// acentos combinados (sí entre espacios, puntuación o extremos del texto).
 ///
-/// `None` si el término del usuario no produce un patrón válido: el término
-/// se descarta con log en vez de tumbar el turno con un pánico (requisito
-/// de robustez: cero `expect` en rutas con input del usuario — el término
-/// va escapado, pero esto cubre cualquier caso futuro que se le escape).
+/// `None` si lo que escribió el usuario no forma una regla válida: esa palabra
+/// se descarta y se apunta en el log, en vez de tumbar el dictado con un
+/// pánico (cero `expect` con texto del usuario; ya va escapado, pero esto
+/// cubre cualquier caso raro que se escape).
 fn to_word_pattern(value: &str) -> Option<Regex> {
     let pattern = format!(
         r"(?iu)(?<![\p{{L}}\p{{M}}\p{{N}}]){}(?![\p{{L}}\p{{M}}\p{{N}}])",
@@ -102,10 +102,10 @@ fn to_word_pattern(value: &str) -> Option<Regex> {
     }
 }
 
-/// Aplica las entradas del diccionario sobre el texto, en orden.
-/// Cada término se reemplaza con coincidencia de palabra completa y
-/// case-insensitive, preservando la capitalización de `to`.
-/// Devuelve el texto resultante y la lista (única) de términos aplicados.
+/// Pasa las palabras del diccionario por el texto, en orden.
+/// Cada una se cambia solo cuando aparece entera y sin mirar mayúsculas,
+/// y se respeta cómo esté escrita la de destino.
+/// Devuelve el texto resultante y la lista de palabras cambiadas (sin repetir).
 pub fn apply_dictionary(text: &str, entries: &[DictionaryEntry]) -> DictionaryResult {
     if text.is_empty() {
         return DictionaryResult {
@@ -210,9 +210,9 @@ mod tests {
         assert_eq!(r.applied, vec!["whatsapp", "lidl"]);
     }
 
-    // ── Import / export ─────────────────────────────────────────────────────
+    // ── Importar y exportar ────────────────────────────────────────────────
 
-    /// Directorio temporal único por test (uuid ya está en dev-deps).
+    /// Carpeta temporal distinta para cada test (uuid ya está en dev-deps).
     fn temp_dir() -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("whispr-dict-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
@@ -229,7 +229,7 @@ mod tests {
         let back = import_dictionary_from(&path).unwrap();
 
         assert_eq!(back, entries);
-        // El fichero es JSON legible (roundtrip serde idéntico).
+        // El fichero es un JSON legible (al leerlo otra vez queda igual).
         let raw = std::fs::read_to_string(&path).unwrap();
         assert!(raw.contains("whatsapp"));
 
