@@ -66,6 +66,7 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 | 4 | **Hecho** | Cache del motor Whisper | `src/transcribe.rs` | Se conserva un contexto por modelo activo y se reemplaza solo al cambiar de modelo, evitando recargarlo en cada turno. |
 | 5 | P3 (backlog) | Transcripción casi-tiempo-real | — | Ventanas solapadas + re-decodificación parcial. Riesgo alto, toca el núcleo de grabación; requiere prueba manual de micrófono. |
 | 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |
+| 7 | **P2 (0.7)** | Elegir el modelo de IA desde Ajustes, descargándolo de Hugging Face | [`UI-FUTURA.md`](UI-FUTURA.md) | Visión del usuario (29/10/2026): el campo «Modelo IA local» pasa a ser un desplegable/menú de modelos de Hugging Face y la app se los baja. **No implementar todavía.** |
 
 ### Orden recomendado de trabajo
 

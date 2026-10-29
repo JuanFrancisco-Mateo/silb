@@ -191,3 +191,31 @@ eran una línea por cada evento de ratón al arrastrar la burbuja. Ahora:
 - Foco de teclado visible en todos los controles.
 - `cargo test` / `cargo check` verdes; medidas centralizadas sin valores nuevos
   sueltos.
+
+---
+
+## VISIÓN DEL USUARIO 2026-10-29 — elegir modelo de Hugging Face desde Ajustes — **NO implementar todavía (0.7)**
+
+Guía de diseño para la 0.7. Son sus palabras, tal cual las dijo, con el
+contexto de la pantalla que estaba mirando (Ajustes → Corrección IA):
+
+1. En **Ajustes → Corrección IA**, el campo de texto «Modelo IA local» (hoy
+   escribes a mano `qwen2.5-0.5b-instruct-q4_k_m.gguf`) tiene que ser un
+   **desplegable**, o abrir un **menú**, para elegir un modelo de Hugging Face.
+2. Al elegir uno, **la app lo descarga** (como ya hace con el modelo de
+   whisper). Nada de ir a Hugging Face a mano, bajar el GGUF y dejarlo en
+   `models-llm`.
+3. Es para la **0.7**, no para la 0.6.
+
+**PREGUNTA ABIERTA** — no decidir por cuenta propia:
+
+- ¿Desplegable con una **lista corta elegida por nosotros** (los ya
+  recomendados en esa misma pantalla: Qwen2.5-0.5B, Llama 3.2 1B, Qwen2.5-1.5B)
+  o un **buscador libre** de Hugging Face donde pegas el repo o la URL?
+- Si alguien elige un modelo que **no es GGUF** (safetensors, por ejemplo),
+  ¿se avisa y se descarta, o se intenta convertir? (whisper ya trabaja solo con
+  GGUF, y el servidor LLM embarcado también.)
+
+Encaja en el sistema de **Corrección IA** que ya existe (`docs/CORRECCION-VOZ.md`):
+hoy el modelo local se resuelve por nombre en `models-llm`; esto añade el paso
+«elegirlo y traerlo» delante, sin tocar el resto del camino.
