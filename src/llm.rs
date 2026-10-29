@@ -419,19 +419,19 @@ pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
     Ok(clean_redact_output(content))
 }
 
-/// Limpia la salida del modo in-turn. El modelo puede adornar la
-/// respuesta con fences markdown, comillas tipográficas, espacios
-/// sobrantes o prefijos tipo «Output:». Esta función devuelve solo el
-/// texto final utilizable. Si tras la limpieza el contenido queda
-/// vacío, devuelve error para que el caller inyecte el texto bruto
-/// (fallback de la spec §3.5.4: nunca bloquear el dictado).
+/// Limpia lo que devuelve el modo in-turn. El modelo puede adornar la
+/// respuesta con bloques de markdown, comillas tipográficas, espacios de más o
+/// prefijos tipo «Output:». Esta función deja solo el texto final que sirve. Si
+/// después de limpiar no queda nada, devuelve un error para que quien llama
+/// escriba el texto bruto (lo que dice la spec §3.5.4: no bloquear el dictado
+/// nunca).
 fn clean_redact_output(content: &str) -> String {
     let mut s = content.trim().to_string();
-    // Quitar fences markdown (```...``` o ```text...```).
+    // Quitar los bloques de markdown (```...``` o ```text...```).
     if let Some(rest) = s.strip_prefix("```") {
         s = rest.to_string();
-        // Si después del ``` viene una etiqueta de lenguaje (json, text,
-        // …) seguida de salto de línea, se descarta también.
+        // Si detrás de ``` viene una etiqueta de lenguaje (json, text, …) y un
+        // salto de línea, también se tira.
         if let Some(nl) = s.find('\n') {
             if !s[..nl].contains(' ') && !s[..nl].is_empty() {
                 s = s[nl + 1..].to_string();
@@ -441,16 +441,15 @@ fn clean_redact_output(content: &str) -> String {
     if let Some(rest) = s.strip_suffix("```") {
         s = rest.to_string();
     }
-    // Tras quitar fences pueden quedar saltos de línea / espacios
-    // alrededor del contenido (típico en respuestas LLM que añaden un
-    // \n antes/después del cuerpo). Limpiamos para que la siguiente
-    // etapa (prefijos / comillas) opere sobre el texto pelado.
+    // Al quitar los bloques pueden quedar saltos de línea o espacios alrededor
+    // del contenido (típico de un modelo, que mete un \n antes y otro después
+    // del cuerpo). Se limpian para que el paso siguiente (prefijos y comillas)
+    // trabaje sobre el texto pelado.
     s = s.trim().to_string();
-    // Quitar prefijos tipo «Output:», «Resultado:», «Texto final:» que
-    // algunos modelos añaden antes de la respuesta. Solo si están
-    // seguidos de espacio y al inicio del contenido (case-insensitive).
-    // Se hace ANTES de las comillas envolventes: un input tipo
-    // «Output: "texto"» primero pierde el prefijo, luego las comillas.
+    // Quitar prefijos tipo «Output:», «Resultado:», «Texto final:» que algunos
+    // modelos ponen delante. Solo si van seguidos de un espacio y al principio
+    // del contenido (sin mirar mayúsculas). Se hace ANTES de las comillas: algo
+    // como «Output: "texto"» pierde primero el prefijo y luego las comillas.
     let lower = s.to_ascii_lowercase();
     for prefix in ["output:", "resultado:", "texto final:", "respuesta:"] {
         if lower.starts_with(prefix) {
@@ -458,17 +457,15 @@ fn clean_redact_output(content: &str) -> String {
             break;
         }
     }
-    // Quitar comillas envolventes («"texto"», «'texto'», «"texto"»,
-    // «'texto'», ««texto»», tipográficas «"texto"»/«'texto'»).
-    // Si el modelo envuelve el resultado en comillas, las eliminamos.
-    // Solo afecta a comillas en el PRIMER y ÚLTIMO carácter — no se
-    // toca el contenido interior.
+    // Quitar comillas envolventes («"texto"», «'texto'», ««texto»», las
+    // tipográficas «“texto”»/«‘texto’»). Si el modelo envuelve el resultado en
+    // comillas, se quitan. Solo se mira el PRIMER y el ÚLTIMO carácter: el
+    // contenido de dentro no se toca.
     //
-    // Parejas conocidas: cada apertura tiene su cierre. Una apertura
-    // que no casa con su cierre del mismo tipo (p. ej. abrir «"» y
-    // cerrar «"» que son códigos distintos) NO se quita: el contenido
-    // está roto y preferimos no mutilarlo. Las comillas rectas '"' /
-    // '\'' sí se auto-emparejan.
+    // Parejas conocidas: cada apertura tiene su cierre. Una apertura que no casa
+    // con su cierre del mismo tipo (por ejemplo abrir «“» y cerrar «"», que son
+    // códigos distintos) NO se quita: el contenido está roto y mejor no
+    // estropearlo más. Las comillas rectas '"' y '\'' sí se emparejan solas.
     fn is_open_quote(c: char) -> bool {
         matches!(c, '"' | '\'' | '«' | '‘' | '“')
     }
@@ -481,10 +478,9 @@ fn clean_redact_output(content: &str) -> String {
             _ => None,
         }
     }
-    // Loop por si el modelo combina múltiples capas (p. ej.
-    // «Output: "texto"» ya se resuelve en una pasada; pero un caso
-    // patológico como «' "texto" '» requeriría dos). Tres pasadas es
-    // más que suficiente para todos los casos reales observados.
+    // Se repite por si el modelo junta varias capas (por ejemplo «Output:
+    // "texto"» se resuelve en una pasada; un caso raro como «' "texto" '»
+    // necesitaría dos). Con tres pasadas sobra para todo lo que se ha visto.
     for _ in 0..3 {
         let Some(f) = s.chars().next() else { break };
         let Some(l) = s.chars().last() else { break };
@@ -506,33 +502,32 @@ fn clean_redact_output(content: &str) -> String {
     s.trim().to_string()
 }
 
-/// Guard anti-truncación OBLIGATORIO del modo in-turn (t_6b9348de).
+/// Protección anti-truncación OBLIGATORIA del modo in-turn (t_6b9348de).
 ///
-/// El corrector LLM local (Qwen3.5-0.8B) a veces devuelve un RESUMEN del
-/// turno en lugar del texto corregido (evidencia del log 01:34:54: input
-/// de 73 palabras → output de 13). El prompt (`SYSTEM_PROMPT_IN_TURN`) ya
-/// prohíbe resumir, pero un modelo pequeño no siempre obedece: esta es la
-/// red de seguridad final.
+/// El corrector local (Qwen3.5-0.8B) a veces devuelve un RESUMEN del turno en
+/// vez del texto corregido (está en el log 01:34:54: entraron 73 palabras y
+/// salieron 13). El prompt (`SYSTEM_PROMPT_IN_TURN`) ya prohíbe resumir, pero un
+/// modelo pequeño no siempre hace caso: esto es la última red.
 ///
-/// Heurística (nivel de palabras):
-/// - Si el output se queda por debajo del 60% de las palabras del input
-///   Y el turno no contiene un marcador INEQUÍVOCO de auto-corrección
-///   (`has_unambiguous_in_turn_marker`: «digo X», «quiero decir», «no X
-///   sino Y», «en vez de»…) que justifique el recorte (una corrección
-///   real elimina el fragmento corregido + la meta-lengua), se descarta
-///   el output y se devuelve EL INPUT ORIGINAL.
-/// - Con marcador inequívoco se admite recorte hasta el 30% de las
-///   palabras («no voy a las tres sino a las cuatro» → «voy a las
-///   cuatro» elimina >40% legítimamente). Por debajo del 30% incluso
-///   con marcador huele a resumen y también se descarta.
+/// La regla (contando palabras):
+/// - Si la respuesta se queda por debajo del 60% de las palabras del texto
+///   dictado Y el turno no lleva una marca INEQUÍVOCA de autocorrección
+///   (`has_unambiguous_in_turn_marker`: «digo X», «quiero decir», «no X sino
+///   Y», «en vez de»…) que explique el recorte (una corrección de verdad quita
+///   el trozo corregido y la frase de corrección), se tira la respuesta y se
+///   devuelve EL TEXTO ORIGINAL.
+/// - Con marca inequívoca se admite bajar hasta el 30% de las palabras («no voy
+///   a las tres sino a las cuatro» → «voy a las cuatro» quita más del 40% y es
+///   legítimo). Por debajo del 30%, aunque haya marca, huele a resumen y también
+///   se tira.
 ///
-/// Nunca devuelve texto más corto que lo justificado y nunca bloquea el
-/// dictado: el peor caso es inyectar el input tal cual (con su
-/// meta-lengua), que es exactamente lo que el usuario dijo.
+/// Nunca devuelve menos texto del justificado y nunca bloquea el dictado: en el
+/// peor caso se escribe el texto tal cual (con su «digo»), que es exactamente lo
+/// que dijo el usuario.
 pub fn guard_anti_truncacion(input: &str, output: &str) -> String {
     let in_words = word_count(input);
     if in_words == 0 {
-        // Input vacío: nada que proteger; devolvemos el output sin más.
+        // Texto vacío: no hay nada que proteger; se devuelve la respuesta sin más.
         return output.to_string();
     }
     let out_words = word_count(output);
@@ -545,17 +540,17 @@ pub fn guard_anti_truncacion(input: &str, output: &str) -> String {
     }
 }
 
-/// Detección ESTRICTA de marcador de auto-corrección para el guard.
+/// Detección ESTRICTA de marca de autocorrección para esta protección.
 ///
-/// A diferencia de `contains_in_turn_marker` (el clasificador de ruteo,
-/// PERMISIVO a propósito: «dime»/«diga» solo disparan una llamada barata
-/// al LLM), aquí permiso = permitir recortes de texto, y «dime si puedes
-/// revisarlo» — el caso real del bug t_6b9348de — es una petición, no una
-/// rectificación. Solo frases que NO admiten otra lectura que «corregir lo
-/// que acabo de decir» suben el piso del guard de 60% a 30% de palabras.
+/// Al contrario que `contains_in_turn_marker` (el clasificador que decide si se
+/// llama al modelo, permisivo a propósito: «dime»/«diga» solo disparan una
+/// llamada barata), aquí permiso quiere decir permitir recortes de texto, y
+/// «dime si puedes revisarlo» — el caso real del fallo t_6b9348de — es una
+/// petición, no una rectificación. Solo las frases que no admiten otra lectura
+/// que «corrijo lo que acabo de decir» bajan el listón del 60% al 30%.
 fn has_unambiguous_in_turn_marker(text: &str) -> bool {
     let t = text.to_lowercase();
-    // Frases inequívocas de auto-corrección hablada.
+    // Frases inequívocas de autocorrección hablada.
     for phrase in [
         "quiero decir",
         "quise decir",
@@ -571,8 +566,8 @@ fn has_unambiguous_in_turn_marker(text: &str) -> bool {
             return true;
         }
     }
-    // Palabras sueltas con límite de palabra («digo» no debe casar
-    // dentro de «indigo», «dicho» ni «diga»).
+    // Palabras sueltas con límite de palabra («digo» no debe casar dentro de
+    // «indigo», «dicho» ni «diga»).
     for word in ["digo", "sino"] {
         if t.split(|c: char| !c.is_alphanumeric())
             .any(|token| token == word)
@@ -583,87 +578,80 @@ fn has_unambiguous_in_turn_marker(text: &str) -> bool {
     false
 }
 
-/// Número de palabras de un texto (separador: cualquier whitespace).
-/// Es la unidad del guard anti-truncación: «El otro día» = 3 palabras.
+/// Cuántas palabras tiene un texto (separador: cualquier espacio en blanco).
+/// Es la unidad de la protección anti-truncación: «El otro día» = 3 palabras.
 fn word_count(s: &str) -> usize {
     s.split_whitespace().count()
 }
 
-/// Guard determinista para sustituciones numéricas simples
-/// (t_1fc864ef).
+/// Protección fija para sustituciones numéricas simples (t_1fc864ef).
 ///
-/// El corrector LLM local (Qwen3.5-0.8B-Q8) es POCO FIABLE en
-/// razonamiento numérico con numerales en palabras: ante una
-/// auto-corrección tipo «A digo B» o «A en vez de B» con A y B ambos
-/// numerales (dígitos o palabras: cuatro, cinco, …), el modelo a veces
-/// concatena los dos (evidencia: «me comi cuatro digo cinco peras» →
-/// «me comi cuatro cinco peras») en lugar de sustituir. Esa salida
-/// concatena los DOS numerales y, por tanto, ningún guard existente la
-/// detecta: `guard_anti_truncacion` no la corta (ratio de palabras
-/// plausible) y `contains_in_turn_marker` no ve meta-lengua. El texto
-/// inyectado es gramaticalmente incoherente.
+/// El corrector local (Qwen3.5-0.8B-Q8) es POCO fiable con los números escritos
+/// con palabras: ante una autocorrección tipo «A digo B» o «A en vez de B», con
+/// A y B números (dígitos o palabras: cuatro, cinco, …), a veces pega los dos en
+/// vez de cambiar uno por otro (está en el log: «me comi cuatro digo cinco
+/// peras» → «me comi cuatro cinco peras»). Esa salida lleva los DOS números y,
+/// por eso, ninguna protección de las que había la detecta:
+/// `guard_anti_truncacion` no la corta (la proporción de palabras es creíble) y
+/// `contains_in_turn_marker` no ve ninguna frase de corrección. El texto que se
+/// escribe queda sin sentido.
 ///
-/// Este guard detecta el patrón inequívoco «NUM_A [texto] [marcador]
-/// NUM_B» en el INPUT y verifica que el output del LLM lo haya
-/// resuelto. Si el LLM mantuvo AMBOS numerales (concatenación rota),
-/// conservó NUM_A (el equivocado) o eliminó la corrección, reconstruye
-/// el texto aplicando la sustitución deterministamente en código:
+/// Esta protección busca en el texto dictado el patrón inequívoco «NUM_A
+/// [texto] [marcador] NUM_B» y comprueba si el modelo lo resolvió. Si el modelo
+/// dejó los DOS números (pegados), se quedó con NUM_A (el equivocado) o se comió
+/// la corrección, rehace el texto aplicando el cambio ella misma, en código:
 /// «texto_antes» + NUM_B + «texto_despues».
 ///
-/// Cobertura ampliada (t_d64797c2, H1 del QA-REPORT-DEPURACION): el
-/// patrón NO exige ya que NUM_A sea el último token antes del marcador.
-/// En habla natural hay sintagma nominal y/o verbo entre el numeral y el
-/// marcador («a tres personas, digo cuatro personas»), y el guard se
-/// perdía el caso mientras el LLM inyectaba una frase plausible y FALSA
-/// (log 14/09 03:19 y 13/09 01:37). NUM_A es ahora el último NUMERAL del
-/// fragmento anterior al marcador.
+/// Cobertura ampliada (t_d64797c2, H1 del QA-REPORT-DEPURACION): el patrón ya NO
+/// exige que NUM_A sea la última palabra antes de la marca. Al hablar hay
+/// sintagma nominal y/o verbo entre el número y la marca («a tres personas, digo
+/// cuatro personas»), y la protección se perdía ese caso mientras el modelo
+/// escribía una frase creíble y FALSA (log 14/09 03:19 y 13/09 01:37). Ahora
+/// NUM_A es el último NÚMERO del trozo anterior a la marca.
 ///
-/// Devuelve `Ok(texto_corregido)` cuando el guard interviene (porque
-/// el LLM claramente falló en este caso). Devuelve `Err(())` cuando NO
-/// hay patrón inequívoco o cuando el LLM ya lo resolvió bien — el
-/// caller decide entonces si acepta el output del LLM tal cual. Nunca
-/// bloquea el dictado: el peor caso siempre es inyectar texto.
+/// Devuelve `Ok(texto_corregido)` cuando interviene (porque el modelo falló
+/// claramente en este caso). Devuelve `Err(())` cuando NO hay patrón inequívoco
+/// o cuando el modelo ya lo resolvió bien — entonces decide quien llama si
+/// acepta la respuesta tal cual. Nunca bloquea el dictado: el peor caso siempre
+/// es escribir texto.
 ///
-/// ALCANCE: solo numerales simples (un solo token, sin contexto
-/// elaborado). Casos como «me debe tres mil doscientos cuarenta y ocho
-/// euros» NO entran (no hay auto-corrección). Tampoco entran
-/// correcciones con sustantivos (murcia/cartagena: el LLM ya las hace
-/// bien). Esto es la red de seguridad mínima para el bug concreto del
-/// 0.8B-Q8, no un parser de números universal.
+/// ALCANCE: solo números simples (una palabra, sin contexto elaborado). Casos
+/// como «me debe tres mil doscientos cuarenta y ocho euros» NO entran (ahí no
+/// hay autocorrección). Tampoco entran las correcciones con sustantivos
+/// (murcia/cartagena: esas el modelo ya las hace bien). Esto es la red mínima
+/// para el fallo concreto del 0.8B-Q8, no un lector de números universal.
 pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, ()> {
-    // 1) Detectar el patrón inequívoco «NUM_A [marcador] NUM_B» en el
-    //    input. Si no encaja, el guard no aplica.
+    // 1) Buscar el patrón inequívoco «NUM_A [marcador] NUM_B» en el texto
+    //    dictado. Si no encaja, la protección no aplica.
     let Some(pat) = parse_numeric_correction(input) else {
         return Err(());
     };
 
-    // 2) Si el LLM ya puso el «después» (NUM_B) en el output, lo damos
-    //    por bueno y NO intervenimos (puede haber pequeñas variaciones
-    //    que el LLM manejó bien, p.ej. «voy a las 4» en lugar de
-    //    «voy a las cuatro»). Dejamos que los otros guards decidan.
+    // 2) Si el modelo ya puso el «después» (NUM_B) en la respuesta, se da por
+    //    buena y NO se interviene (puede haber pequeñas variaciones que el
+    //    modelo hizo bien, por ejemplo «voy a las 4» en lugar de «voy a las
+    //    cuatro»). Que decidan las demás protecciones.
     if contains_token(&output.to_lowercase(), &pat.num_b.to_lowercase())
         && !contains_token(&output.to_lowercase(), &pat.num_a.to_lowercase())
     {
         return Err(());
     }
 
-    // 3) Reconstrucción determinista. Buscamos las posiciones
-    //    exactas (en bytes) del token NUM_A y del token NUM_B en el
-    //    input, y construimos: input[..num_a_start] + num_b + input[after_num_b..].
-    //    Esto elimina NUM_A, el marcador completo (entre NUM_A y
-    //    NUM_B) y la posible duplicación de palabras de función
-    //    alrededor de NUM_B (p.ej. «sino a las cinco» → «cinco», sin
-    //    volver a escribir «a las»).
+    // 3) Reconstrucción fija. Se buscan las posiciones exactas (en bytes) del
+    //    NUM_A y del NUM_B en el texto dictado, y se monta:
+    //    input[..num_a_start] + num_b + input[after_num_b..]. Así se quitan
+    //    NUM_A, la marca entera (entre NUM_A y NUM_B) y la posible repetición de
+    //    palabras de enlace alrededor de NUM_B (por ejemplo «sino a las cinco» →
+    //    «cinco», sin volver a escribir «a las»).
     let num_a_lower = pat.num_a.to_lowercase();
     let num_b_lower = pat.num_b.to_lowercase();
-    // Acceso a la regex de marcador para detectar si `before_raw`
-    // empieza por «no …» (caso B: «no X sino»). La usamos para
-    // descartar el prefijo «no » antes de NUM_A y producir una
-    // reconstrucción limpia (p.ej. «no voy a las tres sino …» →
-    // «voy a las cuatro» y NO «no voy a las cuatro»).
+    // Se usa la expresión regular de la marca para ver si `before_raw` empieza
+    // por «no …» (caso B: «no X sino»). Sirve para tirar el «no » de delante de
+    // NUM_A y que la reconstrucción salga limpia (por ejemplo «no voy a las tres
+    // sino …» → «voy a las cuatro» y NO «no voy a las cuatro»).
     let re_for_discard_start = numeric_marker_regex();
 
-    // Tokenizamos el input guardando el rango de bytes de cada token.
+    // Se parte el texto en palabras guardando el rango de bytes de cada una.
     struct Tok {
         start: usize, // byte offset en el input original
         end: usize,
@@ -704,43 +692,43 @@ pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, (
         });
     }
 
-    // NUM_B: primer token con ese texto que aparece DESPUÉS del marcador
-    // (`pat.marker_end`). Acotarlo al tramo posterior evita confundirlo
-    // con una aparición anterior del mismo numeral.
+    // NUM_B: la primera palabra con ese texto que sale DESPUÉS de la marca
+    // (`pat.marker_end`). Limitarlo al trozo de después evita confundirlo con una
+    // aparición anterior del mismo número.
     let num_b_token = tokens.iter().find(|t| {
         t.is_word && t.start >= pat.marker_end && t.text.to_lowercase() == num_b_lower
     });
     let Some(num_b_tok) = num_b_token else {
-        // NUM_B no aparece (no debería pasar). Fallback seguro.
+        // NUM_B no aparece (no debería pasar). Se deja el texto como estaba.
         return Ok(input.to_string());
     };
-    // NUM_A: ÚLTIMO token con ese texto que aparece ANTES de NUM_B (el
-    // numeral rectificado siempre precede al correcto).
+    // NUM_A: la ÚLTIMA palabra con ese texto que sale ANTES de NUM_B (el número
+    // rectificado siempre va antes que el bueno).
     let num_a_token = tokens
         .iter()
         .rev()
         .find(|t| t.is_word && t.start < num_b_tok.start && t.text.to_lowercase() == num_a_lower);
     let Some(num_a_tok) = num_a_token else {
-        // NUM_A no aparece (no debería pasar). Fallback seguro.
+        // NUM_A no aparece (no debería pasar). Se deja el texto como estaba.
         return Ok(input.to_string());
     };
 
     let before_raw = &input[..num_a_tok.start];
     let after_raw = &input[num_b_tok.end..];
-    // Para el caso «no X sino» (regex con grupo 1), el patrón empieza
-    // por «no » y eso está dentro de `before_raw` (porque NUM_A va
-    // DENTRO de X). Necesitamos descartar también el «no » inicial
-    // para que la reconstrucción sea limpia.
+    // Para el caso «no X sino» (la expresión regular tiene grupo 1), el patrón
+    // empieza por «no » y eso cae dentro de `before_raw` (porque NUM_A va DENTRO
+    // de X). Hay que quitar también el «no » de delante para que la
+    // reconstrucción salga limpia.
     let before = if re_for_discard_start.captures(before_raw).ok().flatten().is_some()
         || before_raw.trim_start().to_lowercase().starts_with("no ")
     {
-        // Caso B detectado: quitar el prefijo «no …» hasta el primer
-        // token no-numeral que sea inicio de NUM_A (o sea: quitar
-        // «no » si está al principio).
+        // Caso B detectado: quitar el trozo «no …» hasta el primer token que no
+        // sea número y que sea el principio de NUM_A (o sea: quitar el «no » si
+        // está al principio).
         let trimmed = before_raw.trim_start();
         let lower = trimmed.to_lowercase();
         if lower.starts_with("no ") || lower.starts_with("no,") {
-            // Saltamos «no » y lo que venga hasta el primer token útil.
+            // Se salta «no » y lo que haya hasta la primera palabra que sirva.
             let after_no = if lower.starts_with("no ") { 3 } else { 2 };
             let rest = &trimmed[after_no..];
             rest.trim_start()
@@ -751,11 +739,10 @@ pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, (
         before_raw
     };
     let after = after_raw;
-    // Decidimos si necesitamos un espacio adicional entre los trozos.
-    // La idea: si entre `before` y NUM_A no había whitespace, las
-    // palabras estaban pegadas (raro) y debemos meter un espacio.
-    // Si sí había whitespace, ya está la separación: NO añadimos.
-    // Lo mismo entre NUM_B y `after`.
+    // Se decide si hace falta un espacio entre los trozos. La idea: si entre
+    // `before` y NUM_A no había espacio, las palabras iban pegadas (raro) y hay
+    // que meter uno. Si sí había espacio, la separación ya está: NO se añade. Lo
+    // mismo entre NUM_B y `after`.
     let space_before_num_b = !before.is_empty() && !before.ends_with(char::is_whitespace);
     let space_after_num_b = !after.is_empty() && !after.starts_with(char::is_whitespace);
     let mut reconstructed = String::with_capacity(before.len() + pat.num_b.len() + after.len() + 2);
@@ -770,14 +757,14 @@ pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, (
     reconstructed.push_str(after);
     let reconstructed = reconstructed.trim().to_string();
 
-    // 4) Si reconstruido quedó vacío o es solo espacios, conservar
-    //    el input (fallback seguro).
+    // 4) Si lo reconstruido queda vacío o solo son espacios, se deja el texto
+    //    como estaba (lo seguro).
     if reconstructed.is_empty() {
         return Ok(input.to_string());
     }
 
-    // 5) Logs para diagnóstico: este caso es diagnóstico porque el LLM
-    //    acaba de fallar en razonamiento numérico (t_1fc864ef).
+    // 5) Se anota en el log para diagnóstico: este caso lo es porque el modelo
+    //    acaba de fallar con los números (t_1fc864ef).
     crate::log!(
         "llm",
         "in-turn: guard numérico determinista reconstruyó la sustitución: \
@@ -789,9 +776,9 @@ pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, (
         reconstructed,
     );
 
-    // 6) El caller (app.rs) usa el output del guard si es distinto
-    //    del LLM original. Si coinciden (caso raro), devolvemos
-    //    Err(()) para no duplicar trabajo.
+    // 6) Quien llama (app.rs) usa lo que sale de aquí si es distinto de la
+    //    respuesta del modelo. Si coincide (raro), se devuelve Err(()) para no
+    //    repetir trabajo.
     if reconstructed == output.trim() {
         Err(())
     } else {
@@ -799,40 +786,39 @@ pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, (
     }
 }
 
-/// Resultado de `parse_numeric_correction`: el input partido en el
-/// primer marcador correctivo inequívoco, con los dos numerales
-/// identificados y la posición donde EMPIEZA la zona a descartar
-/// (NUM_A + marcador + posible contexto de función entre marcador y
-/// NUM_B — esto último se resuelve en la reconstrucción).
+/// Lo que devuelve `parse_numeric_correction`: el texto partido por la primera
+/// marca de corrección inequívoca, con los dos números identificados y la
+/// posición donde EMPIEZA la zona que hay que tirar (NUM_A + marca + posible
+/// contexto de enlace entre la marca y NUM_B — eso último se resuelve al
+/// reconstruir).
 ///
-/// `input_a` e `input_b` se conservan para trazabilidad y futuros
-/// consumidores (p.ej. tests de integración con la pipeline); el
-/// reconstructor principal hoy solo usa `num_a`/`num_b`.
+/// `input_a` e `input_b` se guardan para poder seguirlo y para quien lo use más
+/// adelante (por ejemplo pruebas de integración con el flujo); hoy quien
+/// reconstruye solo usa `num_a`/`num_b`.
 struct NumericCorrection {
-    /// Texto del input hasta el inicio de la zona a descartar.
+    /// Texto del dictado hasta donde empieza la zona que hay que tirar.
     #[allow(dead_code)]
     input_a: String,
-    /// Texto del input desde el final del marcador (incluye NUM_B).
+    /// Texto del dictado desde el final de la marca (lleva NUM_B dentro).
     #[allow(dead_code)]
     input_b: String,
-    /// Offset en bytes del FINAL del marcador dentro del input. El
-    /// guard lo usa para localizar NUM_B sin confundirlo con una
-    /// aparición anterior del mismo numeral (p.ej. «23 … digo … 24»).
+    /// Posición en bytes del FINAL de la marca dentro del dictado. La protección
+    /// la usa para localizar NUM_B sin confundirlo con una aparición anterior del
+    /// mismo número (por ejemplo «23 … digo … 24»).
     marker_end: usize,
-    /// Token literal de NUM_A tal como aparece en el input.
+    /// La palabra exacta de NUM_A tal como sale en el dictado.
     num_a: String,
-    /// Token literal de NUM_B tal como aparece en el input.
+    /// La palabra exacta de NUM_B tal como sale en el dictado.
     num_b: String,
 }
 
-/// Busca el primer marcador correctivo inequívoco en `input` y, si a
-/// cada lado hay exactamente UN numeral simple (dígito o palabra de la
-/// lista corta), devuelve la partición. Si no hay patrón inequívoco,
-/// devuelve `None`.
+/// Busca la primera marca de corrección inequívoca en `input` y, si a cada lado
+/// hay exactamente UN número simple (un dígito o una palabra de la lista corta),
+/// devuelve el texto partido. Si no hay patrón inequívoco, devuelve `None`.
 ///
-/// Lista de numerales: solo los más comunes que caben en UN token.
-/// NO incluye «tres mil», «cuarenta y ocho», etc.: el guard es para el
-/// bug concreto del 0.8B-Q8, no un parser de números universal.
+/// La lista de números: solo los más comunes que caben en una palabra. NO
+/// incluye «tres mil», «cuarenta y ocho», etc.: esto es para el fallo concreto
+/// del 0.8B-Q8, no un lector de números universal.
 const NUM_WORDS: &[&str] = &[
     "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho",
     "nueve", "diez", "once", "doce", "trece", "catorce", "quince",
