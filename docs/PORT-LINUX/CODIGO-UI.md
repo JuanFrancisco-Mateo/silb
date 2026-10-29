@@ -1,9 +1,9 @@
 # PORT-LINUX / CODIGO-UI — resquicios windows-especificos que quedan
 
-Parte 4 no es la dueña de los ficheros de inyeccion/burbuja/tray (Partes 2
-y 3). Aqui se documenta CADA residuo Windows-especifico detectado leyendo
-el codigo, con el fichero/linea real, el estado actual, y a quien
-corresponde portarlo.
+La Parte 4 no es la dueña de los ficheros de escritura del texto, burbuja y
+bandeja (Partes 2 y 3). Aquí se apunta CADA resto de Windows que se ha encontrado
+leyendo el código, con el fichero y la línea real, el estado actual y a quién le
+toca portarlo.
 
 ## Resumen del inventario (03/10/2026)
 
@@ -24,35 +24,36 @@ corresponde portarlo.
 
 ## Pendientes declarados (a quien va)
 
-1. **Keyring de API key en Linux.** `save_api_key_secret` en
-   `src/config.rs` es stub no-Windows: la API key de la corrección IA no
-   se persiste en Linux. Port adecuado: crate `keyring` + libsecret
-   (gnome-keyring), o cifrar en config.local. → tarea futura, Parts 2/3 o
-   ticket dedicado.
-2. **Inyección de texto en Wayland.** inject.rs: copy_to_clipboard SÍ
-   está portado a arboard en Linux (funciona en Wayland via data-control).
+1. **Guardar la API key de forma segura en Linux.** `save_api_key_secret` en
+   `src/config.rs` no hace nada fuera de Windows: la API key de la corrección con
+   IA no se guarda en Linux. Lo adecuado: el crate `keyring` + libsecret
+   (gnome-keyring), o cifrarla en config.local. → tarea futura, Partes 2/3 o un
+   ticket aparte.
+2. **Escribir el texto en Wayland.** inject.rs: copy_to_clipboard SÍ está portado
+   a arboard en Linux (funciona en Wayland por data-control).
    El tecleo con enigo no funciona en Wayland (enigo solo X11).
-   Alternativa wl-clipboard + ydotool (requiere permisos input daemon)
-   — cae en el reparto de inyección (Parte 3).
-3. **tray-icon en Linux.** src/tray.rs stub non-Windows: bandeja no existe
-   en el port actual. Alternativa: libappindicator-gtk3 via tray-icon con
-   feature dbus → camino pendiente de probe (Parte 3).
-4. **Burbuja flotante.** src/bubble.rs ya compila stub no-Windows. Port
-   real Wayland (winit LayerShell, with_active/unfocus) es Parte 3.
+   Alternativa: wl-clipboard + ydotool (necesita permisos y el servicio de entrada)
+   — cae en el reparto de la escritura del texto (Parte 3).
+3. **tray-icon en Linux.** src/tray.rs no hace nada fuera de Windows: la bandeja
+   no existe en el port actual. Alternativa: libappindicator-gtk3 con tray-icon y
+   la parte dbus → camino pendiente de probar (Parte 3).
+4. **Burbuja flotante.** src/bubble.rs ya compila sin hacer nada fuera de Windows.
+   El port real a Wayland (winit LayerShell, with_active/unfocus) es la Parte 3.
 
-   **Hecho en 0.6:** la burbuja existe en Linux con clase `whispr-open-bubble`
-   y título `Silb-Bubble`, pero Wayland no deja fijarla por encima ni fuera del
-   workspace desde la app (`WS_EX_NOACTIVATE` no existe aquí). Se resuelve con
-   una regla del compositor; en Hyprland (config Lua de Omarchy), en
-   `~/.config/hypr/bindings.lua`:
+   **Hecho en 0.6:** la burbuja existe en Linux con la clase
+   `whispr-open-bubble` y el título `Silb-Bubble`, pero Wayland no deja fijarla por
+   encima ni fuera del espacio de trabajo desde la app (`WS_EX_NOACTIVATE` no
+   existe aquí). Se resuelve con una regla del compositor; en Hyprland (config Lua
+   de Omarchy), en `~/.config/hypr/bindings.lua`:
 
    ```lua
    o.window({ class = "whispr-open-bubble" }, { float = true, pin = true })
    ```
 
-   Sin `pin` la burbuja se quedaba en el workspace donde arrancó el dictado.
+   Sin `pin` la burbuja se quedaba en el espacio de trabajo donde arrancó el
+   dictado.
 
-5. **build.rs / winresource (.ico + manifest).** Fuera de la parte 4 por
-   diseño (Parte 3: recursos de build); en Windows deben conservar el
-   recurso incrustado; en no-Windows winresource se salta (build.rs a
+5. **build.rs / winresource (.ico + manifiesto).** Fuera de la parte 4 por
+   diseño (Parte 3: recursos de compilación); en Windows deben conservar el
+   recurso metido dentro; fuera de Windows winresource se salta (build.rs a
    revisar en su parte).
