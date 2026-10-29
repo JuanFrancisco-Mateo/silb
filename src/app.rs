@@ -1718,8 +1718,8 @@ impl WhisprApp {
             .unwrap_or(0)
     }
 
-    /// Lectura del estado para el hero: color de estado + label + hint
-    /// (feedback doble, nunca solo color).
+    /// Lo que enseña el hero: color de estado, texto y pista (dos señales a la
+    /// vez, nunca solo el color).
     pub(crate) fn mic_ui(&self, t: &UiPalette) -> MicUi {
         match &self.status {
             Status::Idle => MicUi {
@@ -1731,9 +1731,9 @@ impl WhisprApp {
                 ),
             },
             Status::Recording => MicUi {
-                // accent_text (no accent): «Grabando…» es texto normal
-                // (fs.md) sobre tarjeta; el violeta de marca mide ~4.2:1
-                // ahí (ver tests de contraste en theme.rs).
+                // accent_text (y no accent): «Grabando…» es texto normal (fs.md)
+                // sobre tarjeta, y el violeta de marca se queda en ~4.2:1 ahí (ver
+                // las pruebas de contraste en theme.rs).
                 color: t.accent_text,
                 label: "Grabando…".to_string(),
                 hint: "Suelta el atajo o pulsa para transcribir".to_string(),
@@ -1754,8 +1754,8 @@ impl WhisprApp {
                 total,
             } => MicUi {
                 color: t.warn,
-                // Requisito R4: tamaño descargado/total + tiempo restante
-                // (medido con la EMA de velocidad), no solo un porcentaje.
+                // Requisito R4: tamaño descargado y total, más el tiempo que queda
+                // (con la media de velocidad), no solo un porcentaje.
                 label: download_progress_label(
                     model.label(),
                     *downloaded,
@@ -1772,11 +1772,11 @@ impl WhisprApp {
         }
     }
 
-    /// Aplica cleanup + diccionario + reglas de corrección hablada.
-    /// Devuelve el texto del turno y si las REGLAS resolvieron una corrección
-    /// (en ese caso el LLM no debe intervenir — nivel A de la spec §2).
+    /// Pasa el texto por la limpieza, el diccionario y las reglas de corrección
+    /// hablada. Devuelve el texto del turno y si las REGLAS resolvieron una
+    /// corrección (en ese caso el modelo no interviene — nivel A de la spec §2).
     pub(crate) fn apply_pipeline(&mut self, raw: &str) -> (String, bool) {
-        // Orden de procesado (igual que la web): cleanup -> diccionario.
+        // Orden del proceso (el mismo que en la web): limpieza → diccionario.
         let mut text = raw.to_string();
         self.removed_fillers.clear();
 
@@ -1791,7 +1791,7 @@ impl WhisprApp {
             text = dict.text;
         }
 
-        // Corrección hablada multi-turno.
+        // Corrección hablada de varios turnos.
         let turn = self.session.accept(&text);
         if let Some(c) = &turn.correction {
             self.last_correction = Some(format!(
@@ -1808,9 +1808,9 @@ impl WhisprApp {
 }
 
 impl WhisprApp {
-    /// El «reductor» de Iced: recibe cada `Message` y muta el estado.
-    /// Devuelve una `Task` cuando hay que pedirle algo al runtime (abrir
-    /// ventanas, salir) o `Task::none()` si el cambio es solo de estado.
+    /// El «reductor» de iced: recibe cada `Message` y cambia el estado. Devuelve
+    /// una `Task` cuando hay que pedirle algo a iced (abrir ventanas, salir) o
+    /// `Task::none()` si el cambio es solo de estado.
     pub fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             m @ (Message::Toggle
@@ -1911,17 +1911,17 @@ impl WhisprApp {
                 | Message::Startup(..)
                 | Message::RetryStartup
                 | Message::OpenLogFolder) => self.handle_window_and_tray(m),
-            // Cierre de la ventana principal → se oculta a la bandeja (la app
-            // sigue viva: burbuja, atajo global y bandeja). El cierre lo
-            // gestionamos nosotros (`exit_on_close_request = false` en ambas
-            // ventanas, ver `bubble::bubble_settings`).
+            // Cerrar la ventana principal la esconde en la bandeja (la app sigue
+            // viva: burbuja, atajo global y bandeja). El cierre lo llevamos
+            // nosotros (`exit_on_close_request = false` en las dos ventanas, ver
+            // `bubble::bubble_settings`).
             Message::WindowCloseRequested(id) if Some(id) == self.main_window_id => {
                 self.hide_main_window()
             }
-            // La burbuja no tiene botón de cierre (sin decoración): un
-            // WM_CLOSE ahí solo llega desde fuera (taskkill, cierre de sesión)
-            // y sí termina la app. También cubre el caso de que la principal
-            // aún no se haya registrado (cierre antes de WindowOpened).
+            // La burbuja no tiene botón de cerrar (no tiene marco): un WM_CLOSE
+            // ahí solo llega de fuera (taskkill, cierre de sesión) y sí termina la
+            // app. También cubre que la principal aún no se haya registrado (cierre
+            // antes de WindowOpened).
             Message::WindowCloseRequested(id) => {
                 crate::log!(
                     "tray",
@@ -1935,16 +1935,16 @@ impl WhisprApp {
         }
     }
 
-    /// Procesa un evento del hilo de arranque (whisper + LLM). Transiciones:
+    /// Atiende un evento del hilo de arranque (whisper + LLM). Transiciones:
     /// Loading → (WhisperFailed) → Failed · Loading → … → Ready. Cuando el
-    /// arranque ya terminó (re-fase LLM en caliente por el toggle), solo
-    /// actualiza `llm_status` y el aviso.
+    /// arranque ya terminó (se vuelve a lanzar la fase del modelo en caliente
+    /// con el interruptor), solo se actualizan `llm_status` y el aviso.
     pub(crate) fn handle_startup_event(&mut self, event: StartupEvent) -> Task<Message> {
         match event {
             StartupEvent::WhisperProgress { downloaded, total } => {
-                // La velocidad estimada (EMA) se alimenta aquí: la pantalla
-                // de carga y el hero comparten el mismo cálculo (R4: tamaño
-                // + tiempo restante, no solo un porcentaje).
+                // Aquí se alimenta la velocidad estimada: la pantalla de carga y
+                // el hero usan el mismo cálculo (R4: tamaño y tiempo restante, no
+                // solo un porcentaje).
                 self.note_download_progress(downloaded, total);
                 self.startup_label =
                     download_progress_label("modelo de voz", downloaded, total, self.dl_rate);
@@ -2006,27 +2006,27 @@ impl WhisprApp {
                     self.startup = StartupPhase::Ready;
                     self.set_tray_status(crate::tray::MENU_LABEL_READY_NO_LLM);
                 }
-                // Sin banner extra: la fila «Corrección IA» del Dictado ya
-                // muestra «Inactiva — <motivo>» de forma permanente. Antes se
-                // pintaban los dos textos a la vez (aviso verde + fila) con la
-                // misma frase, que es justo el ruido que sobra en la UI.
+                // Sin banda extra: la fila «Corrección IA» del Dictado ya enseña
+                // «Inactiva — <motivo>» todo el rato. Antes salían los dos textos a
+                // la vez (aviso verde y fila) con la misma frase, y eso es justo el
+                // ruido que sobra en la interfaz.
                 Task::none()
             }
         }
     }
 
-    /// Libera la captura del ratón y cierra el arrastre con botón derecho
-    /// (la máquina de estados ya quedó limpia en el llamador). Persiste la
-    /// posición física final de la burbuja en el Config: el usuario la dejó
-    /// ahí, y `apply_bubble_extras` la re-aplica en el siguiente arranque.
-    /// Log con el motivo: clave para diagnosticar arrastres que terminen raro.
+    /// Suelta el ratón y cierra el arrastre con el botón derecho (la máquina de
+    /// estados ya la dejó limpia quien llama). Guarda en la Config la posición
+    /// física final de la burbuja: ahí la dejó el usuario, y `apply_bubble_extras`
+    /// la vuelve a poner al arrancar. Se anota el motivo en el log: es la clave
+    /// para mirar arrastres que acaban raro.
     pub(crate) fn end_bubble_drag(&mut self, reason: &str) {
         if let Some(drag) = self.bubble_drag.take() {
             drag.end();
         }
         // Posición física (px de pantalla) leída por winapi: manda sobre la
-        // esquina configurada hasta que el usuario re-elija esquina en
-        // Ajustes (BubbleCornerChanged la limpia).
+        // esquina de la config hasta que el usuario elija otra esquina en Ajustes
+        // (BubbleCornerChanged la limpia).
         if let Some((x, y)) = crate::bubble::bubble_window_position() {
             self.config.bubble_x = Some(x);
             self.config.bubble_y = Some(y);
@@ -2036,9 +2036,9 @@ impl WhisprApp {
         crate::log!("bubble", "fin de arrastre con botón derecho ({reason})");
     }
 
-    /// Re-muestra la burbuja si el auto-ocultar la escondió, y cancela
-    /// cualquier timer pendiente (dictar la mantiene visible). No-op si la
-    /// burbuja ya está visible.
+    /// Vuelve a enseñar la burbuja si el auto-ocultar la escondió, y cancela la
+    /// cuenta atrás que hubiera (dictar la mantiene a la vista). Si ya se ve, no
+    /// hace nada.
     pub(crate) fn show_bubble(&mut self) -> Task<Message> {
         self.bubble_hide_deadline = None;
         if !self.bubble_hidden {
@@ -2051,10 +2051,10 @@ impl WhisprApp {
         Task::none()
     }
 
-    /// Arma el temporizador de auto-ocultar de la burbuja (o lo cancela si el
-    /// timeout es «Nunca»). Se llama al terminar un turno: cuando expira, el
-    /// Poll oculta la burbuja. La actividad del usuario (hover, grabar) lo
-    /// pospone o cancela.
+    /// Arma la cuenta atrás del auto-ocultar de la burbuja (o la cancela si el
+    /// plazo es «Nunca»). Se llama al terminar un turno: cuando se cumple, el
+    /// `Poll` esconde la burbuja. Si el usuario hace algo (pasar por encima,
+    /// grabar), se pospone o se cancela.
     pub(crate) fn arm_bubble_hide_timeout(&mut self) {
         self.bubble_hide_deadline = self
             .config
@@ -2063,8 +2063,8 @@ impl WhisprApp {
             .map(|secs| std::time::Instant::now() + Duration::from_secs(secs));
     }
 
-    /// Oculta la ventana principal (se queda en la bandeja) y actualiza el
-    /// texto del ítem del menú.
+    /// Esconde la ventana principal (se queda en la bandeja) y cambia el texto
+    /// del renglón del menú.
     pub(crate) fn hide_main_window(&mut self) -> Task<Message> {
         let Some(id) = self.main_window_id else {
             return Task::none();
@@ -2077,7 +2077,7 @@ impl WhisprApp {
         window::change_mode(id, window::Mode::Hidden)
     }
 
-    /// Vuelve a mostrar (y enfocar) la ventana principal desde la bandeja.
+    /// Vuelve a enseñar (y pone delante) la ventana principal desde la bandeja.
     pub(crate) fn show_main_window(&mut self) -> Task<Message> {
         let Some(id) = self.main_window_id else {
             return Task::none();
@@ -2093,23 +2093,22 @@ impl WhisprApp {
         ])
     }
 
-    /// Suscripciones de Iced: el Poll de 100 ms (latido que drena canales
-    /// de hilos y relojes efímeros), cierres/aperturas de ventana y los
-    /// eventos de ratón de la burbuja.
+    /// Suscripciones de iced: el `Poll` de 100 ms (el latido que vacía los
+    /// canales de los hilos y los relojes cortos), los cierres y aperturas de
+    /// ventana y los eventos de ratón de la burbuja.
     pub fn subscription(&self) -> Subscription<Message> {
         let poll = iced::time::every(Duration::from_millis(100)).map(|_| Message::Poll);
         let closes = iced::window::close_requests().map(Message::WindowCloseRequested);
-        // Descubre el id de la ventana principal (iced no lo devuelve al
-        // crearla desde `program::run`; la burbuja se identifica por el suyo).
+        // Así se descubre el id de la ventana principal (iced no lo devuelve al
+        // crearla desde `program::run`; la burbuja se reconoce por el suyo).
         let opened = iced::window::open_events().map(Message::WindowOpened);
         let bubble = crate::bubble::bubble_events_subscription(self.bubble_id);
-        // Personalización III: si hay frames resueltos para animar la
-        // burbuja, añadimos un reloj que avanza el frame cada `1000/fps`
-        // ms. Cuando no hay animación activa, devolvemos
-        // `Subscription::none()` (iced detecta que la Subscription es
-        // vacía y no la crea): cero coste extra. El `interval_from_fps`
-        // cae al default si el FPS es inválido (defensa redundante: el
-        // getter ya clampea).
+        // Personalización III: si hay fotogramas para animar la burbuja, se añade
+        // un reloj que pasa de fotograma cada `1000/fps` ms. Sin animación se
+        // devuelve `Subscription::none()` (iced ve que la suscripción está vacía y
+        // no la crea): no cuesta nada. `interval_from_fps` se queda con el valor
+        // de serie si los FPS no valen (defensa de más: el getter ya los deja en
+        // rango).
         let animation = if self.bubble_frames_resolved().is_some()
             || self.gif_animation_active()
         {
@@ -2122,11 +2121,11 @@ impl WhisprApp {
         Subscription::batch([poll, closes, opened, bubble, animation])
     }
 
-    /// Tema iced según el modo resuelto (dark por defecto, auto sigue al
-    /// sistema; el Poll lo refresca cada 5 s). El `Theme` se construye con
-    /// la paleta resuelta (defaults DARK/LIGHT + overrides del usuario), así
-    /// los 5 campos del `Palette` de iced (fondo de ventana, texto primario,
-    /// acento, ok, err) también respetan la personalización.
+    /// Tema de iced según el modo resuelto (oscuro por defecto; auto sigue al
+    /// sistema, y el `Poll` lo refresca cada 5 s). El `Theme` se monta con la
+    /// paleta resuelta (colores de serie DARK/LIGHT + los cambios del usuario),
+    /// así los 5 campos del `Palette` de iced (fondo de ventana, texto principal,
+    /// acento, ok, error) también respetan la personalización.
     pub fn theme(&self) -> Theme {
         let palette = theme::resolve_palette(
             &self.config,
@@ -2135,10 +2134,10 @@ impl WhisprApp {
         theme::custom_with_palette(&palette)
     }
 
-    /// Paleta resuelta (con overrides aplicados) para el modo activo.
-    /// Pensada para que `view()` la use explícitamente al pintar textos y
-    /// tarjetas (los widgets con estilo siguen leyendo `tokens(theme)`,
-    /// que a su vez consulta el thread-local del override).
+    /// Paleta resuelta (con los cambios del usuario aplicados) para el modo
+    /// activo. Está pensada para que `view()` la use al pintar textos y tarjetas
+    /// (los widgets con estilo siguen mirando `tokens(theme)`, que a su vez
+    /// consulta el cambio guardado del hilo).
     pub(crate) fn resolved_palette(&self) -> theme::UiPalette {
         theme::resolve_palette(
             &self.config,
@@ -2147,10 +2146,10 @@ impl WhisprApp {
     }
 
     /// Dibuja la ventana principal: pantalla de carga hasta que el arranque
-    /// termine; después, header + barra de SECCIONES (Dictado / Ajustes) y el
-    /// cuerpo de la sección activa: «Dictado» reúne chip de corrección IA,
-    /// hero del micrófono, nota editable, acciones y feedback; «Ajustes» es el
-    /// panel de siempre. El pie de confianza va siempre.
+    /// termine; después, cabecera + barra de SECCIONES (Dictado / Ajustes) y el
+    /// cuerpo de la sección activa: «Dictado» junta el chip de corrección IA, el
+    /// hero del micrófono, la nota editable, las acciones y el feedback;
+    /// «Ajustes» es el panel de siempre. El pie de confianza va siempre.
     pub fn view(&self) -> Element<'_, Message> {
         // R7-II: instala la paleta resuelta en el thread-local de `theme` para
         // que los style closures de los widgets (`primary`, `secondary`, …)
@@ -2158,23 +2157,23 @@ impl WhisprApp {
         // libera al volver (Drop) ⇒ el siguiente frame empieza limpio.
         let _palette_scope = theme::PaletteOverrideScope::new(self.resolved_palette());
         let t = theme::tokens(&self.theme()).into_owned();
-        // Tamaño de fuente global resuelto (Ajustes → Apariencia): TODOS los
-        // textos de la vista lo usan (fs.*) en vez de los literales FONT_*.
+        // Tamaño de letra global resuelto (Ajustes → Apariencia): TODOS los textos
+        // de la vista usan (fs.*) en vez de los números fijos FONT_*.
         let fs = theme::font_sizes(self.config.font_size().factor());
 
-        // Pantalla de carga (requisito UX 09/09/2026): mientras el arranque
-        // no termine se muestra SOLO spinner + fase, sin UI de dictado.
-        // Whisper y el server LLM se cargan en background (hilo propio).
+        // Pantalla de carga (requisito UX 09/09/2026): mientras el arranque no
+        // termine se enseña SOLO el spinner y la fase, sin nada de dictado.
+        // Whisper y el servidor LLM se cargan en segundo plano (hilo propio).
         if !matches!(self.startup, StartupPhase::Ready) {
             return self.loading_view(&t, fs);
         }
 
         // ── Marco del rediseño (frame «Dictado» de Figma) ────────────────────
-        // Barra de ventana propia (40 px) + barra lateral (204 px) + espacio de
-        // trabajo. La barra lateral sustituye a la fila de pestañas anterior:
-        // «Dictado» y «Ajustes» son las dos secciones de la ventana, y el pie
-        // de privacidad vive dentro de la sección de dictado (junto al
-        // interruptor de corrección IA, como en el diseño).
+        // Barra de ventana propia (40 px) + barra lateral (204 px) + zona de
+        // trabajo. La barra lateral sustituye a la fila de pestañas de antes:
+        // «Dictado» y «Ajustes» son las dos secciones de la ventana, y el pie de
+        // privacidad va dentro de la sección de dictado (al lado del interruptor
+        // de corrección IA, como en el diseño).
         let c = theme::chrome(&self.theme());
         let ty = theme::design_type(self.config.font_size().factor());
         let workspace: Element<'_, Message> = if self.settings_open {
@@ -2194,25 +2193,23 @@ impl WhisprApp {
         ]
         .height(Length::Fill);
 
-        // Personalización III: si el usuario eligió una imagen de fondo,
-        // se apila DEBAJO del contenido como capa de fondo (stack con la
-        // columna actual). El contenedor usa `Length::Fill`/`Length::Fill`
-        // para ocupar la ventana completa; la imagen se estira para
-        // cubrir (ContentFit::Cover, el equivalente visual de un fondo
-        // CSS cover).
-        // H7a (QA 24/09/2026): una sola consulta a `bg_image()`, resuelta con
-        // `match`. Antes se preguntaba `is_some()` y luego se hacía
-        // `expect(...)`: dos validaciones del fichero (la ruta se revalida en
-        // cada llamada, así que puede desaparecer entre ambas) y un pánico
-        // evitable en código de UI.
+        // Personalización III: si el usuario eligió una imagen de fondo, se pone
+        // DEBAJO del contenido como capa de fondo (stack con la columna actual).
+        // El contenedor usa `Length::Fill`/`Length::Fill` para ocupar la ventana
+        // entera; la imagen se estira hasta cubrir (ContentFit::Cover, lo mismo
+        // que un fondo `cover` en CSS).
+        // H7a (QA 24/09/2026): se pregunta una sola vez a `bg_image()` y se
+        // resuelve con `match`. Antes se miraba `is_some()` y luego se hacía
+        // `expect(...)`: dos comprobaciones del fichero (la ruta se revisa en
+        // cada llamada, así que puede desaparecer entre las dos) y un pánico que
+        // se podía evitar en código de interfaz.
         match self.bg_image() {
             Some(path) => {
-                // Stack: la imagen va al fondo, el contenido al frente.
-                // iced expone `Stack` como helper que apila elementos sin
-                // espaciado y respeta el orden de inserción: el primero es
-                // el del fondo, el último el del frente. El handle se
-                // construye dentro del brazo para que el borrow del PathBuf
-                // quede dentro del scope.
+                // Stack: la imagen al fondo, el contenido delante. iced trae
+                // `Stack` como ayuda que apila elementos sin espacio y respeta el
+                // orden en que se añaden: el primero queda al fondo y el último
+                // delante. El handle se construye dentro del brazo para que el
+                // préstamo del PathBuf no salga de ahí.
                 let handle = iced::widget::image::Handle::from_path(&path);
                 let bg_layer: Element<'_, Message> = container(
                     iced::widget::image(handle)
@@ -2241,14 +2238,14 @@ impl WhisprApp {
         }
     }
 
-    /// Pantalla de carga sencilla (requisito UX 09/09/2026): spinner
-    /// animado + texto de la fase en curso. Cuando la fase es Failed se
-    /// muestra el motivo y «Reintentar» (que relanza el prerroll completo;
-    /// si el modelo de voz faltaba, la descarga arranca sola). El dictado
-    /// queda bloqueado hasta que `startup` sea Ready.
+    /// Pantalla de carga sencilla (requisito UX 09/09/2026): spinner animado y
+    /// el texto de la fase en curso. Si la fase es Failed se enseña el motivo y
+    /// «Reintentar» (que vuelve a empezar el arranque entero; si faltaba el
+    /// modelo de voz, la descarga sale sola). No se puede dictar hasta que
+    /// `startup` esté en Ready.
     fn loading_view(&self, t: &UiPalette, fs: theme::FontSizes) -> Element<'_, Message> {
-        // Spinner de 4 fases, animado por `startup_tick` (el Poll lo avanza
-        // a 10 Hz mientras la fase sea Loading).
+        // Spinner de 4 fases, movido por `startup_tick` (el `Poll` lo avanza 10
+        // veces por segundo mientras la fase sea Loading).
         const SPINNER: [&str; 4] = ["◐", "◓", "◑", "◒"];
         let spin = SPINNER[(self.startup_tick % 4) as usize];
 
@@ -2262,9 +2259,9 @@ impl WhisprApp {
         .width(Length::Fill);
 
         if let StartupPhase::Failed { error } = &self.startup {
-            // Configuración inicial (sprint final): la app abre VACÍA y lo
-            // primero es descargar un modelo de transcripción. La corrección
-            // IA es opcional y se descarga después, solo si se activa.
+            // Configuración inicial (sprint final): la app abre VACÍA y lo primero
+            // es descargar un modelo de transcripción. La corrección IA es opcional
+            // y se descarga después, solo si se enciende.
             content = column![
                 ui_text("Te damos la bienvenida a Silb").size(fs.hero).color(t.text),
                 text(error.clone()).size(fs.sm).color(t.err).shaping(Shaping::Advanced),
@@ -2334,25 +2331,23 @@ impl WhisprApp {
     }
 }
 
-/// Pestaña activa del panel de Ajustes (R7 — Personalización I). Cada
-/// variante corresponde a un grupo de controles del antiguo `settings_view`
-/// monolítico: dividir el panel en pestañas quita el ruido que vivía el
-/// usuario al ver toda la configuración apilada en una sola vista larga con
-/// scroll infinito.
+/// Pestaña activa del panel de Ajustes (R7 — Personalización I). Cada variante
+/// es un grupo de controles del antiguo `settings_view` de una pieza: partir
+/// el panel en pestañas quita el ruido de ver toda la configuración amontonada
+/// en una vista larga con scroll sin fin.
 ///
-/// El estado vive solo en memoria (`WhisprApp::settings_section`); NO se
-/// persiste en `config.json` porque la regla del producto es que la última
-/// sección abierta solo se recuerda dentro de la misma sesión de la app.
+/// El estado vive solo en memoria (`WhisprApp::settings_section`); NO se guarda
+/// en `config.json` porque la regla del producto es que la última sección
+/// abierta solo se recuerda dentro de la misma sesión.
 ///
 /// Notas de diseño:
-/// - El orden del enum es el orden visual de las pestañas y el del
-///   ciclo `next()` / `previous()` (por si en el futuro se añade
-///   navegación por teclado).
-/// - Cada variante tiene una etiqueta legible en español para que las
-///   pestañas sean accesibles también sin color (requisito 4 de la
-///   tarea R7).
-/// - La pestaña activa se marca con fondo + borde inferior y un
-///   indicador `●` antes de la etiqueta, no solo con color.
+/// - El orden del enum es el orden visual de las pestañas y el del ciclo
+///   `next()` / `previous()` (por si algún día se añade navegación con
+///   teclado).
+/// - Cada variante tiene su etiqueta en español para que las pestañas se
+///   entiendan también sin color (requisito 4 de la tarea R7).
+/// - La pestaña activa se marca con fondo + borde inferior y un `●` delante de
+///   la etiqueta, no solo con color.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsSection {
     General,
@@ -2363,7 +2358,7 @@ pub enum SettingsSection {
 }
 
 impl SettingsSection {
-    /// Orden de las pestañas, igual al del enum.
+    /// Orden de las pestañas, el mismo que el del enum.
     pub(crate) const ALL: [SettingsSection; 5] = [
         SettingsSection::General,
         SettingsSection::Apariencia,
@@ -2372,7 +2367,7 @@ impl SettingsSection {
         SettingsSection::Avanzado,
     ];
 
-    /// Etiqueta legible en español (requisito 4: texto, no solo icono).
+    /// Etiqueta en español (requisito 4: texto, no solo icono).
     pub(crate) fn label(self) -> &'static str {
         match self {
             SettingsSection::General => "General",
@@ -2390,20 +2385,20 @@ impl std::fmt::Display for SettingsSection {
     }
 }
 
-/// Aviso del medidor del micrófono (UI-FUTURA P2). El nivel que se dibuja
-/// es el PICO que retiene `AudioCapture` durante el turno, así que el aviso
-/// es honesto: dice «pico» y solo aparece cuando aporta algo (micro mudo o
-/// saturado). Texto, no solo color (accesibilidad).
+/// Aviso del medidor del micrófono (UI-FUTURA P2). El nivel que se dibuja es
+/// el PICO que guarda `AudioCapture` durante el turno, así que el aviso no
+/// engaña: dice «pico» y solo sale cuando aporta algo (micro mudo o saturado).
+/// Texto, no solo color (accesibilidad).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MicPeakHint {
-    /// Sin señal apreciable pasado el margen inicial del turno.
+    /// Sin señal apreciable pasados los primeros segundos del turno.
     Silent,
-    /// Pico al máximo: el micro puede estar saturando.
+    /// Pico al máximo: puede que el micro esté saturando.
     Clipping,
 }
 
 impl MicPeakHint {
-    /// Frase accionable para el usuario (en su idioma).
+    /// Frase que dice qué hacer, en el idioma del usuario.
     pub(crate) fn label(self) -> &'static str {
         match self {
             MicPeakHint::Silent => "sin señal del micrófono: ¿está silenciado?",
@@ -2416,12 +2411,12 @@ impl MicPeakHint {
 pub(crate) const MIC_CLIP_PERCENT: u32 = 97;
 /// Pico (%) por debajo del cual, pasados `MIC_SILENT_SECS`, se avisa de mudo.
 pub(crate) const MIC_SILENT_PERCENT: u32 = 2;
-/// Segundos mínimos de turno antes de acusar «sin señal» (evita el aviso
-/// parpadeante del primer instante de la grabación).
+/// Segundos mínimos de turno antes de acusar «sin señal» (así no parpadea el
+/// aviso en el primer instante de la grabación).
 pub(crate) const MIC_SILENT_SECS: u64 = 2;
 
-/// Decide el aviso del medidor a partir del pico y de los segundos de
-/// turno. Función pura (sin estado) para que los tests la cubran.
+/// Decide el aviso del medidor con el pico y los segundos de turno. Función
+/// pura (sin estado) para que las pruebas la puedan cubrir.
 pub(crate) fn mic_peak_hint(level_percent: u32, recording_secs: u64) -> Option<MicPeakHint> {
     if level_percent >= MIC_CLIP_PERCENT {
         Some(MicPeakHint::Clipping)
@@ -2436,14 +2431,14 @@ pub(crate) fn mic_peak_hint(level_percent: u32, recording_secs: u64) -> Option<M
 ///
 /// La ventana principal era un hero del micrófono + transcript + controles
 /// sueltos; Ajustes ya tenía pestañas. Ahora las dos superficies hablan el
-/// mismo idioma con dos secciones y una sola pregunta cada una:
+/// mismo idioma, con dos secciones y una sola pregunta cada una:
 ///
 /// - `Dictado`: ¿qué estoy dictando? (hero, estado, medidor, nota y acciones).
 /// - `Ajustes`: ¿cómo quiero que funcione? (el panel que ya existía).
 ///
 /// El estado NO se duplica: `settings_open` sigue siendo la única fuente de
-/// verdad ([`WhisprApp::window_section`] lo lee) para no tocar los handlers de
-/// Ajustes ni su lógica de persistencia.
+/// verdad ([`WhisprApp::window_section`] lo lee), así no hay que tocar las
+/// funciones de Ajustes ni su forma de guardar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowSection {
     Dictado,
@@ -2454,7 +2449,7 @@ impl WindowSection {
     /// Orden visual de las pestañas.
     pub(crate) const ALL: [WindowSection; 2] = [WindowSection::Dictado, WindowSection::Ajustes];
 
-    /// Etiqueta legible en español (texto, no solo icono).
+    /// Etiqueta en español (texto, no solo icono).
     pub(crate) fn label(self) -> &'static str {
         match self {
             WindowSection::Dictado => "Dictado",
@@ -2469,10 +2464,10 @@ impl std::fmt::Display for WindowSection {
     }
 }
 
-/// Categoría de una muletilla en Ajustes. Cada variante corresponde a una
-/// regla distinta de `cleanup.rs`: inequívoca (cualquier posición), solo
-/// antes de pausa, o solo abriendo el turno. Se usa en el `pick_list` de
-/// Ajustes y en los mensajes de añadir/quitar.
+/// Categoría de una muletilla en Ajustes. Cada variante es una regla distinta
+/// de `cleanup.rs`: se quita en cualquier posición, solo antes de una pausa, o
+/// solo si abre el turno. Se usa en el desplegable de Ajustes y en los avisos
+/// de añadir/quitar.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FillerCategory {
     Unambiguous,
@@ -2495,7 +2490,7 @@ impl FillerCategory {
         }
     }
 
-    /// Lista de palabras de esta categoría (solo lectura).
+    /// Palabras de esta categoría (solo lectura).
     fn list<'a>(self, fillers: &'a FillerWords) -> &'a [String] {
         match self {
             FillerCategory::Unambiguous => &fillers.unambiguous,
@@ -2504,7 +2499,7 @@ impl FillerCategory {
         }
     }
 
-    /// Lista de palabras de esta categoría (para mutar).
+    /// Palabras de esta categoría (para cambiarlas).
     pub(crate) fn list_mut<'a>(self, fillers: &'a mut FillerWords) -> &'a mut Vec<String> {
         match self {
             FillerCategory::Unambiguous => &mut fillers.unambiguous,
@@ -2520,36 +2515,36 @@ impl std::fmt::Display for FillerCategory {
     }
 }
 
-/// Texto de UI con [`Shaping::Advanced`]: los glifos de la interfaz
-/// (☀ ☾ ▸ ▾ ✕ ↩) NO existen en Segoe UI (la SansSerif default de Windows)
-/// y `Shaping::Basic` (el default de iced) no hace fallback de fuente →
-/// cosmic-text devuelve glyph_id=0 (caja vacía `.notdef`). `Advanced`
-/// activa el fallback por codepoint contra Segoe UI Emoji, cargada al
-/// arranque en `fonts.rs`.
+/// Texto de interfaz con [`Shaping::Advanced`]: los símbolos de la interfaz
+/// (☀ ☾ ▸ ▾ ✕ ↩) NO están en Segoe UI (la SansSerif de serie en Windows) y
+/// `Shaping::Basic` (el de serie en iced) no cambia de fuente → cosmic-text
+/// devuelve glyph_id=0 (el cuadro vacío `.notdef`). `Advanced` activa el cambio
+/// de fuente por carácter contra Segoe UI Emoji, que se carga al arrancar en
+/// `fonts.rs`.
 pub(crate) fn ui_text<'a>(content: impl Into<String>) -> Text<'a> {
     text(content.into()).shaping(Shaping::Advanced)
 }
 
-/// Botón secundario de la UI con el padding táctil del tema (UI-FUTURA P1:
-/// los targets de los botones secundarios se quedaban cortos). Evita
-/// repetir `button(ui_text(..)).padding(...)` por toda la vista.
+/// Botón secundario con el relleno táctil del tema (UI-FUTURA P1: los
+/// objetivos de los botones secundarios se quedaban cortos). Evita repetir
+/// `button(ui_text(..)).padding(...)` por toda la vista.
 pub(crate) fn secondary_button<'a>(label: impl Into<String>) -> Button<'a, Message> {
     button(ui_text(label))
         .padding(theme::SECONDARY_BUTTON_PADDING)
         .style(theme::secondary)
 }
 
-/// Lectura del estado del corrector IA para la UI (chip del estado principal
-/// + línea de estado en Ajustes). Función pura y testeable: la transparencia
-/// sobre CUÁNDO se usa el LLM es un requisito UX (10/09/2026), así que la
-/// lógica de etiquetas no puede vivir solo dentro de la vista.
+/// Lo que la interfaz enseña del corrector IA (el chip del estado principal y
+/// la línea de estado en Ajustes). Función pura y fácil de probar: decir
+/// CUÁNDO se usa el modelo es requisito de UX (10/09/2026), así que la lógica
+/// de las etiquetas no puede vivir solo dentro de la vista.
 ///
-/// Estados visibles (ejemplos del requisito: «Corrección IA: activa con
+/// Estados que se ven (ejemplos del requisito: «Corrección IA: activa con
 /// <modelo>» · «inactiva — servidor no encontrado»):
-/// - toggle apagado     → `dim`, invita a activarla (sin prometer modelo).
-/// - `Ready`            → `ok`, con el modelo en uso.
-/// - `Disabled(motivo)` → `warn`, motivo visible (nunca silencioso).
-/// - `Unknown`          → `dim`, «comprobando…» (arranque en curso).
+/// - interruptor apagado → `dim`, invita a encenderla (sin prometer modelo).
+/// - `Ready`             → `ok`, con el modelo en uso.
+/// - `Disabled(motivo)`  → `warn`, motivo a la vista (nunca en silencio).
+/// - `Unknown`           → `dim`, «comprobando…» (arranque en marcha).
 pub(crate) struct LlmStatusUi {
     pub(crate) kind: &'static str,
     pub(crate) label: String,
@@ -2579,10 +2574,10 @@ pub(crate) fn llm_status_ui(enabled: bool, status: &LlmStatus, model: &str) -> L
 }
 
 /// ¿La línea de feedback (`last_correction`) es un AVISO (ámbar) o una
-/// confirmación (verde)? Función pura y testeada: la clasificación decide
-/// el color que el usuario ve, así que no puede vivir escondida en la
-/// vista. Avisos: esperas, problemas del corrector, micro desconectado,
-/// turnos vacíos y el tope de grabación.
+/// confirmación (verde)? Función pura y probada: de esta decisión depende el
+/// color que ve el usuario, así que no puede quedar escondida en la vista.
+/// Avisos: esperas, problemas del corrector, micro desconectado, turnos vacíos
+/// y el tope de grabación.
 pub(crate) fn feedback_is_warning(feedback: &str) -> bool {
     feedback.starts_with("Esperando")
         || feedback.contains("no disponible")
@@ -2592,10 +2587,10 @@ pub(crate) fn feedback_is_warning(feedback: &str) -> bool {
         || feedback.contains("Dictado larguísimo")
 }
 
-/// Último turno a partir de la nota editada a mano (requisito R3): la
-/// última línea con contenido. El dictado añade al final, así que «lo
-/// último que vio/tocó el usuario» es la cola de la nota; si partió líneas
-/// a mano, la última línea ES lo último que dictó o corrigió.
+/// Último turno a partir de la nota editada a mano (requisito R3): la última
+/// línea con algo. El dictado añade al final, así que «lo último que vio o tocó
+/// el usuario» es la cola de la nota; si partió líneas a mano, la última línea
+/// ES lo último que dictó o corrigió.
 pub(crate) fn last_turn_from_transcript(transcript: &str) -> String {
     transcript
         .lines()
@@ -2606,9 +2601,9 @@ pub(crate) fn last_turn_from_transcript(transcript: &str) -> String {
         .to_string()
 }
 
-/// Etiqueta completa del estado de descarga (requisito R4: tamaño
-/// descargado/total y tiempo restante, no solo un porcentaje). La usan el
-/// hero de la ventana principal y la pantalla de carga.
+/// Etiqueta completa del estado de descarga (requisito R4: tamaño descargado y
+/// total, más el tiempo que queda, no solo un porcentaje). La usan el hero de
+/// la ventana principal y la pantalla de carga.
 fn download_progress_label(
     what: &str,
     downloaded: u64,
@@ -2627,12 +2622,12 @@ fn download_progress_label(
     )
 }
 
-/// Tiempo restante legible a partir de la velocidad estimada. Sin velocidad
-/// fiable → «calculando tiempo…» (nada de un «∞ s» técnico). Formatos
-/// elegidos para no prometer exactitud donde no la hay: a partir de 90 min
-/// se dice «más de 1 h».
+/// Tiempo que queda, escrito para que se entienda. Sin velocidad fiable →
+/// «calculando tiempo…» (nada de un «∞ s» de máquina). Los formatos están
+/// elegidos para no prometer precisión que no hay: a partir de 90 min se dice
+/// «más de 1 h».
 fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
-    // Menos de 1 KB/s no es una velocidad: es el arranque de la conexión.
+    // Menos de 1 KB/s no es una velocidad: es la conexión arrancando.
     let Some(rate) = rate.filter(|r| *r > 1024.0) else {
         return "calculando tiempo…".to_string();
     };
@@ -2649,9 +2644,9 @@ fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
     }
 }
 
-    /// Placeholder del editor cuando la nota está vacía: cómo empezar. Se
-    /// guarda como campo (la API del editor pide un préstamo por el frame,
-    /// no un owned).
+    /// Texto de ayuda del editor cuando la nota está vacía: por dónde empezar.
+    /// Se guarda como campo (la API del editor pide un préstamo por frame, no un
+    /// valor propio).
     pub(crate) fn transcript_placeholder(hotkey_label: &str) -> String {
         format!(
             "Pulsa {hotkey_label} o el botón del micrófono y empieza a hablar.\n\
@@ -2659,22 +2654,22 @@ fn download_eta_text(downloaded: u64, total: u64, rate: Option<f64>) -> String {
         )
     }
 
-/// Aviso del pie cuando la corrección IA usa la NUBE (requisito R4: HONESTO
-/// por encima de todo). El texto de privacidad local («Transcripción local ·
-/// nada sale de tu PC») se retiró de la UI por redundante con el README; este
-/// aviso solo aparece cuando el turno SÍ sale del equipo.
+/// Aviso del pie cuando la corrección IA usa la NUBE (requisito R4: ser
+/// HONESTO por encima de todo). El texto de privacidad de antes
+/// («Transcripción local · nada sale de tu PC») se quitó de la interfaz por
+/// repetir el README; este aviso solo sale cuando el turno SÍ sale del equipo.
 pub(crate) const CLOUD_CORRECTION_NOTICE: &str = "Transcripción local · la corrección IA usa la nube";
 
-/// Idiomas que ofrecen los selectores de idioma (barra lateral de la ventana
-/// principal y Ajustes → Dictado: la misma lista en los dos sitios). «auto» es
-/// la autodetección de Whisper.
+/// Idiomas que ofrecen los selectores (la barra lateral de la ventana principal
+/// y Ajustes → Dictado: la misma lista en los dos sitios). «auto» es la
+/// autodetección de Whisper.
 pub(crate) const LANGUAGE_OPTIONS: &[&str] = &["auto", "es", "en", "fr", "de", "it", "pt"];
 
-/// Etiqueta legible del idioma para el `pick_list`. La opción "auto"
-/// representa autodetección; cualquier valor en `Option<String>` (incluido
-/// None → default "es") se mapea a la cadena que el `pick_list` espera.
-/// Si el usuario metió un idioma raro (p. ej. "klingon") no presente en
-/// `LANGUAGE_OPTIONS`, lo mostramos igualmente para que no se "pierda".
+/// Etiqueta legible del idioma para el desplegable. La opción "auto" es la
+/// autodetección; cualquier valor en `Option<String>` (incluido None, que va a
+/// "es" de serie) se convierte en la cadena que el desplegable espera.
+/// Si el usuario puso un idioma raro (por ejemplo "klingon") que no está en
+/// `LANGUAGE_OPTIONS`, se enseña igual para que no "se pierda".
 pub(crate) fn language_label(value: &Option<String>) -> String {
     match value.as_deref().map(str::trim) {
         None => "es".to_string(),
@@ -2684,8 +2679,8 @@ pub(crate) fn language_label(value: &Option<String>) -> String {
     }
 }
 
-/// Hint contextual bajo el selector de idioma: aclara lo que hace cada
-/// opción. Solo aparece cuando el idioma está en "auto" o no se reconoce.
+/// Pista bajo el selector de idioma: aclara qué hace cada opción. Solo sale con
+/// el idioma en "auto" o cuando no se reconoce.
 pub(crate) fn language_hint(value: &Option<String>) -> String {
     match value.as_deref().map(str::trim) {
         Some(s) if s.eq_ignore_ascii_case("auto") => "whisper decide".to_string(),
@@ -2695,9 +2690,9 @@ pub(crate) fn language_hint(value: &Option<String>) -> String {
     }
 }
 
-/// Fila de una lista con acción de borrado: el contenido a la izquierda y el
-/// «✕» pegado a la COLUMNA DERECHA de la lista (misma x para todas las filas),
-/// no detrás de cada palabra. Diccionario y muletillas comparten tratamiento.
+/// Fila de una lista con botón de borrar: el contenido a la izquierda y la «✕»
+/// pegada a la COLUMNA DERECHA de la lista (la misma x en todas las filas), no
+/// detrás de cada palabra. Diccionario y muletillas se pintan igual.
 fn list_row<'a>(content: Element<'a, Message>, message: Message) -> Element<'a, Message> {
     row![
         content,
@@ -2721,8 +2716,8 @@ pub(crate) fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes)
     let mut col = Column::new().spacing(theme::SPACE_1);
     for (idx, entry) in entries.iter().enumerate() {
         col = col.push(list_row(
-            // `ui_text`: la flecha «→» necesita el fallback por codepoint
-            // (con el shaping básico salía como caja vacía).
+            // `ui_text`: la flecha «→» necesita el cambio de fuente por carácter
+            // (con el shaping básico salía como cuadro vacío).
             ui_text(format!("{} → {}", entry.from, entry.to))
                 .size(fs.md)
                 .into(),
@@ -2738,10 +2733,10 @@ pub(crate) fn dictionary_list(entries: &[DictionaryEntry], fs: theme::FontSizes)
     .into()
 }
 
-/// Listas de muletillas por categoría con botón ✕ para quitar (idéntico en
-/// estilo a `dictionary_list`). Solo muestra las categorías con palabras;
-/// si todas están vacías (el usuario quitó todo) avisa de que no se limpia
-/// nada y que «Por defecto» restaura las listas de serie.
+/// Listas de muletillas por categoría con botón ✕ para quitar (mismo estilo que
+/// `dictionary_list`). Solo enseña las categorías con palabras; si están todas
+/// vacías (el usuario lo quitó todo) avisa de que no se limpia nada y que
+/// «Por defecto» devuelve las listas de serie.
 pub(crate) fn filler_lists(fillers: &FillerWords, fs: theme::FontSizes) -> Element<'static, Message> {
     if FillerCategory::ALL
         .iter()
@@ -2777,13 +2772,13 @@ pub(crate) fn filler_lists(fillers: &FillerWords, fs: theme::FontSizes) -> Eleme
     .into()
 }
 
-/// Transcribe en un hilo de trabajo: a) descarga el modelo si falta (la
-/// primera vez, silencioso), b) carga el contexto whisper.cpp, c) transcribe
-/// con el diccionario del usuario como initial_prompt (sesgo léxico).
+/// Transcribe en un hilo de trabajo: a) descarga el modelo si falta (la primera
+/// vez, sin decir nada), b) carga el contexto de whisper.cpp, c) transcribe con
+/// el diccionario del usuario como initial_prompt (así reconoce mejor su jerga).
 ///
-/// `inference` agrupa los parámetros ajustados en Ajustes (idioma, beam
-/// size, threads). El idioma `None` significa autodetección: no se llama
-/// a `set_language` y whisper decide.
+/// `inference` junta los parámetros elegidos en Ajustes (idioma, beam size,
+/// hilos). Idioma `None` es autodetección: no se llama a `set_language` y
+/// decide whisper.
 fn transcribe_samples(
     samples: Vec<f32>,
     model: Model,
@@ -2803,9 +2798,9 @@ fn transcribe_samples(
     crate::transcribe::transcribe_cached(&samples, model, &inference, prompt.as_deref())
 }
 
-/// Mensaje de fallo de descarga para `Status::Error`: causa clasificada y
-/// accionable (requisito de robustez), con el detalle técnico solo en el
-/// log — nunca la cadena cruda de ureq/fs en la cara del usuario.
+/// Mensaje de fallo de descarga para `Status::Error`: la causa clasificada y con
+/// algo que hacer (requisito de robustez), y el detalle técnico solo en el log
+/// — nunca la cadena cruda de ureq/fs en la cara del usuario.
 pub(crate) fn download_failure_message(model: Model, raw: &str) -> String {
     let hint = crate::transcribe::friendly_download_error(raw);
     crate::log!("transcribe", "fallo descargando {}: {raw}", model.id());
@@ -2818,15 +2813,16 @@ pub(crate) fn download_failure_message(model: Model, raw: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Arranque en background (requisito UX 09/09/2026: «la app levanta todo por
-// sí misma»). Estos hilos NO tocan la UI: solo emiten eventos por canal y el
-// Poll los aplica. Terminan SIEMPRE con un evento terminal (WhisperFailed,
-// LlmReady o LlmDisabled) para que la app nunca se quede colgada «cargando».
+// Arranque en segundo plano (requisito UX 09/09/2026: «la app levanta todo
+// por sí misma»). Estos hilos NO tocan la interfaz: solo mandan eventos por
+// canal y el `Poll` los aplica. Acaban SIEMPRE con un evento final
+// (WhisperFailed, LlmReady o LlmDisabled) para que la app no se quede nunca
+// colgada «cargando».
 // ---------------------------------------------------------------------------
 
-/// Fase whisper del arranque: descarga el modelo si falta (con progreso) y
-/// lo carga en el cache de contexto (prerroll: la primera pulsación del
-/// atajo no paga la carga). Luego delega en `run_llm_phase` si aplica.
+/// Fase whisper del arranque: descarga el modelo si falta (con progreso) y lo
+/// carga en la caché de contexto (así la primera pulsación del atajo no paga la
+/// carga). Después pasa a `run_llm_phase` si toca.
 pub(crate) fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>) {
     let model = cfg.selected_model();
     if !crate::transcribe::model_exists(model) {
@@ -2865,19 +2861,19 @@ pub(crate) fn run_startup_thread(cfg: Config, tx: Sender<StartupEvent>, cancel: 
     }
 }
 
-/// Carga el contexto whisper del modelo con UNA recuperación ante fichero
-/// dañado: si el modelo está en disco pero es un GGML inválido (truncado por
-/// una copia manual, descarga antigua interrumpida, corrupción), se borra, se
-/// re-descarga limpio (con eventos de progreso) y se re-intenta una única
-/// vez. Sin esto, «Reintentar» de la pantalla de error volvía a entregar el
-/// mismo fichero dañado una y otra vez: bucle infinito de fallo (requisito
-/// de robustez del arranque).
+/// Carga el contexto del modelo con UNA recuperación si el fichero está roto:
+/// si el modelo está en disco pero no es un GGML válido (truncado por una copia
+/// a mano, descarga vieja interrumpida, corrupción), se borra, se descarga
+/// limpio otra vez (con eventos de progreso) y se reintenta una sola vez. Sin
+/// esto, «Reintentar» de la pantalla de error volvía a dar el mismo fichero
+/// dañado una y otra vez: un bucle de fallo sin fin (requisito de robustez del
+/// arranque).
 ///
-/// H3 (QA 24/09/2026): un fichero VÁLIDO que no carga (error de CUDA/memoria
-/// al crear el contexto) NO se toca. Antes se borraba siempre que `preload`
-/// fallara, así que con la red caída el dictado entraba en un bucle infinito
+/// H3 (QA 24/09/2026): un fichero VÁLIDO que no carga (error de CUDA/memoria al
+/// crear el contexto) NO se toca. Antes se borraba siempre que `preload`
+/// fallara, así que con la red caída el dictado entraba en un bucle sin fin
 /// («Dns Failed: resolve failure», 47 veces en el log del 24/09): el usuario
-/// perdía un modelo bueno y cada intento volvía a intentar descargarlo.
+/// perdía un modelo bueno y cada intento volvía a descargarlo.
 fn preload_with_recovery(model: Model, tx: &Sender<StartupEvent>) -> Result<(), String> {
     let first = crate::transcribe::preload(model);
     if first.is_ok() {
@@ -2886,15 +2882,15 @@ fn preload_with_recovery(model: Model, tx: &Sender<StartupEvent>) -> Result<(), 
     let err = first.unwrap_err();
     let path = crate::transcribe::model_path(model);
     if !path.is_file() {
-        // Sin fichero en disco el fallo es ambiental (CUDA, memoria, …):
-        // re-descargar no arregla nada, se reporta el error tal cual.
+        // Sin fichero en disco el fallo es del entorno (CUDA, memoria, …):
+        // descargar otra vez no arregla nada, se informa del error tal cual.
         return Err(err);
     }
     if !discard_corrupt_model(&path) {
-        // El fichero es un GGML sano: el fallo es de carga (GPU/memoria) y
-        // re-descargar no arregla nada. Se conserva el modelo local y se
-        // propaga el fallo de carga (el usuario lo ve en la pantalla de
-        // error; aquí no se borra nada ni se toca la red).
+        // El fichero es un GGML sano: el fallo es al cargar (GPU/memoria) y
+        // descargar otra vez no arregla nada. Se conserva el modelo local y se
+        // deja salir el error de carga (el usuario lo ve en la pantalla de error;
+        // aquí no se borra nada ni se toca la red).
         return Err(format!(
             "{err} (el fichero del modelo en disco es válido: se conserva el modelo local)"
         ));
@@ -2902,22 +2898,23 @@ fn preload_with_recovery(model: Model, tx: &Sender<StartupEvent>) -> Result<(), 
     let redownload = crate::transcribe::ensure_model(model, |downloaded, total| {
         let _ = tx.send(StartupEvent::WhisperProgress { downloaded, total });
     });
-    // Fallo al re-descargar (p. ej. sin red): mensaje clasificado y accionable
-    // en español para la UI y detalle técnico en el log (dice qué se hizo).
+    // Fallo al volver a descargar (por ejemplo sin red): mensaje clasificado y
+    // con algo que hacer, en español, para la interfaz, y el detalle técnico en
+    // el log (que dice qué se hizo).
     redownload.map_err(|error| download_failure_message(model, &error))?;
     crate::transcribe::preload(model)
 }
 
-/// ¿Hay que reciclar (borrar para re-descargar) el fichero del modelo que
-/// acaba de fallar al cargar? Devuelve `true` SOLO si el fichero existe y no
-/// es un GGML válido: en ese caso lo borra y lo deja dicho en el log.
+/// ¿Hay que tirar (borrar para descargar de nuevo) el fichero del modelo que
+/// acaba de fallar al cargar? Devuelve `true` SOLO si el fichero existe y no es
+/// un GGML válido: en ese caso lo borra y lo deja dicho en el log.
 ///
-/// Devuelve `false` —sin tocar nada— cuando no hay fichero o cuando el
-/// fichero es válido: en ambos casos el fallo es ambiental (GPU, memoria…) y
-/// borrar el modelo bueno solo provoca el bucle de descarga de H3.
+/// Devuelve `false` —sin tocar nada— cuando no hay fichero o cuando el fichero
+/// es válido: en los dos casos el fallo es del entorno (GPU, memoria…) y borrar
+/// el modelo bueno solo provoca el bucle de descargas de H3.
 ///
-/// La validez la decide `transcribe::model_file_is_valid` (única fuente de
-/// verdad del formato GGML), no esta función.
+/// Quién decide si vale es `transcribe::model_file_is_valid` (el único sitio que
+/// conoce el formato GGML), no esta función.
 fn discard_corrupt_model(path: &std::path::Path) -> bool {
     if !path.is_file() {
         return false;
@@ -2940,15 +2937,15 @@ fn discard_corrupt_model(path: &std::path::Path) -> bool {
     true
 }
 
-/// Fase LLM del arranque (o del toggle de corrección IA en caliente):
-/// verifica `/v1/models`; si no responde y el endpoint es local, busca y
-/// lanza llama-server con el modelo configurado y espera a que quede listo
-/// (máx. 60 s). Cualquier fallo → `LlmDisabled(motivo visible)` — el
-/// dictado sigue funcionando sin corrección.
+/// Fase del modelo del arranque (o de encender la corrección IA en caliente):
+/// pregunta a `/v1/models`; si no contesta y la dirección es local, busca y lanza
+/// llama-server con el modelo configurado y espera a que esté listo (60 s como
+/// mucho). Cualquier fallo → `LlmDisabled(motivo a la vista)` — el dictado sigue
+/// funcionando sin corrección.
 fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>) {
-    // Punto de control 1: si el usuario apagó la corrección mientras la fase
-    // estaba en vuelo (toggle off en caliente), abortar antes de tocar nada —
-    // sin lanzar server, sin resolver rutas, con un único evento terminal.
+    // Control 1: si el usuario apagó la corrección con la fase en marcha
+    // (interruptor en caliente), abortar antes de tocar nada — sin lanzar
+    // servidor, sin resolver rutas, con un solo evento final.
     if cancel.load(Ordering::SeqCst) {
         let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
         return;
@@ -2956,17 +2953,17 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     let llm = cfg.llm_settings();
 
     if !cfg.ai_correction_enabled() {
-        // El usuario la apagó: fase omitida, sin aviso (razón vacía).
+        // La apagó el usuario: fase omitida, sin aviso (motivo vacío).
         let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
         return;
     }
     if !crate::llm::is_local_endpoint(&llm.base_url) {
-        // Custom/Cloud remoto: no hay server local que levantar, pero SÍ
-        // se comprueba que el endpoint responde (con la API key si la
-        // hay; sin ella un 401 falsearía «caído»). El chip de estado
-        // refleja así el proveedor activo: si el endpoint está caído o
-        // rechaza la petición, la corrección se desactiva con aviso
-        // visible y el dictado sigue funcionando a texto bruto.
+        // Custom/Cloud remoto: no hay servidor local que levantar, pero SÍ se
+        // comprueba que la dirección contesta (con la clave si la hay; sin ella un
+        // 401 daría un «caído» falso). Así el chip de estado enseña el proveedor
+        // que está en uso: si la dirección no contesta o rechaza la petición, la
+        // corrección se apaga con aviso a la vista y el dictado sigue a texto
+        // bruto.
         if crate::llm::server_alive_auth(&llm.base_url, llm.api_key.as_deref()) {
             let _ = tx.send(StartupEvent::LlmReady { launched: false });
         } else {
@@ -2984,20 +2981,20 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     }
 
     let Some(model_path) = crate::llm::resolve_model_path(&llm.model) else {
-        // Sin modelo no hay corrección, pero NO se le pide ninguna ruta al
-        // usuario (requisito 14/10/2026): el GGUF se busca solo junto a la app
-        // (`vendor/models`) y en la carpeta de modelos de la app. Descargarlo
-        // automáticamente está pendiente: `llm.model` es un nombre libre y no
-        // hay origen (repo HF) conocido para él.
+        // Sin modelo no hay corrección, pero NO se le pide ninguna ruta al usuario
+        // (requisito 14/10/2026): el GGUF se busca solo junto a la app
+        // (`vendor/models`) y en la carpeta de modelos de la app. Descargarlo solo
+        // está pendiente: `llm.model` es un nombre libre y no hay origen conocido
+        // (repo HF) para él.
         crate::log!(
             "startup",
             "modelo LLM «{}» no encontrado en {:#?}",
             llm.model,
             crate::llm::model_search_roots()
         );
-        // El motivo que ve el usuario NO lleva el nombre del modelo: en la
-        // fila del pie se lee «Inactiva — carga un modelo de IA», sin códigos
-        // internos. El nombre exacto queda en el log de arriba.
+        // El motivo que ve el usuario NO lleva el nombre del modelo: en la fila
+        // del pie se lee «Inactiva — carga un modelo de IA», sin códigos internos.
+        // El nombre exacto queda en el log de arriba.
         let _ = tx.send(StartupEvent::LlmDisabled(
             "carga un modelo de IA; el dictado funciona sin corrección".to_string(),
         ));
@@ -3006,11 +3003,11 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
 
     let port = crate::llm::port_from_base_url(&llm.base_url);
     let Some(server_bin) = crate::llm::resolve_server_path(&cfg) else {
-        // Sin ejecutable no hay server local que levantar: la corrección se
-        // desactiva con aviso y el dictado sigue. NO se le pide una ruta al
-        // usuario (requisito 14/10/2026): el server viaja en el paquete
-        // (`vendor/llama/`); si no está, esta instalación no lo trae y el
-        // único ajuste manual que queda es el endpoint OpenAI-compatible.
+        // Sin ejecutable no hay servidor local que levantar: la corrección se
+        // apaga con aviso y el dictado sigue. NO se le pide una ruta al usuario
+        // (requisito 14/10/2026): el servidor viaja en el paquete
+        // (`vendor/llama/`); si no está, esta instalación no lo trae y el único
+        // ajuste a mano que queda es la dirección OpenAI-compatible.
         crate::log!(
             "startup",
             "sin server LLM: no hay ninguno vendado junto a {:?} ni instalado en el equipo",
@@ -3032,19 +3029,18 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     );
     match crate::llm::launch_server(&server_bin, &model_path, port) {
         Ok(pid) => {
-            // Punto de control 2: cancelación justo tras lanzar — el server
-            // recién creado se termina (por su PID propio, no el slot global:
-            // otra fase pudo reemplazarlo) y no se espera a que cargue el
-            // modelo.
+            // Control 2: cancelación justo después de lanzar — el servidor recién
+            // creado se cierra (por su propio PID, no por el global: otra fase pudo
+            // sustituirlo) y no se espera a que cargue el modelo.
             if cancel.load(Ordering::SeqCst) {
                 crate::llm::terminate_server_pid(pid);
                 let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
                 return;
             }
             if crate::llm::wait_for_server(&llm.base_url, Duration::from_secs(60)) {
-                // Punto de control 3: cancelación mientras el server cargaba
-                // el modelo — si la corrección ya está apagada, el modelo no
-                // debe quedarse en memoria.
+                // Control 3: cancelación mientras el servidor cargaba el modelo —
+                // si la corrección ya está apagada, el modelo no debe quedarse en
+                // memoria.
                 if cancel.load(Ordering::SeqCst) {
                     crate::llm::terminate_server_pid(pid);
                     let _ = tx.send(StartupEvent::LlmDisabled(String::new()));
@@ -3068,10 +3064,9 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     }
 }
 
-/// Razón visible cuando un endpoint remoto (proveedor Custom o Cloud)
-/// no responde o rechaza la petición. El dictado NUNCA se bloquea: la
-/// corrección se desactiva con este aviso y el turno se inserta a texto
-/// bruto (spec §3.5.4).
+/// Razón a la vista cuando una dirección remota (proveedor Custom o Cloud) no
+/// contesta o rechaza la petición. El dictado NUNCA se bloquea: la corrección se
+/// apaga con este aviso y el turno se escribe a texto bruto (spec §3.5.4).
 fn remote_endpoint_reason(base_url: &str) -> String {
     format!(
         "el endpoint {base_url} no respondió o rechazó la petición; \
@@ -3083,9 +3078,9 @@ fn remote_endpoint_reason(base_url: &str) -> String {
 mod tests {
     use super::*;
 
-    /// Transparencia del corrector IA (requisito UX 10/09/2026): el chip del
-    /// estado debe decir SIEMPRE algo coherente con (toggle, estado del
-    /// server) y prometer el modelo solo cuando la corrección puede actuar.
+    /// Que se vea claro lo que hace el corrector (requisito UX 10/09/2026): el
+    /// chip de estado debe decir SIEMPRE algo coherente con (interruptor, estado
+    /// del server) y nombrar el modelo solo cuando la corrección puede actuar.
     #[test]
     fn chip_muestra_modelo_solo_cuando_la_correccion_esta_activa() {
         let ui = llm_status_ui(true, &LlmStatus::Ready { launched: false }, "ornith-1.0-9b");
