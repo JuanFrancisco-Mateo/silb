@@ -46,7 +46,7 @@
 #define MyAppURL "https://github.com/JuanFrancisco-Mateo/whispr-open"
 #define MyAppExeName "silb.exe"
 #ifndef MyAppVersion
-  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.5.0"
+  #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.6.0"
 #endif
 ; --- Pack: sin define = instalador base (CPU only) · /DMyCudaPack = pack CUDA --
 ; La presencia del define es el flag (ISPP compara mal string vs número):
