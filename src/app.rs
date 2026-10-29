@@ -803,7 +803,7 @@ impl WhisprApp {
         // Se quitan los espacios antes de decidir si está vacío.
         let trimmed = raw_input.trim().to_string();
         if trimmed.is_empty() {
-            // Vacío = vuelve al color de serie (None en el hueco).
+            // Vacío = el campo vuelve al color de serie (None en el hueco).
             let cfg = self
                 .config
                 .palette
@@ -831,13 +831,13 @@ impl WhisprApp {
                 theme::PaletteField::Err => cfg.err = Some(trimmed),
                 theme::PaletteField::Border => cfg.border = Some(trimmed),
             }
-            // Tras persistir, vacía el buffer para que el input «libere»
-            // el hex en vuelo (la UI mostrará el valor persistido).
+            // Una vez guardado, se vacía el buffer para que el input suelte el hex
+            // a medio escribir (la interfaz enseñará el valor guardado).
             self.palette_inputs.remove(&field);
         } else {
-            // Hex inválido: se IGNORA (requisito: NUNCA romper la UI). Log
-            // para diagnóstico y vacía el buffer para que el input NO siga
-            // mostrando basura (la regla «input vacío = default» aplica).
+            // Hex inválido: se IGNORA (regla: NUNCA romper la interfaz). Se apunta
+            // en el log para poder mirarlo y se vacía el buffer, para que el input
+            // no siga enseñando basura (y valga «input vacío = color de serie»).
             crate::log!(
                 "palette",
                 "hex inválido descartado en {:?}: «{}»",
@@ -850,10 +850,10 @@ impl WhisprApp {
     }
 
     // ── Fusión de paletas (import) ─────────────────────────────────────────
-    // Un campo presente en `incoming` sobrescribe el de `dest`; un campo
-    // ausente mantiene el valor actual. Esto permite compartir paletas
-    // parciales (p. ej. solo el acento). Hex inválido en `incoming` se
-    // ignora silenciosamente para no romper la paleta actual.
+    // Un campo que venga en `incoming` pisa el de `dest`; uno que no venga se
+    // queda como está. Así se pueden compartir paletas a medias (por ejemplo
+    // solo el color de acento). Un hex que no vale en `incoming` se ignora sin
+    // decir nada, para no romper la paleta actual.
     fn merge_palette_field(
         dest: &mut Option<String>,
         incoming: &Option<String>,
@@ -901,9 +901,9 @@ impl WhisprApp {
         self.config_save_deadline = None;
     }
 
-    /// Inyección con la configuración actual (formato, retardo y filtro por
-    /// ventana de `config.json`). Feedback honesto en los tres casos: éxito →
-    /// mensaje verde; filtro que no coincide → aviso (no es error); fallo
+    /// Escribe con la configuración actual (formato, espera y filtro por ventana
+    /// de `config.json`). Se avisa de lo que pasa en los tres casos: bien →
+    /// mensaje verde; el filtro no coincide → aviso (no es un error); fallo
     /// técnico → `Status::Error`.
     pub(crate) fn inject_into_active(&mut self, text: &str) {
         match inject_text_into_active_app(text, &self.config.inject_settings()) {
@@ -914,9 +914,9 @@ impl WhisprApp {
                 self.last_correction = Some(InjectOutcome::Skipped(String::new()).notice());
             }
             Ok(InjectOutcome::NoForegroundWindow) => {
-                // Sin ninguna ventana con el foco no hay dónde pegar: el
-                // turno no se pierde — queda en el portapapeles para que el
-                // usuario lo pegue donde quiera (requisito de robustez).
+                // Sin ninguna ventana con el foco no hay dónde pegar: el turno no
+                // se pierde, se queda en el portapapeles para que el usuario lo
+                // pegue donde quiera (requisito de robustez).
                 if let Err(e) = crate::inject::copy_to_clipboard(text) {
                     crate::log!("inject", "sin ventana activa y sin portapapeles: {e}");
                 }
@@ -926,24 +926,24 @@ impl WhisprApp {
         }
     }
 
-    /// Sincroniza el editor multilínea con `self.transcript` tras un cambio
-    /// PROGRAMÁTICO del texto (turno nuevo, corrección, undo, borrado): se
-    /// reconstruye el contenido y el cursor va al final (el turno nuevo se
-    /// ve al instante, como el `anchor_bottom` del antiguo scrollable).
-    /// Las ediciones MANUALES no pasan por aquí (van por
-    /// `Message::TranscriptEdited`): así editar a mano y seguir dictando
-    /// no se pisan — el dictado añade al final del texto YA editado.
+    /// Pone el editor de varias líneas al día con `self.transcript` cuando el
+    /// texto cambia por código (turno nuevo, corrección, deshacer, borrado): se
+    /// reconstruye el contenido y el cursor va al final (el turno nuevo se ve al
+    /// instante, como el `anchor_bottom` del scrollable de antes). Las ediciones
+    /// a mano no pasan por aquí (van por `Message::TranscriptEdited`): así
+    /// escribir a mano y seguir dictando no se pisan — lo dictado se añade al
+    /// final del texto YA editado.
     pub(crate) fn sync_editor_from_transcript(&mut self) {
         self.transcript_editor = text_editor::Content::with_text(&self.transcript);
-        // Cursor al final del documento: mantiene lo nuevo a la vista.
+        // Cursor al final del documento: así lo nuevo queda a la vista.
         self.transcript_editor
             .perform(text_editor::Action::Move(text_editor::Motion::DocumentEnd));
     }
 
-    /// Registra una muestra de progreso de descarga: actualiza el estado
-    /// (bytes descargados/total) y la velocidad estimada (EMA al 30 %) que
-    /// alimenta el «quedan ~X» del hero y de la pantalla de carga. Una
-    /// descarga NUEVA (bytes que retroceden) reinicia el tracker.
+    /// Apunta una muestra del progreso de descarga: actualiza el estado (bytes
+    /// descargados y total) y la velocidad estimada (media al 30 %) que alimenta
+    /// el «quedan ~X» del hero y de la pantalla de carga. Si la descarga empieza
+    /// de nuevo (los bytes retroceden), el cálculo se reinicia.
     pub(crate) fn note_download_progress(&mut self, downloaded: u64, total: u64) {
         if let Status::Downloading { model, .. } = &self.status {
             self.status = Status::Downloading {
@@ -954,8 +954,8 @@ impl WhisprApp {
         }
         let now = std::time::Instant::now();
         match self.dl_last {
-            // Muestra válida solo si avanza y ha pasado medio segundo (las
-            // ráfagas de mensajes instantáneos miden velocidad infinita).
+            // La muestra solo vale si avanza y ha pasado medio segundo (los
+            // mensajes que llegan de golpe darían velocidades infinitas).
             Some((prev_d, prev_t)) if downloaded >= prev_d => {
                 let dt = now.duration_since(prev_t).as_secs_f64();
                 if dt >= 0.5 {
@@ -967,7 +967,7 @@ impl WhisprApp {
                     self.dl_last = Some((downloaded, now));
                 }
             }
-            // Primera muestra o descarga nueva: aún sin velocidad fiable.
+            // Primera muestra o descarga nueva: todavía no hay velocidad fiable.
             _ => {
                 self.dl_last = Some((downloaded, now));
                 self.dl_rate = None;
@@ -975,12 +975,11 @@ impl WhisprApp {
         }
     }
 
-    /// Núcleo de fin de turno, compartido por la parada voluntaria
-    /// (`StopRecording`: atajo, botón, burbuja o tope de duración) y la
-    /// forzosa (`AudioDeviceLost`: micro desconectado a mitad). Recoge el
-    /// audio acumulado y lo manda al hilo de transcripción; si no se oyó
-    /// nada, el turno termina limpio con un aviso visible (nunca un
-    /// silencio confuso ni un estado colgado).
+    /// Final de turno, compartido por la parada voluntaria (`StopRecording`:
+    /// atajo, botón, burbuja o tope de duración) y la forzosa (`AudioDeviceLost`:
+    /// micro desconectado a mitad). Recoge el audio acumulado y lo manda al hilo
+    /// de transcripción; si no se oyó nada, el turno acaba limpio con un aviso a
+    /// la vista (nunca un silencio raro ni un estado colgado).
     pub(crate) fn finish_recording(&mut self) -> Task<Message> {        let Some(mut capture) = self.audio.take() else {
             return Task::none();
         };
@@ -989,9 +988,9 @@ impl WhisprApp {
         if samples.is_empty() {
             self.pending_inject = false;
             self.status = Status::Idle;
-            // Sin audio no hay transcripción que esperar: el aviso se pone
-            // aquí y ya (0 s de grabación, doble pulsación del atajo, o
-            // micro muerto antes de oír nada).
+            // Sin audio no hay transcripción que esperar: el aviso se pone aquí y
+            // ya (0 s de grabación, doble pulsación del atajo, o micro muerto antes
+            // de oír nada).
             self.last_correction = Some(if self.device_lost {
                 self.device_lost = false;
                 "El micrófono se desconectó antes de que se oyera nada; revisa el micro y vuelve a dictar.".to_string()
@@ -1002,12 +1001,11 @@ impl WhisprApp {
         }
 
         let model = self.config.selected_model();
-        // El diccionario viaja como initial_prompt: sesga el
-        // reconocedor hacia jerga/nombres/siglas ANTES de transcribir.
+        // El diccionario va como initial_prompt: empuja al reconocedor hacia
+        // jerga, nombres y siglas ANTES de transcribir.
         let dictionary = self.config.dictionary.clone();
-        // Parámetros de inferencia ajustados en Ajustes. Se clonan
-        // aquí para mover al hilo de transcripción sin necesidad de
-        // un Arc.
+        // Parámetros de inferencia elegidos en Ajustes. Se copian aquí para
+        // pasarlos al hilo de transcripción sin necesidad de un Arc.
         let inference = crate::transcribe::InferenceParams {
             language: self.config.language().map(str::to_string),
             beam_size: self.config.beam_size() as i32,
@@ -1025,13 +1023,12 @@ impl WhisprApp {
         Task::none()
     }
 
-    /// Despachador unificado del resultado LLM (t_78d9e1fa). Llega por
-    /// `Message::CorrectionDone` o `Message::RedactionDone` (ambos
-    /// llevan `Result<LlmResult, String>`); este método decide el modo
-    /// mirando `llm_pending.mode` y enruta a `handle_llm_diff` (cross)
-    /// o `handle_llm_redaction` (in-turn). En caso de error del LLM,
-    /// ambos modos acaban en `restore_pending_as_dictation` para no
-    /// perder el texto del usuario.
+    /// Punto único que atiende el resultado del modelo (t_78d9e1fa). Llega por
+    /// `Message::CorrectionDone` o `Message::RedactionDone` (los dos traen
+    /// `Result<LlmResult, String>`); este método mira `llm_pending.mode` para
+    /// saber el modo y tira por `handle_llm_diff` (cross) o
+    /// `handle_llm_redaction` (in-turn). Si el modelo falla, los dos modos acaban
+    /// en `restore_pending_as_dictation` para no perder el texto del usuario.
     pub(crate) fn handle_llm_correction(
         &mut self,
         result: Result<LlmResult, String>,
@@ -1061,8 +1058,8 @@ impl WhisprApp {
         }
     }
 
-    /// Formatea un error del LLM con un hint orientado al usuario
-    /// (mismo contrato que la versión previa de handle_llm_correction).
+    /// Escribe un error del modelo con una pista pensada para el usuario (el
+    /// mismo trato que daba antes la versión vieja de handle_llm_correction).
     fn format_llm_error(&self, e: &str) -> String {
         let hint = if e.starts_with("HTTP:") {
             " (¿está el servidor LLM arrancado? Mira el log en %APPDATA%\\whispr-open)"
@@ -1074,10 +1071,9 @@ impl WhisprApp {
         format!("Corrección IA no disponible: {e}{hint}")
     }
 
-    /// Modo cross-turn: aplica el diff a `target` (el último turno).
-    /// Migrado desde el antiguo `handle_llm_correction` sin cambios de
-    /// comportamiento; solo se aísla para que el flujo in-turn no le
-    /// afecte.
+    /// Modo cross-turn: aplica el cambio a `target` (el último turno). Viene del
+    /// antiguo `handle_llm_correction` sin cambiar el comportamiento; se separó
+    /// solo para que el flujo in-turn no le afecte.
     fn handle_llm_diff(
         &mut self,
         diff: crate::domain::corrective::Diff,
@@ -1091,8 +1087,8 @@ impl WhisprApp {
         };
         let target = p.target.clone();
 
-        // LOG: el LLM devolvió algo (válido o vacío). Antes esto
-        // era invisible; ahora se ve siempre.
+        // LOG: el modelo contestó algo (con contenido o vacío). Antes esto no se
+        // veía; ahora se ve siempre.
         if diff.find.is_empty() {
             crate::log!(
                 "llm",
@@ -1110,9 +1106,9 @@ impl WhisprApp {
             );
         }
 
-        // Modo confirmar (spec §4.2): si el toggle está activo,
-        // no aplicamos a ciegas. Guardamos el diff en `pending_diff`
-        // y dejamos que la UI muestre «Aplicar» / «Descartar».
+        // Modo confirmar (spec §4.2): con el interruptor encendido no se aplica a
+        // ciegas. El cambio se guarda en `pending_diff` y la interfaz enseña
+        // «Aplicar» / «Descartar».
         if self.config.ai_correction_confirm() {
             self.pending_diff = Some(PendingDiff {
                 diff: diff.clone(),
@@ -1127,10 +1123,10 @@ impl WhisprApp {
             return Task::none();
         }
 
-        // Modo fluido (default): aplicar inmediatamente.
+        // Modo normal (el de serie): aplicar ya.
         match crate::domain::corrective::apply_diff(&target, &diff) {
             Some(after) => {
-                // Undo de 1 nivel ANTES de mutar (estado completo).
+                // Deshacer de un paso ANTES de cambiar nada (estado completo).
                 self.undo_state = Some((self.transcript.clone(), self.last_turn.clone()));
                 if let Some(t) = crate::domain::corrective::replace_last_turn(
                     &self.transcript,
@@ -1175,24 +1171,24 @@ impl WhisprApp {
         Task::none()
     }
 
-    /// Modo in-turn (t_78d9e1fa, spec §3.5): el LLM devuelve el texto
-    /// final corregido (sin meta-lengua). Lo aplicamos COMO el turno
-    /// completo (no como diff sobre `last_turn`):
+    /// Modo in-turn (t_78d9e1fa, spec §3.5): el modelo devuelve el texto final ya
+    /// corregido, sin hablar de sí mismo. Se aplica COMO el turno entero (no como
+    /// cambio sobre `last_turn`):
     ///
-    ///   - `self.transcript` se extiende con el texto corregido.
+    ///   - `self.transcript` se alarga con el texto corregido.
     ///   - `self.last_turn` pasa a ser el texto corregido.
-    ///   - Se inyecta el texto corregido en la app activa (mismo
-    ///     contrato que un dictado normal exitoso).
-    ///   - El undo de 1 nivel guarda el estado PREVIO (transcript +
-    ///     last_turn) por si el usuario quiere revertir.
+    ///   - El texto corregido se escribe en la app de delante (igual que un
+    ///     dictado normal que sale bien).
+    ///   - El deshacer de un paso guarda el estado ANTERIOR (transcript +
+    ///     last_turn) por si el usuario quiere volver atrás.
     ///
-    /// Casos de fallback al input bruto:
-    ///   - El LLM devuelve vacío (modelo roto, respuesta vacía).
-    ///   - El LLM no eliminó la meta-lengua (regex de in-turn todavía
-    ///     presente en el output → la corrección falló).
-    ///   - El LLM devuelve el mismo texto que el input (puede ser
-    ///     legítimo: «no hay corrección»; en ese caso, treat como
-    ///     input ya limpio y sigue el flujo normal).
+    /// Casos en los que se queda el texto bruto:
+    ///   - El modelo devuelve vacío (modelo roto, respuesta en blanco).
+    ///   - El modelo no se quitó de encima su propio comentario (la expresión
+    ///     regular de in-turn sigue en la respuesta → la corrección no salió).
+    ///   - El modelo devuelve lo mismo que le entró (puede ser legítimo: «no hay
+    ///     nada que corregir»; en ese caso se toma como texto ya limpio y sigue
+    ///     el flujo normal).
     fn handle_llm_redaction(
         &mut self,
         redacted: String,
@@ -1214,9 +1210,8 @@ impl WhisprApp {
             redacted
         );
 
-        // Filtros de seguridad: si el output está vacío o contiene
-        // todavía un marcador in-turn, NO usamos la respuesta:
-        // fallback al input bruto (spec §3.5.4).
+        // Filtros de seguridad: si la respuesta viene vacía o aún lleva un
+        // marcador in-turn, NO se usa: se queda el texto bruto (spec §3.5.4).
         let clean_text = redacted.trim();
         if clean_text.is_empty() {
             crate::log!(
