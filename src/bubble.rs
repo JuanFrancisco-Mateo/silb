@@ -1,23 +1,23 @@
-//! Burbuja flotante de dictado (overlay siempre-encima).
+//! La burbuja flotante del dictado (siempre encima).
 //!
-//! Segunda ventana Iced del mismo proceso (multi-window de iced 0.13 vía
-//! `iced_winit::Program`): pequeña, sin decoración, transparente,
-//! always-on-top (`window::Level::AlwaysOnTop`) y circular (acento violeta
-//! #7C6CFF; rojo mientras se graba, ámbar transcribiendo).
+//! Es la segunda ventana de la app (varias ventanas de iced 0.13 con
+//! `iced_winit::Program`): pequeña, sin barra, transparente, siempre encima
+//! (`window::Level::AlwaysOnTop`) y redonda (acento violeta #7C6CFF; rojo
+//! mientras graba, ámbar mientras transcribe).
 //!
-//! Interacción:
-//! - Clic izquierdo (pulsar → soltar) = grabar y transcribir, escribiendo el
-//!   texto en la app con foco (comportamiento por defecto; NO se toca).
-//! - Arrastrar la burbuja = SOLO con clic derecho mantenido + movimiento
-//!   (> 7 px lógicos). El clic derecho simple (sin movimiento) no hace nada.
+//! Cómo se usa:
+//! - Clic izquierdo (pulsar y soltar) = grabar y transcribir, escribiendo el
+//!   texto en la app con foco (el comportamiento de siempre; NO se toca).
+//! - Arrastrar la burbuja = SOLO con el botón derecho pulsado y moviendo
+//!   más de 7 px. Un clic derecho sin mover no hace nada.
 //!
-//! La inyección reutiliza `inject::inject_text_into_active_app` (clipboard +
-//! Ctrl+V). Para que el Ctrl+V llegue al campo activo de la otra app y no a la
-//! burbuja, esta ventana se marca WS_EX_NOACTIVATE: los clics nunca la activan
-//! y el foco del usuario nunca se roba.
+//! Para escribir reutiliza `inject::inject_text_into_active_app` (portapapeles
+//! y Ctrl+V). Para que el Ctrl+V llegue al campo de la otra app y no a la
+//! burbuja, esta ventana se marca WS_EX_NOACTIVATE: los clics no la activan y
+//! nunca se le quita el foco al usuario.
 //!
-//! No se duplica lógica de audio/whisper: la burbuja solo emite los mismos
-//! mensajes que el hero de la ventana principal.
+//! No repite la lógica de audio ni de whisper: la burbuja solo manda los mismos
+//! mensajes que el botón grande de la ventana principal.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
@@ -43,69 +43,68 @@ use crate::config::{BubbleCorner, Config};
 /// Tamaño de la ventana de la burbuja (y del círculo), en px lógicos.
 pub const BUBBLE_SIZE: f32 = 56.0;
 
-/// Rango completo de tamaños de la burbuja (48–72): la ventana se crea con
-/// min/max = rango entero para que el resize EN CALIENTE (`window::resize` a
-/// cualquier `BubbleSize`) no se tope con el clamp de WM_GETMINMAXINFO.
+/// Todo el rango de tamaños de la burbuja (48–72): la ventana se crea con
+/// min/max en el rango entero para que el cambio de tamaño CON la app abierta
+/// (`window::resize` a cualquier `BubbleSize`) no choque con el límite del sistema.
 pub const BUBBLE_SIZE_MIN: f32 = 48.0;
 pub const BUBBLE_SIZE_MAX: f32 = 72.0;
 
-/// Margen de las esquinas (px lógicos): separación de los bordes del monitor.
+/// Margen de las esquinas (px lógicos): separación de los bordes de la pantalla.
 pub const BUBBLE_MARGIN: f32 = 24.0;
 
-/// Offset vertical de las esquinas SUPERIORES (px lógicos): deja espacio
-/// para la barra de tareas/menús flotantes sin pegar la burbuja al borde.
+/// Cuánto baja de las esquinas SUPERIORES (px lógicos): deja sitio a la barra
+/// de tareas o a los menús flotantes sin pegar la burbuja al borde.
 pub const BUBBLE_TOP_OFFSET: f32 = 48.0;
 
-/// Título único de la ventana de la burbuja: sirve para localizarla por HWND
-/// (FindWindowW) y aplicarle WS_EX_NOACTIVATE tras crearse.
+/// Título fijo de la ventana de la burbuja: sirve para encontrarla por HWND
+/// (FindWindowW) y ponerle WS_EX_NOACTIVATE al crearse.
 pub const BUBBLE_TITLE: &str = "Silb-Bubble";
 
-/// `application_id` de la ventana de la burbuja en Linux (iced 0.13 lo expone
-/// en la rama wayland de `PlatformSpecific`; no hay `skip_taskbar`, así que el
-/// compositor identifica la ventana por este id). Ver CHECK-1.md L224-226.
+/// `application_id` de la burbuja en Linux (iced 0.13 lo da en la rama Wayland
+/// de `PlatformSpecific`; no hay `skip_taskbar`, así que el entorno reconoce la
+/// ventana por este id).
 #[cfg(target_os = "linux")]
 pub const BUBBLE_APP_ID: &str = "whispr-open-bubble";
 
-/// `window::Id` de la burbuja en formato numérico (`Id` es Display). Se guarda
-/// aquí porque `iced::event::listen_with` exige una `fn` estática sin
-/// capturas; el filtro del subscriptor compara contra este valor.
+/// `window::Id` de la burbuja como número (`Id` se puede imprimir). Se guarda
+/// aquí porque `iced::event::listen_with` pide una función fija sin capturas; el
+/// filtro compara contra este valor.
 static BUBBLE_WINDOW_ID: AtomicU64 = AtomicU64::new(0);
 
 // ---------------------------------------------------------------------------
-// Arrastre con botón derecho: umbral y máquina de estados
+// Arrastre con el botón derecho: umbral y estados
 // ---------------------------------------------------------------------------
 
-/// Distancia mínima (px lógicos) de movimiento para considerar que es un
-/// arrastre y no un clic (mismo umbral de 7 px que tenía el drag original).
+/// Movimiento mínimo (px lógicos) para que cuente como arrastre y no como
+/// clic (el mismo umbral de 7 px que tenía el arrastre original).
 pub const DRAG_THRESHOLD: f32 = 7.0;
 
-/// Mínimo de la burbuja que debe quedar visible dentro del área de trabajo
-/// del monitor al arrastrar (px físicos): siempre recuperable con un
-/// segundo arrastre. Compartido por el clamp de `drag_target` y sus tests.
+/// Mínimo de la burbuja que tiene que quedar a la vista dentro de la pantalla
+/// al arrastrar (px físicos): así siempre se puede recuperar con otro arrastre.
+/// Lo comparten el límite de `drag_target` y sus tests.
 const MIN_VISIBLE_PX: i32 = 24;
 
-/// True si el movimiento entre `from` y `to` supera el umbral de arrastre
-/// (comparación al cuadrado para evitar la raíz cuadrada).
+/// True si el movimiento entre `from` y `to` pasa el umbral de arrastre (se
+/// comparan los cuadrados para no sacar la raíz).
 pub fn is_drag_movement(from: Point, to: Point) -> bool {
     let dx = to.x - from.x;
     let dy = to.y - from.y;
     dx * dx + dy * dy > DRAG_THRESHOLD * DRAG_THRESHOLD
 }
 
-/// Máquina de estados del arrastre con botón derecho.
+/// Los estados del arrastre con el botón derecho.
 ///
-/// El botón derecho SOLO arrastra la burbuja: al pulsar se queda «armado»,
-/// si el cursor se mueve más de `DRAG_THRESHOLD` empieza el arrastre, y al
-/// soltar (o cancelar) se cierra todo. Nunca toca audio ni estado de
-/// grabación: un clic derecho simple (pulsar y soltar sin mover) no hace
-/// nada, y al terminar el arrastre no queda ningún estado residual.
+/// El botón derecho SOLO arrastra la burbuja: al pulsar queda «armado», si el
+/// cursor se mueve más de `DRAG_THRESHOLD` empieza el arrastre y al soltar (o
+/// cancelar) se cierra todo. Nunca toca el audio ni la grabación: un clic
+/// derecho sin mover no hace nada y al acabar no queda ningún estado a medias.
 #[derive(Debug, Clone, PartialEq)]
 pub struct RightDragState {
     /// Botón derecho pulsado dentro de la burbuja.
     pub pressed: bool,
-    /// El movimiento superó el umbral: la burbuja se está arrastrando.
+    /// El movimiento pasó el umbral: se está arrastrando.
     pub dragging: bool,
-    /// Posición del cursor al pulsar (para medir el umbral).
+    /// Dónde estaba el cursor al pulsar (para medir el umbral).
     press_pos: Point,
 }
 
@@ -120,7 +119,7 @@ impl Default for RightDragState {
 }
 
 impl RightDragState {
-    /// Pulsar el botón derecho: arma el posible arrastre (sin grabar).
+    /// Pulsar el botón derecho: deja armado un posible arrastre (sin grabar).
     pub fn press(&mut self, pos: Point) {
         self.pressed = true;
         self.dragging = false;
@@ -128,7 +127,7 @@ impl RightDragState {
     }
 
     /// Movimiento con el botón derecho pulsado. Devuelve `true` solo en el
-    /// instante en que el movimiento cruza el umbral (arranque del arrastre).
+    /// momento en que se pasa el umbral (cuando arranca el arrastre).
     pub fn move_cursor(&mut self, pos: Point) -> bool {
         if !self.pressed || self.dragging {
             return false;
@@ -142,7 +141,7 @@ impl RightDragState {
     }
 
     /// Soltar el botón derecho. Devuelve `true` si se estaba arrastrando
-    /// (el llamador debe liberar la captura del ratón).
+    /// (quien llama tiene que soltar la captura del ratón).
     pub fn release(&mut self) -> bool {
         let was_dragging = self.dragging;
         self.pressed = false;
@@ -157,11 +156,10 @@ impl RightDragState {
     }
 }
 
-/// Posición inicial de la burbuja para una esquina dada, en px LÓGICOS.
-/// Función pura (sin winapi, testeable en cualquier target): `win` es el
-/// tamaño de la ventana y `monitor` el del monitor donde cae. Margen
-/// `BUBBLE_MARGIN` en los bordes laterales/inferiores y `BUBBLE_TOP_OFFSET`
-/// en los superiores.
+/// Dónde va la burbuja al arrancar para una esquina, en px LÓGICOS.
+/// Función suelta (sin winapi, se puede probar en cualquier sistema): `win` es
+/// el tamaño de la ventana y `monitor` el de la pantalla donde cae. Margen
+/// `BUBBLE_MARGIN` en los lados y abajo, y `BUBBLE_TOP_OFFSET` arriba.
 pub fn initial_position(corner: BubbleCorner, win: Size, monitor: Size) -> Point {
     let x = match corner {
         BubbleCorner::TopRight | BubbleCorner::BottomRight => {
@@ -178,9 +176,9 @@ pub fn initial_position(corner: BubbleCorner, win: Size, monitor: Size) -> Point
     Point::new(x, y)
 }
 
-// `window::Position::SpecificWith` exige una `fn` sin capturas; cada esquina
-// tiene su wrapper (const-fn pointer) para poder seleccionarla en
-// `bubble_settings` sin clausuras que capturen.
+// `window::Position::SpecificWith` pide una función sin capturas; cada esquina
+// tiene su envoltorio (un puntero a función fijo) para poder elegirla en
+// `bubble_settings` sin usar clausuras.
 fn corner_top_right(win: Size, monitor: Size) -> Point {
     initial_position(BubbleCorner::TopRight, win, monitor)
 }
@@ -194,23 +192,22 @@ fn corner_bottom_left(win: Size, monitor: Size) -> Point {
     initial_position(BubbleCorner::BottomLeft, win, monitor)
 }
 
-/// Configuración de la ventana de la burbuja. Verificado en iced 0.13.1
+/// Configuración de la ventana de la burbuja. Comprobado en iced 0.13.1
 /// (`iced_core::window::Settings`): `decorations`, `transparent`, `level`
 /// (`AlwaysOnTop`) y `platform_specific.skip_taskbar` están soportados y se
-/// mapean a winit (`WindowAttributesExtWindows`, `with_window_level`,
-/// `with_transparent`).
+/// pasan a winit.
 ///
-/// En Linux (winit Wayland): `transparent` funciona sobre el alpha del
-/// buffer; `level` AlwaysOnTop llega como preferencia al compositor
-/// (Hyprland la honra con windowrule o la ignora — se recomienda el
-/// `float, pin` por title), `skip_taskbar` el equivalente (dock to all
-/// workspaces) lo maneja el compositor. Nada de esto rompe: son
-/// preferencias y el fallback es el comportamiento natural de Hyprland.
+/// En Linux (winit Wayland): `transparent` va sobre el alfa del búfer; `level`
+/// AlwaysOnTop llega como preferencia al entorno (Hyprland la respeta con una
+/// windowrule o la ignora — se recomienda `float, pin` por título), y
+/// `skip_taskbar` (el equivalente a estar en todos los escritorios) lo lleva el
+/// entorno. Nada de esto rompe: son preferencias y, si no se aplican, queda el
+/// comportamiento normal de Hyprland.
 ///
-/// Parámetros del Config (Ajustes → Apariencia): tamaño del círculo
-/// (`bubble_size`) y esquina de anclaje (`bubble_corner`). El min/max de la
-/// ventana es el rango COMPLETO 48–72: si fuese el tamaño fijo, el resize en
-/// caliente a otro tamaño chocaría con el clamp de WM_GETMINMAXINFO.
+/// Valores del Config (Ajustes → Apariencia): tamaño del círculo (`bubble_size`)
+/// y esquina (`bubble_corner`). El min/max de la ventana es el rango COMPLETO
+/// 48–72: si fuera el tamaño fijo, el cambio en caliente a otro tamaño chocaría
+/// con el límite de WM_GETMINMAXINFO.
 pub fn bubble_settings(cfg: &Config) -> window::Settings {
     let size = cfg.bubble_size().px();
     let corner = cfg.bubble_corner();
@@ -229,38 +226,35 @@ pub fn bubble_settings(cfg: &Config) -> window::Settings {
     s.transparent = true;
     s.level = window::Level::AlwaysOnTop;
     s.visible = true;
-    // Windows: `PlatformSpecific` de iced 0.13 expone aquí skip_taskbar,
-    // undecorated_shadow y drag_and_drop. En la rama wayland/linux de iced
-    // 0.13 esos campos NO existen (solo `application_id` y
-    // `override_redirect`) → E0609 en CHECK-1.md L224-226. Se gatean a
-    // Windows para no romper la compilación en Linux.
+    // Windows: el `PlatformSpecific` de iced 0.13 tiene aquí skip_taskbar,
+    // undecorated_shadow y drag_and_drop. En la rama de Wayland/Linux esos
+    // campos NO existen (solo `application_id` y `override_redirect`) → E0609.
+    // Por eso van solo en Windows, para que Linux compile.
     #[cfg(target_os = "windows")]
     {
         s.platform_specific.skip_taskbar = true;
         s.platform_specific.undecorated_shadow = false;
         s.platform_specific.drag_and_drop = false;
     }
-    // Linux/Wayland (equivalente no-op): el «no aparecer en la barra de
-    // tareas / quedar por encima» lo decide el compositor. El único asidero
-    // que da iced 0.13 en Linux es `application_id`, que Hyprland usa para
-    // las windowrule; `override_redirect` se deja en su default (false).
-    // Ver CHECK-1.md L224-226. Nada de esto rompe: hoy no hay regla
-    // asociada y el fallback es el comportamiento natural de Hyprland.
+    // Linux/Wayland: aquí no hay nada que poner; el «no salir en la barra de
+    // tareas / quedar por encima» lo decide el entorno. Lo único que da iced 0.13
+    // en Linux es `application_id`, que Hyprland usa para las windowrule;
+    // `override_redirect` se deja como está (false). Nada rompe: hoy no hay regla
+    // asociada y queda el comportamiento normal de Hyprland.
     #[cfg(target_os = "linux")]
     {
         s.platform_specific.application_id = BUBBLE_APP_ID.to_string();
     }
     // El cierre lo decide la app (Message::WindowCloseRequested → iced::exit);
-    // con `true` iced cerraría la ventana sin emitir el evento y el proceso
-    // seguiría vivo con la ventana principal.
+    // con `true`, iced cerraría la ventana sin avisar y el proceso seguiría vivo
+    // con la ventana principal.
     s.exit_on_close_request = false;
     s
 }
 
-/// Tema de la burbuja: fondo 100 % transparente para que solo se vea el
-/// círculo. La `Appearance` (color de limpieza del frame) se deriva de la
-/// paleta del tema de cada ventana, así que la ventana principal conserva su
-/// fondo opaco.
+/// Tema de la burbuja: fondo totalmente transparente para que solo se vea el
+/// círculo. El color de limpieza sale de la paleta del tema de cada ventana, así
+/// que la ventana principal conserva su fondo opaco.
 pub fn bubble_theme() -> Theme {
     use iced::theme::Palette;
 
@@ -276,10 +270,9 @@ pub fn bubble_theme() -> Theme {
     )
 }
 
-/// Suscripción a los eventos de ratón de la burbuja: pulsos (izquierdo =
-/// grabar, derecho = arrastrar), sueltas y movimiento para detectar el
-/// arrastre. Filtrada por window::Id, así la ventana principal no se ve
-/// afectada.
+/// Suscripción a los eventos de ratón de la burbuja: pulsaciones (izquierdo =
+/// grabar, derecho = arrastrar), sueltas y movimiento para ver si hay arrastre.
+/// Se filtra por window::Id, así la ventana principal no se entera.
 pub fn bubble_events_subscription(bubble_id: Option<window::Id>) -> Subscription<Message> {
     if let Some(id) = bubble_id {
         BUBBLE_WINDOW_ID.store(id_num(id), Ordering::Relaxed);
@@ -287,14 +280,14 @@ pub fn bubble_events_subscription(bubble_id: Option<window::Id>) -> Subscription
     iced::event::listen_with(bubble_event_filter)
 }
 
-/// `window::Id` -> u64 (el campo interno de `Id` es privado; `Display` lo
-/// expone).
+/// `window::Id` pasado a número (el campo de dentro de `Id` es privado, pero se
+/// puede imprimir).
 fn id_num(id: window::Id) -> u64 {
     id.to_string().parse().unwrap_or(0)
 }
 
-/// Filtro estático de eventos (requisito de `listen_with`): solo reacciona a
-/// eventos de ratón dentro de la ventana de la burbuja.
+/// Filtro fijo de eventos (lo pide `listen_with`): solo hace caso a los eventos
+/// de ratón dentro de la ventana de la burbuja.
 fn bubble_event_filter(
     event: iced::Event,
     _status: iced::event::Status,
@@ -319,38 +312,37 @@ fn bubble_event_filter(
         iced::Event::Mouse(mouse::Event::CursorMoved { position }) => {
             Some(Message::BubbleCursorMoved(position))
         }
-        // El cursor salió de la ventana sin soltar: cerrar ambos botones
-        // (izquierdo dicta igualmente; derecho cancela cualquier arrastre).
+        // El cursor salió de la ventana sin soltar: se cierran los dos botones
+        // (el izquierdo dicta igual; el derecho cancela cualquier arrastre).
         iced::Event::Mouse(mouse::Event::CursorLeft) => Some(Message::BubbleCursorLeft),
         _ => None,
     }
 }
 
-/// Estilos y vista del overlay de la burbuja (el círculo flotante).
+/// Estilos y vista de la burbuja (el círculo flotante).
 impl WhisprApp {
-    /// Vista de la burbuja: círculo violeta con borde claro para contrastar
-    /// sobre cualquier fondo. Estados: violeta = listo, rojo + punto blanco =
-    /// grabando, ámbar = transcribiendo / descargando modelo, rojo = error.
+    /// Vista de la burbuja: círculo violeta con borde claro para que se vea sobre
+    /// cualquier fondo. Estados: violeta = listo, rojo con punto blanco =
+    /// grabando, ámbar = transcribiendo o descargando el modelo, rojo = error.
     ///
     /// Personalización III: si el usuario eligió una imagen para la burbuja
-    /// (sprite estático o frame actual de una secuencia animada), se pinta
-    /// DEBAJO del centro (que mantiene el indicador de estado — punto de
-    /// grabación / etiqueta «IA» — SIEMPRE legible). Si la imagen falla al
-    /// cargar (ruta inválida al renderizar, formato no soportado), la
-    /// burbuja cae al render vectorial sin crashear: `resolve_static` /
-    /// `resolve_frames` ya filtraron las rutas malas, y `iced::image`
-    /// pinta un placeholder si el path cambió a última hora.
+    /// (fija o el fotograma actual de una animación), se pinta DEBAJO del centro
+    /// (que mantiene el aviso de estado — punto de grabación o etiqueta «IA» —
+    /// SIEMPRE legible). Si la imagen falla al cargar (ruta mala, formato no
+    /// aceptado), la burbuja vuelve al dibujo de siempre sin cerrarse:
+    /// `resolve_static` / `resolve_frames` ya quitaron las rutas malas, y
+    /// `iced::image` pinta un hueco si la ruta cambió a última hora.
     pub fn bubble_view(&self) -> Element<'static, Message> {
         let style = self.bubble_style();
         let recording = matches!(self.bubble_status(), Status::Recording);
         let size = self.bubble_size_px();
-        // Opacidad configurable (Ajustes → Apariencia, slider 20–100 %):
-        // alpha por-pixel aplicada al círculo y al borde. El punto «REC»
-        // central queda opaco (indicador de estado: debe leerse siempre).
+        // Opacidad configurable (Ajustes → Apariencia, control de 20–100 %):
+        // transparencia píxel a píxel sobre el círculo y el borde.
+        // (El punto «REC» del centro queda opaco: es un aviso y tiene que leerse.)
         let opacity = self.bubble_opacity_percent() as f32 / 100.0;
-        // Estados de arranque (requisito UX 09/09/2026): ámbar mientras la
-        // app carga whisper/LLM, rojo si el arranque falló sin modelo. Una
-        // vez Ready, el color lo decide `bubble_status` como siempre.
+        // Estados de arranque (UX del 09/09/2026): ámbar mientras la app carga
+        // whisper o el modelo, rojo si el arranque falló sin modelo. Una vez
+        // listo, el color lo decide `bubble_status` como siempre.
         let fill = match self.startup_bubble_color() {
             Some(color) => color,
             None => match self.bubble_status() {
@@ -369,11 +361,10 @@ impl WhisprApp {
             }
         };
 
-        // Indicador central: punto blanco mientras se graba; «IA» (oscuro
-        // sobre ámbar) mientras el corrector LLM trabaja sobre el último
-        // turno (feedback en vivo del dictado: requisito UX 10/09/2026 —
-        // aunque la burbuja no tiene texto, la etiqueta IA dice que la
-        // corrección LLM está actuando y no que la app está colgada).
+        // Centro: punto blanco mientras graba; «IA» (oscuro sobre ámbar) mientras
+        // el corrector trabaja en el último turno (aviso en vivo, UX del
+        // 10/09/2026 — la burbuja no tiene texto, pero la etiqueta IA dice que el
+        // corrector está actuando y no que la app se ha colgado).
         let correcting = matches!(self.bubble_status(), Status::Correcting);
         let center: Element<'static, Message> = if recording {
             container(text(""))
@@ -390,8 +381,8 @@ impl WhisprApp {
                 })
                 .into()
         } else if correcting {
-            // Etiqueta pequeña sobre una pastilla oscura: legible sobre
-            // cualquier relleno (sólido ámbar, ring transparente, minimal).
+            // Etiqueta pequeña sobre una pastilla oscura: se lee sobre cualquier
+            // fondo (ámbar liso, aro transparente, minimal).
             container(
                 container(text("IA").size(10.0).color(Color::WHITE))
                     .padding([2, 4])
@@ -410,10 +401,10 @@ impl WhisprApp {
             container(text("")).into()
         };
 
-        // Imagen de la burbuja: GIF en memoria > frames legacy > sprite
-        // estático > render vectorial (el que define `fill` arriba).
-        // El GIF es UN solo archivo (sprint final): se decodifica una vez en
-        // `ensure_gif_loaded` y aquí solo se clona el Handle (barato, Arc).
+        // Imagen de la burbuja: GIF en memoria > carpetas de antes > imagen fija
+        // > dibujo de siempre (el `fill` de arriba). El GIF es UN solo fichero
+        // (sprint final): se decodifica una vez en `ensure_gif_loaded` y aquí solo
+        // se copia el Handle (barato, un Arc).
         if !self.gif_frames.is_empty() {
             let idx = self
                 .bubble_frame_index
@@ -443,12 +434,11 @@ impl WhisprApp {
             .or_else(|| self.bubble_static_image());
 
         if let Some(path) = bubble_image {
-            // El centro (REC / IA) SIEMPRE va encima de la imagen:
-            // apilamos con `stack!` para que el indicador de estado
-            // nunca quede ocluido por el sprite. La imagen se estira
-            // con `ContentFit::Cover` y se recorta por el border-radius
-            // circular del contenedor exterior (los píxeles fuera del
-            // círculo los recorta winit al componer la ventana).
+            // El centro (REC / IA) SIEMPRE va encima de la imagen: se apila con
+            // `stack!` para que el aviso de estado no quede tapado. La imagen se
+            // estira con `ContentFit::Cover` y se recorta con la esquina redonda
+            // del contenedor (lo que sobra del círculo lo recorta winit al componer
+            // la ventana).
             let handle = iced::widget::image::Handle::from_path(&path);
             let bg: Element<'static, Message> = container(
                 iced::widget::image(handle)
@@ -489,7 +479,7 @@ impl WhisprApp {
 }
 
 // ---------------------------------------------------------------------------
-// Integración multi-ventana: implementación de iced_winit::Program
+// Varias ventanas: la parte de iced_winit::Program
 // ---------------------------------------------------------------------------
 
 impl iced_winit::Program for WhisprApp {
@@ -537,22 +527,22 @@ impl iced_winit::Program for WhisprApp {
 }
 
 // ---------------------------------------------------------------------------
-// WS_EX_NOACTIVATE: la burbuja nunca roba el foco
+// WS_EX_NOACTIVATE: la burbuja nunca quita el foco
 // ---------------------------------------------------------------------------
 
-/// Aplica a la burbuja lo que dicta el `Config`, en cuanto la ventana existe.
+/// Aplica a la burbuja lo que diga el `Config` en cuanto la ventana existe.
 ///
-/// El doc-comment original (Windows) describe el detalle winapi; en Linux el
-/// caso es DISTINTO y merece su propia explicación:
-/// - El siempre-encima NO lo maneja winit: un `float, pin` por título en
-///   hyprland.conf hace el papel de WS_EX_TOPMOST (así se recomienda, con
-///   pasos en docs/PORT-LINUX/CODIGO-CORE.md).
-/// - WS_EX_NOACTIVATE equivale a NO pedir nunca el foco: ni `gain_focus`,
-///   ni `request_user_attention`, ni acciones que roben el foco; en Wayland
-///   el foco de otra app pasa por xdg_activation_v1 (token del cliente con
-///   foco), así que la app necesita estar activa para pedirlo — en iced 0.13
-///   `window::gain_focus` es Unsupported en Wayland (docs de window::Action).
-/// - Arrastre sin captura global: ver los stubs de ratón más abajo.
+/// El comentario original (Windows) cuenta el detalle de winapi; en Linux es
+/// DISTINTO y merece su explicación:
+/// - Lo de «siempre encima» no lo lleva winit: un `float, pin` por título en
+///   hyprland.conf hace el papel de WS_EX_TOPMOST (así se recomienda, con pasos
+///   en docs/PORT-LINUX/CODIGO-CORE.md).
+/// - WS_EX_NOACTIVATE equivale a no pedir nunca el foco: ni `gain_focus`, ni
+///   `request_user_attention`, ni nada que lo quite; en Wayland el foco de otra
+///   app pasa por xdg_activation_v1 (un vale del cliente que lo tiene), así que
+///   la app tendría que estar activa para pedirlo — y en iced 0.13
+///   `window::gain_focus` no está soportado en Wayland.
+/// - Arrastrar sin captura global: están los huecos de ratón de más abajo.
 #[cfg(target_os = "windows")]
 pub fn apply_bubble_extras(cfg: &Config) {
     let corner = cfg.bubble_corner();
@@ -594,10 +584,10 @@ pub fn apply_bubble_extras(cfg: &Config) {
     });
 }
 
-/// Linux: los extras nativos (noactivate forzado por exstyle, mover por
-/// hwnd) no existen; la ventana nace ya sin robo de foco y Hyprland se
-/// encarga del pin. Solo queda el log informativo (la burbuja ya es visible
-/// por diseño, con los settings iced de `bubble_settings`).
+/// Linux: los extras nativos (forzar noactivate, mover por hwnd) no existen;
+/// la ventana ya nace sin quitar el foco y Hyprland se encarga del pin. Solo
+/// queda dejar constancia en el log (la burbuja ya se ve por los ajustes de
+/// `bubble_settings`).
 #[cfg(not(target_os = "windows"))]
 pub fn apply_bubble_extras(cfg: &Config) {
     crate::log!(
@@ -609,10 +599,10 @@ pub fn apply_bubble_extras(cfg: &Config) {
     let _ = cfg;
 }
 
-/// Mueve la burbuja EN CALIENTE a la esquina seleccionada en Ajustes.
-/// Reposiciona sin cambiar el tamaño (el resize es competencia de
-/// `BubbleSizeChanged` / `window::resize`). Se usa un hilo porque la ventana
-/// puede no existir todavía (mismo patrón que `apply_bubble_extras`).
+/// Mueve la burbuja CON la app abierta a la esquina elegida en Ajustes.
+/// Reposiciona sin cambiar el tamaño (del tamaño se encargan `BubbleSizeChanged`
+/// y `window::resize`). Va en un hilo porque la ventana puede no existir todavía
+/// (igual que `apply_bubble_extras`).
 #[cfg(target_os = "windows")]
 pub fn move_to_corner(corner: BubbleCorner, size: f32) {
     std::thread::spawn(move || {
@@ -646,27 +636,27 @@ pub fn move_to_corner(corner: BubbleCorner, size: f32) {
     });
 }
 
-/// Linux: mover la burbuja a esquina via iced::window::move_to (cambios de
-/// esquina desde Ajustes), dependiente de la sincronización con los
-/// mensajes de UI. A validar: winit moved-to en Hyprland puede ignorar el
-/// destino (su política de posicionamiento); si el turno del usuario lo
-/// exige, dejar backoff hasta que Hyprland agregue opciones por IPC.
+/// Linux: mover la burbuja a una esquina con iced::window::move_to (cambios de
+/// esquina desde Ajustes), pendiente de la sincronización con los mensajes de la
+/// interfaz. A validar: winit en Hyprland puede ignorar el destino (por su
+/// política de colocación); si hace falta de verdad, esperar a que Hyprland
+/// ofrezca opciones por IPC.
 #[cfg(not(target_os = "windows"))]
 pub fn move_to_corner(corner: BubbleCorner, size: f32) {
     let _ = (corner, size);
-    // Sin una Task de iced aquí (la firma es sync y sin Message), lo que
-    // move_to_corner puede hacer es registrar la intención en el log: la
-    // esquina se re-aplica en el próximo BubbleOpened.
+    // Sin una Task de iced aquí (la función es síncrona y sin Message), lo único
+    // que puede hacer es apuntar la intención en el log: la esquina se aplica en
+    // el siguiente BubbleOpened.
     crate::log!(
         "bubble",
         "move_to_corner Linux: no-op (la esquina manda en el próximo BubbleOpened)"
     );
 }
 
-/// Posición FÍSICA actual de la ventana de la burbuja (px de pantalla, la
-/// esquina superior izquierda). `None` si la ventana aún no existe. La usa
-/// `end_bubble_drag` para persistir la posición del último arrastre en el
-/// Config (se re-aplica al arrancar vía `apply_bubble_extras`).
+/// Dónde está la ventana de la burbuja AHORA (px de pantalla, esquina superior
+/// izquierda). `None` si todavía no existe. Lo usa `end_bubble_drag` para
+/// guardar en el Config la posición del último arrastre (se vuelve a aplicar al
+/// arrancar con `apply_bubble_extras`).
 #[cfg(target_os = "windows")]
 pub fn bubble_window_position() -> Option<(i32, i32)> {
     unsafe {
@@ -679,20 +669,19 @@ pub fn bubble_window_position() -> Option<(i32, i32)> {
     }
 }
 
-/// Linux: sin handle nativo que interrogar, iced/winit no expone la
-/// posición sincrónica (GetPosition es una Task asíncrona). Devuelve `None`
-/// y el efecto esperado es que NO se persista posición — el arrastre Linux
-/// no mueve la ventana nativa (ver `BubbleDrag`), así que no hay posición
-/// nueva que guardar.
+/// Linux: no hay handle nativo que preguntar, e iced/winit no da la posición al
+/// momento (GetPosition es una Task que responde luego). Devuelve `None` y por
+/// eso NO se guarda posición — en Linux el arrastre no mueve la ventana nativa
+/// (ver `BubbleDrag`), así que no hay posición nueva que guardar.
 #[cfg(not(target_os = "windows"))]
 pub fn bubble_window_position() -> Option<(i32, i32)> {
     None
 }
 
-/// Esquina configurada → posición FÍSICA de la ventana de la burbuja: el
-/// área de trabajo (`rcWork`) del monitor que la contiene, más los márgenes.
-/// `size` en px físicos (la ventana es cuadrada; el borde superior usa
-/// `BUBBLE_TOP_OFFSET` para no tapar menús de la barra de tareas).
+/// Esquina del config → posición FÍSICA de la ventana de la burbuja: el área de
+/// trabajo (`rcWork`) de la pantalla donde cae, más los márgenes. `size` en px
+/// físicos (la ventana es cuadrada; arriba se usa `BUBBLE_TOP_OFFSET` para no
+/// tapar los menús de la barra de tareas).
 #[cfg(target_os = "windows")]
 fn corner_position(corner: BubbleCorner, hwnd: BubbleHwnd, size: f32) -> (i32, i32) {
     unsafe {
@@ -705,8 +694,8 @@ fn corner_position(corner: BubbleCorner, hwnd: BubbleHwnd, size: f32) -> (i32, i
         let work = info.rcWork;
         let w = (work.right - work.left) as f32;
         let h = (work.bottom - work.top) as f32;
-        // `initial_position` trabaja en coordenadas relativas al monitor; el
-        // rcWork puede no empezar en (0,0) (multi-monitor): se suma el origen.
+        // `initial_position` trabaja en coordenadas relativas a la pantalla; el
+        // rcWork puede no empezar en (0,0) (varias pantallas): se suma el origen.
         let p = initial_position(corner, Size::new(size, size), Size::new(w, h));
         (work.left + p.x as i32, work.top + p.y as i32)
     }
@@ -736,8 +725,8 @@ fn find_bubble_hwnd() -> Option<BubbleHwnd> {
 
 #[cfg(not(target_os = "windows"))]
 fn find_bubble_hwnd() -> Option<BubbleHwnd> {
-    // En Wayland no hay handle global buscable por título (FindWindowW es
-    // winapi); la burbuja se gestiona por `window::Id` de iced en la app.
+    // En Wayland no hay handle global que buscar por título (FindWindowW es de
+    // winapi); la burbuja se maneja con el `window::Id` de iced en la app.
     None
 }
 
@@ -775,55 +764,55 @@ fn apply_noactivate(hwnd: BubbleHwnd) {
 fn apply_noactivate(_hwnd: BubbleHwnd) {}
 
 // ---------------------------------------------------------------------------
-// Arrastre con botón derecho (winapi): captura del ratón + seguimiento
+// Arrastre con el botón derecho (winapi): captura del ratón y seguimiento
 // ---------------------------------------------------------------------------
 
 /// Arrastre manual de la burbuja con el botón derecho.
 ///
-/// No se usa `window::drag` a propósito: en Windows envía
-/// `WM_NCLBUTTONDOWN` (HTCAPTION) y el bucle modal del sistema espera el
-/// botón IZQUIERDO — si se suelta el derecho, la burbuja quedaría congelada
-/// esperando un clic izquierdo. En su lugar se captura el ratón
-/// (`SetCapture`) y cada movimiento del cursor reposiciona la ventana con
-/// `SetWindowPos` hasta soltar. La captura además garantiza que el evento de
-/// soltado llegue a la burbuja aunque el cursor quede fuera de su rectángulo.
+/// No se usa `window::drag` a propósito: en Windows manda
+/// `WM_NCLBUTTONDOWN` (HTCAPTION) y el bucle del sistema espera el botón
+/// IZQUIERDO — si se suelta el derecho, la burbuja se queda congelada esperando
+/// un clic izquierdo. En su lugar se captura el ratón (`SetCapture`) y cada
+/// movimiento mueve la ventana con `SetWindowPos` hasta soltar. La captura
+/// además hace que el evento de soltar llegue aunque el cursor quede fuera.
 #[cfg(target_os = "windows")]
 pub struct BubbleDrag {
     hwnd: BubbleHwnd,
-    /// Esquina superior izquierda de la ventana en el momento de agarrar
-    /// (px físicos). ANCLAJE ABSOLUTO: la posición se recalcula siempre como
-    /// `grab_window + (cursor_actual - grab_cursor)`, nunca por deltas
-    /// acumulados (ver `drag_target`).
+    /// Esquina superior izquierda de la ventana al agarrar (px físicos). ANCLAJE
+    /// ABSOLUTO: la posición se calcula siempre como
+    /// `grab_window + (cursor_actual - grab_cursor)`, nunca sumando deltas (ver
+    /// `drag_target`).
     grab_window: (i32, i32),
-    /// Posición del cursor al agarrar (px físicos, coordenadas de pantalla).
+    /// Dónde estaba el cursor al agarrar (px físicos, en la pantalla).
     grab_cursor: (i32, i32),
-    /// Tamaño de la ventana en px físicos (para el clamp multi-monitor).
+    /// Tamaño de la ventana en px físicos (para no sacarla de la pantalla).
     size: (i32, i32),
-    /// Última posición aplicada a la ventana; evita `SetWindowPos` redundantes.
+    /// Última posición aplicada a la ventana; evita repetir `SetWindowPos`.
     last: (i32, i32),
 }
 
-/// Stub fuera de Windows: el arrastre manual (winapi puro) no existe; en
-/// Linux los stubs de abajo (start/follow/is_captured/end) devuelven
-/// valores neutros para no disparar el watchdog de robo de captura del Poll
-/// (100 ms) y el movimiento de la ventana queda a cargo del compositor.
+/// Versión vacía fuera de Windows: el arrastre manual (solo winapi) no existe;
+/// en Linux los huecos de abajo (start/follow/is_captured/end) devuelven valores
+/// neutros para no activar el vigilante de captura robada del `Poll` (100 ms), y
+/// mover la ventana queda a cargo del entorno.
 #[cfg(not(target_os = "windows"))]
 pub struct BubbleDrag {
     _private: (),
 }
 
-/// Posición objetivo de la burbuja para un cursor dado (px físicos).
+/// Dónde tiene que ir la burbuja para un cursor dado (px físicos).
 ///
 /// Anclaje absoluto al punto de agarre (`grab_window + (cursor - grab_cursor)`)
-/// con clamp al área de trabajo del monitor (`work` = left, top, right, bottom
-/// del `rcWork`). Función pura: no toca winapi, testeable en cualquier target.
+/// con límite al área de trabajo de la pantalla (`work` = left, top, right,
+/// bottom del `rcWork`). Función suelta: no toca winapi, se prueba en cualquier
+/// sistema.
 ///
-/// Por qué anclaje absoluto y no delta incremental: cuando la ventana NO se
-/// mueve 1:1 con el cursor —al chocar con el clamp o durante un hueco sin
-/// eventos (captura robada, alt-tab)— el enfoque `last + dx` acumula error y
-/// lo aplica de golpe al siguiente movimiento: la burbuja «se teletransporta»
-/// lejos de donde debería estar. Con anclaje absoluto la posición depende SOLO
-/// del cursor actual: cualquier evento perdido o clamp se auto-corrige en el
+/// Por qué anclaje absoluto y no sumar deltas: cuando la ventana NO se mueve
+/// 1:1 con el cursor —al chocar con el límite o en un hueco sin eventos (captura
+/// robada, alt-tab)— el enfoque de `last + dx` acumula error y lo aplica de
+/// golpe en el siguiente movimiento: la burbuja «salta» lejos de donde debería.
+/// Con anclaje absoluto la posición depende SOLO del cursor actual: lo que se
+/// pierda o se recorte se corrige en el siguiente `follow`, sin saltos.
 /// siguiente `follow`, sin saltos.
 pub fn drag_target(
     grab_window: (i32, i32),
@@ -844,7 +833,7 @@ pub fn drag_target(
 #[cfg(target_os = "windows")]
 impl BubbleDrag {
     /// Captura el ratón y prepara el seguimiento. `None` si la ventana de la
-    /// burbuja aún no existe (los eventos vienen de ella, así que en la
+    /// burbuja todavía no existe (los eventos vienen de ella, así que en la
     /// práctica siempre existe).
     ///
     /// Se llama en el PULSADO del botón derecho (no al cruzar el umbral): con
