@@ -495,21 +495,19 @@ impl WhisprApp {
         ));
 
         // ── Al terminar el dictado ──────────────────────────────────────
-        let ai_enabled = self.config.ai_correction_enabled();
-        // Interruptores de la rejilla: el interruptor siempre en la columna de
-        // control y el estado («Activada»/«Desactivada») a su izquierda, que no
-        // lo mueve (nodos `3:691` y `3:692`).
-        let ai_control = toggle_control(
-            Some(if ai_enabled {
-                "Activada"
-            } else {
-                "Desactivada"
-            }),
-            ai_enabled,
-            Message::ToggleAiCorrection,
-            c,
-            ty,
-        );
+        // (0.7.1) Aquí había un interruptor de «Corrección IA». Ahora es un
+        // selector de tres modos: desactivada, corrección o reescritura.
+        let ai_mode = self.config.ai_mode();
+        let ai_control = pick_list(
+            crate::config::AiMode::ALL.to_vec(),
+            Some(ai_mode),
+            Message::AiModeChanged,
+        )
+        .width(Length::Fixed(CONTROL_WIDTH))
+        .text_size(ty.control)
+        .padding(theme::FIELD_PADDING)
+        .style(theme::pick_list)
+        .into();
         let cleanup_control = toggle_control(
             None,
             self.config.cleanup_enabled(),
@@ -528,8 +526,8 @@ impl WhisprApp {
             "Al terminar el dictado",
             design_card(vec![
                 preference_row(
-                    "Corrección IA",
-                    Some("Corrige el texto con un modelo local. Opcional."),
+                    "IA en el dictado",
+                    Some(ai_mode.description()),
                     ai_control,
                     c,
                     ty,
@@ -1377,7 +1375,7 @@ impl WhisprApp {
         // «Corrección IA: activa · <modelo>» o «inactiva — <motivo>».
         let (status_text, status_color) = {
             let ui = llm_status_ui(
-                self.config.ai_correction_enabled(),
+                self.config.ai_mode(),
                 &self.llm_status,
                 &self.config.llm_settings().model,
             );
@@ -1397,26 +1395,34 @@ impl WhisprApp {
         let is_local = self.config.correction_provider().is_local();
         let mut main_rows: Vec<Element<'_, Message>> = vec![
                     note_row(&status_text, status_color, ty),
-                    // El interruptor va a la columna de control (el mismo sitio
-                    // que en General: los interruptores de todas las secciones
-                    // comparten columna, nodo `3:692`).
+                    // (0.7.1) Tres modos en la columna de control, como el resto
+                    // de selectores de la rejilla.
                     preference_row(
-                        "Corrección IA: una IA revisa y corrige lo que dictas",
+                        "Qué hace la IA con cada turno",
                         None,
-                        toggle_control(
-                            None,
-                            self.config.ai_correction_enabled(),
-                            Message::ToggleAiCorrection,
-                            c,
-                            ty,
-                        ),
+                        pick_list(
+                            crate::config::AiMode::ALL.to_vec(),
+                            Some(self.config.ai_mode()),
+                            Message::AiModeChanged,
+                        )
+                        .width(Length::Fill)
+                        .text_size(ty.control)
+                        .padding(theme::FIELD_PADDING)
+                        .style(theme::pick_list)
+                        .into(),
                         c,
                         ty,
                     ),
                     note_row(
-                        "Al terminar un turno, la IA lo revisa y corrige («digo X», \
-                     «no, era Y»…). Si el servidor de IA no está disponible, el \
-                     dictado se inserta entero, sin corregir.",
+                        self.config.ai_mode().description(),
+                        c.faint,
+                        ty,
+                    ),
+                    note_row(
+                        "Corrección — al terminar un turno, la IA lo revisa y corrige \
+                     («digo X», «no, era Y»…). Reescritura — la IA lo reescribe \
+                     entero, limpio y puntuado. Si el servidor de IA no está \
+                     disponible, el dictado se inserta entero, sin tocar.",
                         c.faint,
                         ty,
                     ),
@@ -1473,6 +1479,18 @@ impl WhisprApp {
                 c,
                 ty,
             ));
+            // (0.7.1) Reescritura con un modelo pequeño: aviso a la vista. NO se
+            // cambia el modelo por su cuenta (lo elige el usuario).
+            if self.config.ai_rewrites()
+                && curado.is_some_and(|m| crate::llm::is_small_llm(m.id))
+            {
+                main_rows.push(note_row(
+                    "Para reescribir se recomienda Qwen3-4B: los pequeños \
+                         devuelven el texto sin tocar o una lista de reglas.",
+                    t.warn,
+                    ty,
+                ));
+            }
             // «Otro»: el único sitio donde se escribe a mano un repo o una
             // dirección de Hugging Face.
             if curado.is_none() {
@@ -1533,9 +1551,10 @@ impl WhisprApp {
                 }
             }
             main_rows.push(note_row(
-                "Solo GGUF públicos. Los de la lista son pequeños (<1,2 GB): con \
-                 uno grande la corrección tarda más. Si no hay modelo, el dictado \
-                 sigue funcionando sin corrección.",
+                "Solo GGUF públicos. Los de la lista van de 0,5 GB a 2,4 GB: con \
+                 uno grande la corrección tarda más (en el caso de Qwen3-4B, \
+                 alrededor de medio segundo por turno con GPU). Si no hay modelo, \
+                 el dictado sigue funcionando sin corrección.",
                 c.faint,
                 ty,
             ));

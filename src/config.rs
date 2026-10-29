@@ -281,6 +281,65 @@ impl std::fmt::Display for BubbleHideTimeout {
     }
 }
 
+/// Qué hace la IA con cada turno (0.7.1). Tres modos, elegidos en Ajustes.
+///
+/// El modo no cambia el motor: cambia lo que se le pide al modelo y cuándo se
+/// le llama. `Off` no llama a nadie; `Correccion` solo cuando el clasificador
+/// ve una auto-corrección hablada; `Reescritura` en CADA turno.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum AiMode {
+    /// Nadie toca el texto: el dictado se escribe tal cual.
+    Off,
+    /// La IA arregla las auto-correcciones («digo X», «no X sino Y»).
+    Correccion,
+    /// La IA reescribe el turno entero, limpio y puntuado.
+    Reescritura,
+}
+
+impl AiMode {
+    /// Los tres modos, en el orden en que salen en los selectores.
+    pub const ALL: [AiMode; 3] = [AiMode::Off, AiMode::Correccion, AiMode::Reescritura];
+
+    /// Texto corto del selector.
+    pub fn label(self) -> &'static str {
+        match self {
+            AiMode::Off => "Desactivada",
+            AiMode::Correccion => "Corrección",
+            AiMode::Reescritura => "Reescritura",
+        }
+    }
+
+    /// Explicación de una línea para la nota de debajo del selector.
+    pub fn description(self) -> &'static str {
+        match self {
+            AiMode::Off => "El dictado se escribe tal cual.",
+            AiMode::Correccion => {
+                "La IA arregla las auto-correcciones («digo X»). Solo actúa cuando las detecta."
+            }
+            AiMode::Reescritura => {
+                "La IA reescribe el turno entero, limpio y puntuado. Tarda algo más en cada dictado."
+            }
+        }
+    }
+
+    /// Nombre del modo para el log (`modo=reescritura`): el mismo que se guarda
+    /// en el config.json, sin acentos.
+    pub fn id(self) -> &'static str {
+        match self {
+            AiMode::Off => "off",
+            AiMode::Correccion => "correccion",
+            AiMode::Reescritura => "reescritura",
+        }
+    }
+}
+
+impl std::fmt::Display for AiMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.label())
+    }
+}
+
 /// Ajustes guardados del usuario (`%APPDATA%/whispr-open/config.json`).
 ///
 /// Todos los campos son opcionales y caen a su valor por defecto: un
@@ -309,7 +368,19 @@ pub struct Config {
     /// Corrección IA: pasar por el modelo local los turnos que suenan a
     /// corrección («no no, era 2 en vez de 4»). Interruptor en Ajustes; está
     /// explicado en docs/CORRECCION-VOZ.md. Por defecto: activada.
+    ///
+    /// Desde la 0.7.1 el ajuste de verdad es `ai_mode`; este campo se sigue
+    /// escribiendo para que una versión anterior del programa entienda el mismo
+    /// config.json (`false` = apagada, `true` = corrección).
     pub ai_correction_enabled: Option<bool>,
+    /// Qué hace la IA con cada turno (0.7.1): apagada, corrección de las
+    /// auto-correcciones o reescritura del turno entero.
+    ///
+    /// Si no está en el JSON (config de la 0.7 o anterior) el modo se deriva de
+    /// `ai_correction_enabled` — ver `ai_mode()`. No se serializa cuando vale
+    /// `None`, para no ensuciar el config.json con un `null`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_mode: Option<AiMode>,
     /// De dónde saca el corrector: local por defecto, la nube de OpenAI o un
     /// servidor propio. `None` mantiene el método local de siempre.
     pub correction_provider: Option<CorrectionProvider>,
@@ -633,8 +704,37 @@ impl Config {
     }
 
     /// Corrección IA activada (interruptor de Ajustes; por defecto: sí).
+    ///
+    /// Desde la 0.7.1 es «hay algún modo de IA que no sea apagada»: de aquí
+    /// cuelga el ciclo de vida del servidor (`app.rs`), y en Reescritura el
+    /// servidor también tiene que estar encendido.
     pub fn ai_correction_enabled(&self) -> bool {
-        self.ai_correction_enabled.unwrap_or(true)
+        self.ai_mode() != AiMode::Off
+    }
+
+    /// Qué hace la IA con cada turno. Si el JSON no trae `ai_mode` (config de
+    /// la 0.7 o anterior) se deriva del interruptor `ai_correction_enabled`,
+    /// que venía encendido de serie: encendido = Corrección, apagado = Off.
+    pub fn ai_mode(&self) -> AiMode {
+        self.ai_mode.unwrap_or(if self.ai_correction_enabled.unwrap_or(true) {
+            AiMode::Correccion
+        } else {
+            AiMode::Off
+        })
+    }
+
+    /// ¿El modo elegido reescribe el turno entero? (Se llama al modelo en CADA
+    /// turno y con otro prompt.)
+    pub fn ai_rewrites(&self) -> bool {
+        self.ai_mode() == AiMode::Reescritura
+    }
+
+    /// Fija el modo y deja `ai_correction_enabled` en consonancia, para que una
+    /// versión anterior del programa lea el mismo config.json y no pierda el
+    /// ajuste.
+    pub fn set_ai_mode(&mut self, mode: AiMode) {
+        self.ai_mode = Some(mode);
+        self.ai_correction_enabled = Some(mode != AiMode::Off);
     }
 
     /// Atajo global: el `shortcut` del config.json o Ctrl+Shift+D si falta o
@@ -1122,6 +1222,64 @@ mod tests {
             ..Default::default()
         };
         assert!(!off.ai_correction_enabled());
+    }
+
+    /// (0.7.1) Una config de la 0.7 (sin `ai_mode`) no pierde el ajuste: si
+    /// tenía la corrección encendida, el modo es «Corrección»; si la tenía
+    /// apagada, «Desactivada». Y el modo nuevo manda sobre el interruptor viejo.
+    #[test]
+    fn ai_mode_se_deriva_del_interruptor_de_la_config_vieja() {
+        let vieja_on: Config =
+            serde_json::from_str(r#"{"dictionary":[],"ai_correction_enabled":true}"#)
+                .expect("json de la 0.7");
+        assert_eq!(vieja_on.ai_mode(), AiMode::Correccion);
+        assert!(vieja_on.ai_correction_enabled());
+
+        let vieja_off: Config =
+            serde_json::from_str(r#"{"dictionary":[],"ai_correction_enabled":false}"#)
+                .expect("json de la 0.7");
+        assert_eq!(vieja_off.ai_mode(), AiMode::Off);
+        assert!(!vieja_off.ai_correction_enabled());
+
+        // Sin nada puesto: corregir (lo que hacía la app hasta ahora).
+        assert_eq!(Config::default().ai_mode(), AiMode::Correccion);
+
+        // El campo nuevo, tal cual lo escribe la app, manda.
+        let nueva: Config = serde_json::from_str(
+            r#"{"dictionary":[],"ai_correction_enabled":true,"ai_mode":"reescritura"}"#,
+        )
+        .expect("json de la 0.7.1");
+        assert_eq!(nueva.ai_mode(), AiMode::Reescritura);
+        assert!(nueva.ai_rewrites());
+        // Reescritura también es «IA encendida»: el servidor tiene que vivir.
+        assert!(nueva.ai_correction_enabled());
+    }
+
+    /// (0.7.1) Elegir un modo deja el interruptor viejo en consonancia y el
+    /// `ai_mode` se guarda con el nombre acordado (`off`/`correccion`/`reescritura`).
+    #[test]
+    fn set_ai_mode_guarda_los_dos_campos() {
+        for (modo, guardado) in [
+            (AiMode::Off, "off"),
+            (AiMode::Correccion, "correccion"),
+            (AiMode::Reescritura, "reescritura"),
+        ] {
+            let mut cfg = Config::default();
+            cfg.set_ai_mode(modo);
+            assert_eq!(cfg.ai_mode(), modo);
+            assert_eq!(cfg.ai_correction_enabled, Some(modo != AiMode::Off));
+            let raw = serde_json::to_string(&cfg).expect("serializa");
+            assert!(
+                raw.contains(&format!(r#""ai_mode":"{guardado}""#)),
+                "el JSON debe llevar ai_mode {guardado}: {raw}"
+            );
+            // Y vuelve a entrar igual (el JSON es redondo).
+            let vuelta: Config = serde_json::from_str(&raw).expect("deserializa");
+            assert_eq!(vuelta.ai_mode(), modo);
+        }
+        // Sin tocar el modo no se ensucia el JSON con un null.
+        let raw = serde_json::to_string(&Config::default()).expect("serializa");
+        assert!(!raw.contains("ai_mode"), "no debe aparecer ai_mode: {raw}");
     }
 
     #[test]

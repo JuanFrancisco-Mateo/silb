@@ -186,16 +186,49 @@ impl WhisprApp {
                         let enabled = self.config.ai_correction_enabled();
                         let llm_ready = matches!(self.llm_status, LlmStatus::Ready { .. });
                         let llm_busy = self.llm_rx.is_some() || self.llm_pending.is_some();
-                        let can_route_common = !rule_corrected && enabled && !llm_busy && llm_ready;
-                        let can_route_in_turn = can_route_common;
-                        let can_route_cross_turn = can_route_common && !self.last_turn.is_empty();
+                        // (0.7.1) El modo manda: en Reescritura se llama al modelo
+                        // en CADA turno (no hace falta marca de autocorrección) y
+                        // con otro prompt; en Corrección, solo cuando el
+                        // clasificador ve una, como siempre.
+                        let modo = self.config.ai_mode();
+                        let reescribir = modo == crate::config::AiMode::Reescritura;
+                        let can_route_common = enabled && !llm_busy && llm_ready;
+                        let can_route_in_turn = can_route_common && !rule_corrected;
+                        let can_route_cross_turn = can_route_in_turn && !self.last_turn.is_empty();
 
-                        if can_route_in_turn && in_turn {
+                        // En Reescritura no hace falta ni marca ni que las reglas
+                        // no hayan tocado nada: se reescribe el turno entero.
+                        let route_in_turn = if reescribir {
+                            can_route_common
+                        } else {
+                            can_route_in_turn && in_turn
+                        };
+
+                        if route_in_turn {
                             // ── Dentro del turno (t_78d9e1fa) ───────
                             // El modelo recibe `processed` entero y devuelve el
                             // texto final limpio. El resultado SUSTITUYE al turno
                             // que se iba a escribir (no se aplica un cambio).
-                            let target = processed.clone();
+                            //
+                            // (0.7.1) El guard numérico determinista va DELANTE del
+                            // modelo: medido con Qwen3-4B, «83 digo 84» hace que el
+                            // modelo invente «83 o el 84», mientras que si el guard
+                            // ya dejó «84» la reescritura sale limpia y más rápida.
+                            // Si reconstruye, el turno que viaja (y al que se vuelve
+                            // en los fallbacks) es el reconstruido, no el bruto.
+                            let target = match crate::llm::precondition_numeric(&processed) {
+                                Some(reconstruido) => {
+                                    crate::log!(
+                                        "llm",
+                                        "guard numérico ANTES del modelo (modo={}): {:?} -> {:?}",
+                                        modo.id(),
+                                        processed,
+                                        reconstruido
+                                    );
+                                    reconstruido
+                                }
+                                None => processed.clone(),
+                            };
                             let llm_cfg = self.config.llm_settings();
                             let (tx, rx) = mpsc::channel();
                             self.llm_rx = Some(rx);
@@ -208,14 +241,19 @@ impl WhisprApp {
                             self.status = Status::Correcting;
                             crate::log!(
                                 "llm",
-                                "enrutando al corrector (in-turn): input={:?} endpoint={} modelo={} timeout={}s",
+                                "enrutando al corrector (modo={}): input={:?} endpoint={} modelo={} timeout={}s",
+                                modo.id(),
                                 target,
                                 llm_cfg.base_url,
                                 llm_cfg.model,
                                 llm_cfg.timeout_secs,
                             );
                             std::thread::spawn(move || {
-                                let result = crate::llm::redact(&target, &llm_cfg);
+                                let result = if reescribir {
+                                    crate::llm::rewrite(&target, &llm_cfg)
+                                } else {
+                                    crate::llm::redact(&target, &llm_cfg)
+                                };
                                 let wrapped = match &result {
                                     Ok(s) => Ok(LlmResult::Redacted(s.clone())),
                                     Err(_) => Err(
@@ -225,7 +263,8 @@ impl WhisprApp {
                                 if let Err(ref e) = result {
                                     crate::log!(
                                         "llm",
-                                        "fallo del corrector in-turn (recuperado como dictado normal): {e}"
+                                        "fallo del corrector (modo={}): {e}. Se escribe el texto tal cual.",
+                                        if reescribir { "reescritura" } else { "correccion" }
                                     );
                                 }
                                 let _ = tx.send(wrapped);
@@ -288,7 +327,8 @@ impl WhisprApp {
                         // de entre turnos lo descarta por umbral alto).
                         crate::log!(
                             "llm",
-                            "no se enruta: in_turn={} classifier={:?} threshold={} enabled={} llm_ready={} rule_corrected={} llm_busy={} last_turn_empty={} processed={:?}",
+                            "no se enruta: modo={} in_turn={} classifier={:?} threshold={} enabled={} llm_ready={} rule_corrected={} llm_busy={} last_turn_empty={} processed={:?}",
+                            modo.id(),
                             in_turn,
                             decision,
                             classifier_threshold,

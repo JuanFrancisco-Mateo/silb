@@ -14,7 +14,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use crate::config::CorrectionProvider;
+use crate::config::{AiMode, CorrectionProvider};
 use crate::domain::corrective::Diff;
 
 /// Dirección y modelo del corrector. Lo rellena `Config::llm_settings()` con
@@ -125,7 +125,22 @@ pub const SMALL_LLM_MODELS: &[LocalLlmModel] = &[
         approx_mb: 1120,
         url: "https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q4_k_m.gguf",
     },
+    // (0.7.1) El único que reescribe de verdad. Medido en una RTX 4070:
+    // 0,37-0,53 s por turno y conserva cifras, nombres y fechas.
+    LocalLlmModel {
+        id: "qwen3-4b",
+        label: "Qwen3-4B (el mejor para reescribir, ~2,4 GB)",
+        file_name: "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        approx_mb: 2382,
+        url: "https://huggingface.co/unsloth/Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+    },
 ];
+
+/// ¿El modelo es de los pequeños (0.5B/1B)? En modo Reescritura esos devuelven
+/// el texto sin tocar o una lista de reglas, y Ajustes avisa con esto.
+pub fn is_small_llm(model_id: &str) -> bool {
+    matches!(model_id, "qwen2.5-0.5b" | "llama-3.2-1b" | "qwen2.5-1.5b")
+}
 
 /// Opción del desplegable para escribir un repo o una dirección de Hugging
 /// Face a mano (0.7). No es un modelo: es la puerta a cualquier GGUF público.
@@ -376,11 +391,49 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
 /// Bloquea: se llama desde un hilo (app.rs lo lanza con `std::thread::spawn` y
 /// un canal mpsc, igual que `correct`).
 pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
+    Ok(clean_redact_output(&ask_text(SYSTEM_PROMPT_IN_TURN, turn, cfg)?))
+}
+
+/// Prompt del modo REESCRITURA (0.7.1). Aquí el modelo no arregla una
+/// corrección suelta: reescribe el turno ENTERO en español bien escrito,
+/// quitando muletillas y repeticiones y aplicando las auto-correcciones.
+///
+/// Medido en una RTX 4070 con Qwen3-4B-Instruct-2507 Q4_K_M: 0,37–0,53 s por
+/// turno. Con los modelos pequeños (0.5B/1B) devuelve el texto sin tocar o una
+/// lista de reglas — por eso Ajustes avisa cuando se elige uno de esos.
+///
+/// OJO con el orden (medido): si el turno llega con «83 digo 84» el modelo
+/// escribe «83 o el 84» (inventa una disyuntiva). Por eso el guard numérico
+/// determinista va ANTES del modelo (`app.rs`), no después.
+const SYSTEM_PROMPT_REWRITE: &str = r#"Eres un editor de dictados por voz en español. Recibes un turno tal y como lo ha dictado una persona, con sus repeticiones, muletillas y auto-correcciones habladas.
+
+Tu trabajo: devolver ese mismo texto bien escrito, listo para enviarse.
+
+Reglas:
+1) Si el hablante se corrigió ("digo X", "quiero decir X", "mejor dicho X", "no X sino Y", "en vez de"), quédate con la versión corregida y borra la rectificación.
+2) Quita muletillas y repeticiones ("bueno", "o sea", "la verdad que", "es que" repetidos), sin cargarte el contenido.
+3) Conserva TODOS los datos: cifras, nombres, fechas, lugares. No añadas información que no esté dicha. No resumas.
+4) Mantén el registro y el tono de quien habla; no lo hagas sonar a comunicado.
+5) Devuelve SOLO el texto final, sin comillas ni explicaciones."#;
+
+/// Modo REESCRITURA (0.7.1): el modelo recibe el turno entero y devuelve ese
+/// mismo texto bien escrito. Mismo camino que `redact` (misma limpieza de la
+/// respuesta, mismo `max_tokens`), solo cambia el prompt.
+///
+/// Bloquea: se llama desde un hilo, igual que `redact`.
+pub fn rewrite(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
+    Ok(clean_redact_output(&ask_text(SYSTEM_PROMPT_REWRITE, turn, cfg)?))
+}
+
+/// Petición de texto a un modelo OpenAI-compatible: un `system` fijo y el turno
+/// como `user`. Es el cuerpo que comparten `redact` (corrección) y `rewrite`
+/// (reescritura) — todo lo demás es igual a propósito.
+fn ask_text(system_prompt: &str, turn: &str, cfg: &LlmConfig) -> Result<String, String> {
     let url = api_url(&cfg.base_url, "chat/completions");
     let body = serde_json::json!({
         "model": cfg.model,
         "messages": [
-            { "role": "system", "content": SYSTEM_PROMPT_IN_TURN },
+            { "role": "system", "content": system_prompt },
             { "role": "user", "content": turn },
         ],
         "temperature": 0.0,
@@ -415,12 +468,14 @@ pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
     if content_opt.is_none() {
         crate::log!(
             "llm",
-            "la respuesta del LLM (redact) no trae content ni reasoning_content: payload={}",
+            "la respuesta del LLM (texto) no trae content ni reasoning_content: payload={}",
             value
         );
     }
     let content = content_opt.ok_or_else(|| "la respuesta del LLM no trae content".to_string())?;
-    Ok(clean_redact_output(content))
+    // Se devuelve tal cual: la limpieza (comillas, fences, prefijos) la hace
+    // `clean_redact_output`, que es común a los dos modos.
+    Ok(content.to_string())
 }
 
 /// Limpia lo que devuelve el modo in-turn. El modelo puede adornar la
@@ -529,6 +584,32 @@ fn clean_redact_output(content: &str) -> String {
 /// peor caso se escribe el texto tal cual (con su «digo»), que es exactamente lo
 /// que dijo el usuario.
 pub fn guard_anti_truncacion(input: &str, output: &str) -> String {
+    guard_anti_truncacion_con(input, output, MIN_RATIO_CORRECCION)
+}
+
+/// Listón de palabras por defecto (modo Corrección): una corrección de verdad
+/// quita el trozo rectificado, no medio turno.
+const MIN_RATIO_CORRECCION: f64 = 0.6;
+
+/// Listón del modo Reescritura: reescribir bien un turno lleno de muletillas
+/// quita palabras de verdad (medido: 30-45 % en dictados largos con «la verdad
+/// que», «bueno», «o sea»). Por debajo del 50 % sigue oliendo a resumen.
+const MIN_RATIO_REESCRITURA: f64 = 0.5;
+
+/// Listón de palabras que exige cada modo. Corrección se queda como estaba
+/// (60 %); Reescritura baja al 50 % porque limpiar muletillas recorta de sobra.
+pub fn min_words_ratio(mode: AiMode) -> f64 {
+    match mode {
+        AiMode::Reescritura => MIN_RATIO_REESCRITURA,
+        // Con la IA apagada esto no se llama; si se llama, el listón prudente.
+        AiMode::Off | AiMode::Correccion => MIN_RATIO_CORRECCION,
+    }
+}
+
+/// `guard_anti_truncacion` con el listón de palabras a mano (por modo: ver
+/// `min_words_ratio`). El resto de la regla es idéntico: con una marca
+/// inequívoca de autocorrección el listón se parte por la mitad.
+pub fn guard_anti_truncacion_con(input: &str, output: &str, min_ratio: f64) -> String {
     let in_words = word_count(input);
     if in_words == 0 {
         // Texto vacío: no hay nada que proteger; se devuelve la respuesta sin más.
@@ -536,8 +617,8 @@ pub fn guard_anti_truncacion(input: &str, output: &str) -> String {
     }
     let out_words = word_count(output);
     let ratio = out_words as f64 / in_words as f64;
-    let justified = has_unambiguous_in_turn_marker(input) && ratio >= 0.3;
-    if ratio >= 0.6 || justified {
+    let justified = has_unambiguous_in_turn_marker(input) && ratio >= min_ratio / 2.0;
+    if ratio >= min_ratio || justified {
         output.to_string()
     } else {
         input.to_string()
@@ -788,6 +869,22 @@ pub fn guard_numeric_substitution(input: &str, output: &str) -> Result<String, (
     } else {
         Ok(reconstructed)
     }
+}
+
+/// El guard numérico aplicado al texto dictado ANTES del modelo (0.7.1).
+///
+/// Medido con Qwen3-4B: si el turno llega con «83 digo 84», el modelo escribe
+/// «83 o el 84» (se inventa la disyuntiva); si el guard numérico ya dejó el
+/// turno en «84», la reescritura sale limpia, sin «digo» y un poco más rápida
+/// (0,43 s → 0,37 s). Por eso el guard va DELANTE del modelo, no detrás.
+///
+/// `None` = no hay nada que arreglar: se trabaja con el texto tal cual.
+pub fn precondition_numeric(input: &str) -> Option<String> {
+    // `output` vacío a propósito: así el guard no puede dar por buena una
+    // respuesta del modelo (todavía no hay ninguna) y reconstruye él mismo.
+    guard_numeric_substitution(input, "")
+        .ok()
+        .filter(|texto| texto != input)
 }
 
 /// Lo que devuelve `parse_numeric_correction`: el texto partido por la primera
@@ -2270,7 +2367,11 @@ mod tests {
         assert!(!SMALL_LLM_MODELS.is_empty());
         assert_eq!(SMALL_LLM_MODELS[0].id, "qwen2.5-0.5b");
         for m in SMALL_LLM_MODELS {
-            assert!(m.approx_mb <= 1200, "{} pesa {} MB", m.id, m.approx_mb);
+            // El tope era 1200 MB con los tres pequeños. Desde la 0.7.1 la lista
+            // lleva también Qwen3-4B (2.382 MB, el recomendado para reescribir),
+            // así que el tope sube solo para él.
+            let tope = if m.id == "qwen3-4b" { 2500 } else { 1200 };
+            assert!(m.approx_mb <= tope, "{} pesa {} MB", m.id, m.approx_mb);
             assert!(m.url.starts_with("https://huggingface.co/"), "{}", m.id);
             assert!(m.file_name.ends_with(".gguf"), "{}", m.id);
         }
@@ -2766,6 +2867,82 @@ mod tests {
             guard_anti_truncacion(input, recorte),
             input,
             "sin marcador, un recorte al 30% huele a resumen y se descarta"
+        );
+    }
+
+    /// (0.7.1) El listón de palabras baja en Reescritura: un turno lleno de
+    /// muletillas se queda por debajo del 60 % al limpiarlo y aun así es una
+    /// reescritura legítima. En Corrección se queda como estaba.
+    #[test]
+    fn umbral_por_modo_reescritura_admite_el_recorte_de_muletillas() {
+        assert_eq!(min_words_ratio(AiMode::Correccion), 0.6);
+        assert_eq!(min_words_ratio(AiMode::Reescritura), 0.5);
+        assert_eq!(min_words_ratio(AiMode::Off), 0.6);
+
+        // 13 palabras dictadas → 7 escritas (54 %): reescritura buena, sin
+        // ninguna marca de autocorrección que lo justifique.
+        let input = "la verdad es que bueno el otro dia fui a Murcia y tal";
+        let reescrito = "el otro dia solo fui a Murcia";
+        assert_eq!(word_count(input), 13, "sanity de la cuenta");
+        assert_eq!(word_count(reescrito), 7, "sanity de la cuenta");
+        assert_eq!(
+            guard_anti_truncacion_con(&input, reescrito, min_words_ratio(AiMode::Reescritura)),
+            reescrito,
+            "con el listón de Reescritura (50 %) el recorte es legítimo"
+        );
+        assert_eq!(
+            guard_anti_truncacion_con(&input, reescrito, min_words_ratio(AiMode::Correccion)),
+            input,
+            "con el listón de Corrección (60 %) se tira y se queda el dictado"
+        );
+        // El guard de siempre no cambia.
+        assert_eq!(guard_anti_truncacion(&input, reescrito), input);
+    }
+
+    /// (0.7.1) El guard numérico aplicado AL TEXTO DICTADO (antes del modelo)
+    /// resuelve «83 digo 84» → «84». Es el orden medido: si se le pasa el turno
+    /// al modelo tal cual, contesta «83 o el 84» y se pierde el dato bueno.
+    #[test]
+    fn precondition_numeric_salva_el_caso_83_digo_84() {
+        let dictado = "allá por el 83 digo 84 me comí una pizza";
+        let limpio = precondition_numeric(dictado).expect("el patrón existe: debe reconstruir");
+        assert_eq!(limpio, "allá por el 84 me comí una pizza");
+        assert!(!limpio.contains("digo"), "sin la marca: {limpio}");
+        assert!(!limpio.contains("83"), "sin el número viejo: {limpio}");
+
+        // Sin autocorrección numérica no toca nada.
+        assert_eq!(precondition_numeric("allá por el 84 me comí una pizza"), None);
+        assert_eq!(precondition_numeric(""), None);
+    }
+
+    /// (0.7.1) El prompt de reescritura tiene que llevar la regla de conservar
+    /// los datos: es lo que impide que el modelo resuma o se invente cifras,
+    /// nombres y fechas.
+    #[test]
+    fn el_prompt_de_reescritura_exige_conservar_los_datos() {
+        assert!(SYSTEM_PROMPT_REWRITE.contains("Conserva TODOS los datos"));
+        assert!(SYSTEM_PROMPT_REWRITE.contains("No añadas información"));
+        assert!(SYSTEM_PROMPT_REWRITE.contains("No resumas"));
+        assert!(SYSTEM_PROMPT_REWRITE.contains("Devuelve SOLO el texto final"));
+        // El prompt de corrección no se ha tocado.
+        assert!(SYSTEM_PROMPT_IN_TURN.contains("auto-corrección"));
+        assert_ne!(SYSTEM_PROMPT_REWRITE, SYSTEM_PROMPT_IN_TURN);
+    }
+
+    /// (0.7.1) Los tres modelos pequeños se reconocen por id (Ajustes avisa en
+    /// Reescritura con ellos).
+    #[test]
+    fn is_small_llm_reconoce_los_pequenos_y_deja_pasar_al_4b() {
+        assert!(is_small_llm("qwen2.5-0.5b"));
+        assert!(is_small_llm("llama-3.2-1b"));
+        assert!(is_small_llm("qwen2.5-1.5b"));
+        assert!(!is_small_llm("qwen3-4b"));
+        // El nuevo está en la lista y al final (los tres primeros no se mueven).
+        assert_eq!(SMALL_LLM_MODELS.len(), 4);
+        assert_eq!(SMALL_LLM_MODELS[3].id, "qwen3-4b");
+        assert_eq!(
+            SMALL_LLM_MODELS[3].file_name,
+            "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"
         );
     }
 

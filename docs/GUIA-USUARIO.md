@@ -1,6 +1,7 @@
 # Guía de usuario — Silb
 
-Versión: 0.2.0 · Última revisión: 24/09/2026 (secciones de la ventana principal,
+Versión: 0.7.1 · Última revisión: 29/10/2026 (tres modos de IA y modo
+Reescritura, §3.4; antes: 24/09/2026, secciones de la ventana principal,
 imágenes propias que ya no se pierden al vaciar Descargas y dónde está el
 registro; antes: 11/09/2026, colores editables) y la especificación
 `docs/CORRECCION-VOZ.md`.
@@ -20,9 +21,11 @@ equivocas, lo arreglas hablando. Y si prefieres tocar el texto con el teclado,
    activada, arranca el servidor de IA local (la primera carga tarda unos
    segundos).
 3. Mira el aviso de estado bajo la cabecera:
-   - `● Corrección IA: activa · <modelo>` (verde) → listo para corregir.
-   - `○ Corrección IA: inactiva — <motivo>` (ámbar) → dicta igual, sin corregir.
-   - `○ Corrección IA: apagada` (gris) → actívala en Ajustes → Corrección IA.
+   - `● Corrección IA: activa · <modelo>` (verde) → listo para corregir. En modo
+     Reescritura la etiqueta dice `● Reescritura IA: activa · <modelo>`.
+   - `○ … inactiva — <motivo>` (ámbar) → dicta igual, sin corregir.
+   - `○ Corrección IA: apagada — actívala en Ajustes` (gris) → elige
+     Desactivada / Corrección / Reescritura en Ajustes → Corrección IA.
 4. La ventana tiene **dos secciones** en la barra de arriba: **Dictado** (el día
    a día: micrófono, medidor y tu nota) y **Ajustes** (todo lo demás). La sección
    activa va marcada con `●`. Cambiar de sección no pierde nada de lo que hayas
@@ -93,6 +96,45 @@ habituales:
 Si prefieres decidir tú antes de aplicar nada: Ajustes → Corrección IA →
 «Confirmar antes de aplicar» (enseña «Aplicar / Descartar»). Hay «Deshacer ↩» de
 1 nivel por si una corrección se aplicó mal.
+
+### 3.4 Modo Reescritura: la IA escribe el turno entero
+
+Hasta la 0.7.0 la IA solo entraba cuando veía una corrección. Desde la **0.7.1**
+hay **tres modos** en Ajustes → Corrección IA:
+
+| Modo | Qué hace |
+|---|---|
+| **Desactivada** | El dictado se escribe tal cual. |
+| **Corrección** | Solo arregla las auto-correcciones («digo X»). Es lo de §3.1 y §3.2. |
+| **Reescritura** | Reescribe el turno entero: limpio, puntuado, sin muletillas ni auto-correcciones. |
+
+Con **Reescritura** puedes hablar de corrido y sin cuidado:
+
+> «La verdad es que me duele mucho la cabeza y bueno el otro día allá por el 84
+> me comí una pizza y la verdad que fue una experiencia totalmente increíble
+> digo una experiencia totalmente asombrosa»
+> → escribe: *Me duele mucho la cabeza. El otro día, allá por el 84, me comí una
+> pizza y fue una experiencia totalmente increíble, una experiencia totalmente
+> asombrosa.*
+
+Lo que necesitas saber:
+
+- **Modelo recomendado: Qwen3-4B-Instruct-2507** (~2,4 GB), que ya sale en la
+  lista de modelos de Ajustes. Se descarga con el mismo botón **Descargar**. Los
+  modelos pequeños (Qwen2.5-0.5B, Llama 3.2 1B, Qwen2.5-1.5B) valen para
+  Corregir, pero al reescribir devuelven el texto sin tocar o una lista de
+  reglas: si pones Reescritura con uno de ellos, Ajustes te lo avisa.
+- **Tarda un poco en cada turno** (0,37–0,53 s medidos con Qwen3-4B en una RTX
+  4070). Es el precio de que el modelo lea siempre el turno entero.
+- **No resume**: si la respuesta se queda a menos de la mitad de las palabras del
+  dictado, se descarta y se escribe lo que dijiste. El panel dirá que se mantuvo
+  el texto original.
+- **Los números dichos con palabras** («tres mil», «cuarenta y ocho») no los
+  vigila la protección numérica: ahí el modelo puede escribir «X o Y» con una
+  disyuntiva que no dijiste. Con cifras en dígitos («83 digo 84») la protección
+  se aplica antes del modelo y el resultado es el bueno.
+- El cambio de modo **no rompe tu configuración**: quien venía con la corrección
+  encendida se queda en *Corrección*, y quien la tenía apagada, en *Desactivada*.
 
 ## 4. Corregir a mano (la nota es editable)
 

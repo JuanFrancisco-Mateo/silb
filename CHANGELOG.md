@@ -4,6 +4,70 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.7.1] — 2026-10-29
+
+Versión del **modo Reescritura**: la IA deja de limitarse a arreglar los «digo X»
+y pasa a devolver el turno entero bien escrito, si se le pide. Sin cambios en el
+formato de la config: un `config.json` antiguo se lee tal cual (ver «Cambiado»).
+
+### Añadido
+
+- **Modo «Reescritura»** (`AiMode::Reescritura`). La IA recibe el turno completo
+  y devuelve ese mismo texto limpio y puntuado: sin muletillas, sin
+  repeticiones y sin las auto-correcciones que dijiste en voz alta («me duele la
+  cabeza y bueno el otro día allá por el 84… digo una experiencia asombrosa» →
+  una sola frase bien escrita, con el 84 y sin «digo»). Antes la IA solo actuaba
+  cuando veía una corrección; ahora, en este modo, actúa en cada turno.
+- **Tres modos en Ajustes → Corrección IA**: `Desactivada` / `Corrección` /
+  `Reescritura` (`AiMode::ALL`). Cada uno con su explicación de una línea. Con
+  el modo `Corrección` todo funciona como en la 0.7.0.
+- **Qwen3-4B-Instruct-2507 en la lista de modelos descargables** (~2,4 GB,
+  `Qwen3-4B-Instruct-2507-Q4_K_M.gguf`), marcado como **el mejor para
+  reescribir**. Los tres pequeños siguen ahí igual. Si eliges Reescritura con
+  uno de los pequeños, Ajustes lo avisa: devuelven el texto sin tocar o una
+  lista de reglas.
+- **Aviso al reescribir**: el panel de la corrección dice «Reescrito IA: «antes»
+  → «después»» en vez de presentarlo como una auto-corrección, y la fila de
+  estado nombra el modo (`Reescritura IA`).
+
+### Cambiado
+
+- **El guard de números se aplica ANTES del modelo** (`precondition_numeric`).
+  Era el fallo de fondo: si el turno llegaba con «83 digo 84», el modelo escribía
+  «83 o el 84» (se inventa la disyuntiva) y se perdía una corrección que el
+  código sabía hacer bien. Ahora el guard determinista deja el turno en «84» y
+  al modelo solo le llega el texto ya arreglado: sale limpio, sin «digo» y algo
+  más rápido (0,43 s → 0,37 s).
+- **Listón de recorte por modo** (`min_words_ratio`): la protección contra
+  resúmenes exige el 60 % de las palabras en `Corrección` y baja al **50 %** en
+  `Reescritura`, porque quitar muletillas recorta de verdad. Por debajo sigue
+  oliendo a resumen y se tira.
+- **`config.json` compatible**: el campo nuevo `ai_mode` se deriva del antiguo
+  `ai_correction_enabled` (`true` → `Correccion`, `false` → `Off`), y
+  `ai_correction_enabled()` pasa a significar «modo distinto de Off». Quien
+  venga de la 0.7.0 no nota nada.
+
+### Corregido
+
+- **Se tiraba la corrección numérica buena** cuando la respuesta del modelo
+  traía meta-lengua. Ahora el texto que se escribe es el mejor de los dos (el
+  dictado pasado por el guard o la respuesta limpia del modelo) y los fallbacks
+  vuelven a ese texto, no al bruto: un «83 digo 84» ya no se queda con las dos
+  cifras ni con la marca.
+
+### Verificado
+
+- `cargo test`: **352 correctos, 0 fallos, 1 ignorado** (eran 345 en la 0.7.0).
+  `cargo check` sin errores, con los dos avisos conocidos de `src/hotkey.rs`.
+- Prueba real contra `llama-server` con Qwen3-4B-Instruct-2507 (RTX 4070): la
+  frase del ejemplo sale sin «digo», con el «84» y en **0,37–0,53 s por turno**.
+  Con el guard delante, «83 digo 84» → «allá por el 84» en 166 ms; sin el guard,
+  el 4B escribe «83 o el 84» y el fallo se reproduce.
+- Límites conocidos: en Reescritura el modelo **no debe resumir** (el prompt lo
+  prohíbe y el listón del 50 % lo vigila) y **puede inventar disyuntivas** con
+  los números que no vienen del guard (dichos con palabras: «tres mil», «cuarenta
+  y ocho»), porque la protección numérica solo entiende dígitos y la lista corta.
+
 ## [0.7.0] — 2026-10-29
 
 Versión de **comodidad**: el modelo que corrige ya no se busca a mano. Se elige
