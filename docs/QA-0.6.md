@@ -1,26 +1,26 @@
 # QA 0.6.0 — instaladores (base / pack CUDA) y scripts Linux
 
 **Fecha:** 2026-10-28 · **Rama:** `release/0.6.0`
-**Commits auditados:** `63bd6ce` (el pack CUDA sale del instalador base) y
+**Commits revisados:** `63bd6ce` (el pack CUDA sale del instalador base) y
 `b4670a2` (linux-check y scripts apuntando a `silb`). Base: `release/0.5.0`.
-**Arreglos de esta auditoría:** `e46a41b` (runtime CUDA 12 del pack) y
+**Arreglos de esta revisión:** `e46a41b` (runtime CUDA 12 del pack) y
 `778cedf` (binario viejo en linux-check).
-**Entorno:** Windows 11 26200, rustc 1.92.0, Inno Setup 6.7.3. La parte Linux
-se apoya en la pasada ya hecha por el usuario en el portátil (Arch, rustc
+**Entorno:** Windows 11 26200, rustc 1.92.0, Inno Setup 6.7.3. La parte de Linux
+se apoya en la pasada que ya hizo el usuario en el portátil (Arch, rustc
 1.99.1: check, check --tests, test y binario de 23 MB OK).
 **Alcance:** `packaging/whispr-open.iss`, `scripts/build-linux.sh`,
-`scripts/run-linux.sh`, `scripts/linux-check.sh`, `src/llm.rs` y las
-referencias al binario viejo.
+`scripts/run-linux.sh`, `scripts/linux-check.sh`, `src/llm.rs` y las referencias
+al binario viejo.
 
-**Método.** Lectura del código y del `.iss`; compilación del instalador base
-tres veces (antes y después del arreglo); compilación de la rama
-`/DMyCudaPack` **una vez** en un directorio de trabajo con `Compression=none`
-(786.199.874 B, borrado después) para validar el `#ifdef`; instalador
-sintético con AppId propio para reproducir la migración v1-con-`cuda\` →
-v2-base → desinstalar (nunca sobre la instalación real); `linux-check.sh` en
-un sandbox con `cargo` simulado y sin `.git`. **No se ejecutó
-`scripts/install-smoke.py`** ni ningún instalador sobre la instalación real
-del usuario.
+**Cómo se hizo.** Lectura del código y del `.iss`; compilación del instalador
+base tres veces (antes y después del arreglo); compilación de la rama
+`/DMyCudaPack` **una vez** en una carpeta de trabajo con `Compression=none`
+(786.199.874 B, borrada después) para validar el `#ifdef`; instalador de prueba
+con un AppId propio para reproducir la migración v1-con-`cuda\` → v2-base →
+desinstalar (nunca sobre la instalación real); `linux-check.sh` en un entorno
+aislado con `cargo` simulado y sin `.git`. **No se ejecutó
+`scripts/install-smoke.py`** ni ningún instalador sobre la instalación real del
+usuario.
 
 ---
 
@@ -32,7 +32,7 @@ del usuario.
 | H2 | Base sobre una instalación con pack CUDA: el `silb.exe` pasa a CPU y `backend.txt` a `cpu`, pero **`vendor\llama\cuda\` (656 MB) se queda**. La app sigue usando ese `cuda\` para el server LLM (no para whisper). No se recupera el espacio hasta desinstalar. Riesgo añadido: en una actualización futura, `llama-server.exe`/DLLs nuevas convivirían con un `ggml-cuda.dll` viejo. | MEDIA | Test sintético v1→v2: tras v2 siguen `install/cuda/big.bin`; `src/llm.rs:1365-1374` (`cuda_dir.is_dir() && nvidia_driver_present()`, no lee `backend.txt`); uninstall sintético → `ls install` = `No such file or directory` | Opción A: `DelTree('{app}\vendor\llama\cuda', ...)` en el base (ssInstall, tras `CloseApplications`). Opción B: documentar que se conserva hasta desinstalar. **No aplicado**: borrar 656 MB es decisión de producto. |
 | H3 | `backend.txt` no lo lee nadie: solo lo escribe el `.iss`. `backend=cpu` con el exe CPU no cambia el comportamiento real y la UI no muestra backend, así que no hay mentira visible; el fichero es metadato muerto. | BAJA | `grep -rn "backend.txt" src` → 0 resultados; solo aparece en `packaging/whispr-open.iss` (154, 156, 275). `grep -ri "cuda\|gpu" src/ui` → 0 | Leerlo en la app (log/Ajustes) o dejar de escribirlo. No aplicado: toca app/UI. |
 | H4 | El pack avisa de que no hay GPU NVIDIA pero **no bloquea**; `silb-cuda.exe` también importa `nvcuda.dll` (driver). Si el usuario ignora el aviso, instala una app que no arranca. | BAJA | Imports de H1 (`nvcuda.dll`); `[Code]` → `MsgBox(..., mbError, MB_OK)` y sigue | Abortar también sin `nvcuda.dll`, o cambiar el texto a «instalar de todos modos». No aplicado: el aviso lo diseñó el autor. |
-| H5 | El base empaqueta `target\release\silb.exe` sin fijar que sea el build CPU. El build `--features cuda` deja el exe CUDA (49,8 MB) en esa misma ruta; si es el último, el base sale con un exe que necesita `cuda\` y no arranca en equipo limpio. Hoy el artefacto es correcto. | BAJA (proceso) | `packaging/build/cuda.log` → el build CUDA compiló en `target`; `dumpbin /imports target/release/silb.exe | grep -i cuda` → vacío; base 15.407.267 B = payload CPU | Documentado el orden de build en `EMPAQUETADO.md` (commit `e46a41b`). Opcional: fijar `packaging\build\silb-cpu.exe`. |
+| H5 | El base empaqueta `target\release\silb.exe` sin fijar que sea el build CPU. El build `--features cuda` deja el exe CUDA (49,8 MB) en esa misma ruta; si es el último, el base sale con un exe que necesita `cuda\` y no arranca en equipo limpio. Hoy el artefacto es correcto. | BAJA (proceso) | `packaging/build/cuda.log` → el build CUDA compiló en `target`; `dumpbin /imports target/release/silb.exe \| grep -i cuda` → vacío; base 15.407.267 B = payload CPU | Documentado el orden de build en `EMPAQUETADO.md` (commit `e46a41b`). Opcional: fijar `packaging\build\silb-cpu.exe`. |
 | H6 | La rama es `release/0.6.0` pero `Cargo.toml`, el default del `.iss` y los artefactos siguen en **0.5.0**. | BAJA (release) | `Cargo.toml:3` → `version = "0.5.0"`; salida → `silb-0.5.0-setup.exe` | Subir `Cargo.toml` a 0.6.0 y compilar con `WHISPR_VERSION=0.6.0`; rehacer los dos artefactos. |
 | H7 | Documentación desfasada: cabecera del `.iss` («~30 MB comprimido», «~35 MB con los dos builds», default 0.4.0), `EMPAQUETADO.md` §4 («Actual: 0.4.0») y §1.2.1, y `RELEASE-CHECKLIST.md` (0.4.0, un solo artefacto). | BAJA | Lectura de los tres ficheros | Actualizar cabecera y §4/§1.2.1; checklist de 0.6 con base + pack y requisito CUDA 12. |
 | H8 | `linux-check.sh` mide `target/release/whispr-open` si falta `silb`: es justo el binario viejo que el commit declaró obsoleto, y el informe lo presenta como el build actual. | BAJA (corregido en `778cedf`) | Antes: sandbox con solo el binario viejo → `binario : target/release/whispr-open 1.0K`. Después: solo viejo → `no encontrado`; con `silb` → `target/release/silb 1.0K` | Quitado el fallback: `BIN=target/release/silb`; si no existe, «no encontrado». |
@@ -45,8 +45,8 @@ del usuario.
 
 ### a) `Excludes: "cuda"` con `recursesubdirs`
 
-**Sin hallazgo.** El compilador de Inno 6.7.3 poda el **directorio** `cuda\`
-completo, no solo un fichero llamado `cuda`:
+**Sin hallazgo.** El compilador de Inno 6.7.3 quita la **carpeta** `cuda\`
+entera, no solo un fichero llamado `cuda`:
 
 ```
 ISCC.exe <copia de whispr-open.iss con OutputDir=out>   (log sin /Q)
@@ -57,20 +57,20 @@ grep -a "Compressing:" <log de ISCC> | awk -F'\\' '{print $NF}' | sort
   → 0 entradas con "cuda"
 ```
 
-La lista de 24 ficheros coincide con el inventario de `vendor/llama` sin
-`cuda/` (todos los `ggml-cpu-*.dll`, `ggml*.dll`, `llama*.dll`, `mtmd.dll`,
-`libomp140`, etc.). Los 656 MB de `vendor/llama/cuda` no aparecen en el log ni
-en el tamaño. La duda de la documentación de Inno («un patrón sin `\` inicial
-se compara con el final del path») queda resuelta a favor del comportamiento
-deseado: `cuda` excluye el subdirectorio entero.
+La lista de 24 ficheros coincide con el inventario de `vendor/llama` sin `cuda/`
+(todos los `ggml-cpu-*.dll`, `ggml*.dll`, `llama*.dll`, `mtmd.dll`, `libomp140`,
+etc.). Los 656 MB de `vendor/llama/cuda` no salen ni en el registro ni en el
+tamaño. La duda que plantea la documentación de Inno («un patrón sin `\` inicial
+se compara con el final del path») queda resuelta a favor de lo que se buscaba:
+`cuda` excluye la subcarpeta entera.
 
-La rama `/DMyCudaPack` compila y añade `vendor\llama\cuda\*` aparte; el `.iss`
-ya aborta en compilación si falta `cuda\ggml-cuda.dll`.
+La rama `/DMyCudaPack` compila y añade `vendor\llama\cuda\*` aparte; el `.iss` ya
+se para en la compilación si falta `cuda\ggml-cuda.dll`.
 
 ### b) Migración 0.5.0 (CUDA) → 0.6.0 base
 
-Reproducido con un instalador sintético (AppId `{A1B2…}`, directorio de
-trabajo temporal, nunca el AppId real):
+Reproducido con un instalador de prueba (AppId `{A1B2…}`, carpeta temporal, nunca
+el AppId real):
 
 ```
 v1: src\* con src\cuda\big.bin        → install\base.txt, install\cuda\big.bin, unins000.*
@@ -79,67 +79,71 @@ unins000.exe /VERYSILENT              → ls install: No such file or directory
 reg query ... QA-Silb-Migracion       → 0 coincidencias
 ```
 
-- **Coherencia funcional:** no se rompe. El `silb.exe` que queda es el CPU
-  (no importa CUDA), así que whisper transcribe en CPU. El `cuda\` que sobra
-  **sí lo sigue usando el server LLM**: `launch_server` decide por
-  `cuda_dir.is_dir() && nvidia_driver_present()` (`src/llm.rs:1365-1374`), no
-  por `backend.txt`. En una máquina sin `nvcuda.dll` lo ignora y loguea «pack
-  CUDA ignorado: no hay driver NVIDIA», sin romper.
-- **Espacio:** los 656 MB se quedan hasta desinstalar, pero **el desinstalador
-  sí los borra**: Inno conserva el log de desinstalación de la versión
-  anterior al actualizar en sitio y el test sintético lo confirma. No hay fuga
-  permanente; sí hay 656 MB retenidos mientras la app está instalada.
-- **`backend.txt`:** pasa a `cpu`, pero no lo lee nadie (H3). No hay
-  incoherencia visible en la UI porque la UI no muestra backend.
-- **Riesgo estructural:** el base reemplaza `llama-server.exe`/DLLs CPU pero
-  no toca `cuda\`; una futura actualización de vendor dejaría un
-  `ggml-cuda.dll` viejo con un server nuevo. Hoy los dos packs salen del mismo
-  `vendor/llama` (14/10), así que no ocurre todavía.
+- **Funciona igual:** no se rompe nada. El `silb.exe` que queda es el de CPU (no
+  usa CUDA), así que whisper transcribe en CPU. El `cuda\` que sobra **sí lo
+  sigue usando el servidor de IA**: `launch_server` decide por
+  `cuda_dir.is_dir() && nvidia_driver_present()` (`src/llm.rs:1365-1374`), no por
+  `backend.txt`. En una máquina sin `nvcuda.dll` lo ignora y apunta «pack CUDA
+  ignorado: no hay driver NVIDIA», sin romperse.
+- **Espacio:** los 656 MB se quedan hasta desinstalar, pero **el desinstalador sí
+  los borra**: Inno conserva el registro de desinstalación de la versión anterior
+  al actualizar encima y la prueba con el instalador de mentira lo confirma. No
+  se pierde nada para siempre; sí hay 656 MB retenidos mientras la app está
+  instalada.
+- **`backend.txt`:** pasa a `cpu`, pero no lo lee nadie (H3). No hay nada raro a
+  la vista porque la interfaz no enseña el backend.
+- **Riesgo estructural:** el base reemplaza `llama-server.exe`/DLL de CPU pero no
+  toca `cuda\`; una actualización futura del vendor dejaría un `ggml-cuda.dll`
+  viejo con un servidor nuevo. Hoy los dos packs salen del mismo `vendor/llama`
+  (14/10), así que todavía no ocurre.
 
 ### c) Pack CUDA encima del base con Silb abierto
 
-**Sin defecto en el `.iss`; comportamiento documentado.** Inno 6.7.3 usa
-`CloseApplications` por defecto (`yes`) y Windows Restart Manager: al detectar
-`silb.exe` en uso, en modo interactivo pausa en «Preparando la instalación»,
-lista la app y ofrece cerrarla; en silencioso la cierra sola
-(`scripts/install-test.bat` ya pasa `/CLOSEAPPLICATIONS`). Si el usuario se
-niega, el instalador no puede reemplazar `silb.exe` y termina con error.
+**Ningún defecto en el `.iss`; es un comportamiento documentado.** Inno 6.7.3 usa
+`CloseApplications` por defecto (`yes`) y el Restart Manager de Windows: al
+detectar `silb.exe` en uso, en modo interactivo se para en «Preparando la
+instalación», lista la app y ofrece cerrarla; en silencioso la cierra solo
+(`scripts/install-test.bat` ya pasa `/CLOSEAPPLICATIONS`). Si te niegas, el
+instalador no puede reemplazar `silb.exe` y termina con error.
 `RestartApplications` también es `yes` por defecto, pero Silb **no** llama a
-`RegisterApplicationRestart` (`grep` en `src` → 0), así que Restart Manager no
-la relanza: la abre la entrada `[Run]` final (con `skipifsilent`, o sea, no en
-silencioso).
+`RegisterApplicationRestart` (`grep` en `src` → 0), así que el Restart Manager no
+la vuelve a abrir: la abre la entrada `[Run]` del final (con `skipifsilent`, o
+sea, no en silencioso).
 
-No se ha probado sobre la instalación real (prohibido `install-smoke.py`).
-Queda documentado en `EMPAQUETADO.md` §7.2 (commit `e46a41b`).
+No se ha probado sobre la instalación real (estaba prohibido usar
+`install-smoke.py`). Queda documentado en `EMPAQUETADO.md` §7.2 (commit
+`e46a41b`).
 
 ### d) ¿Algo en `src/` asume el exe CUDA?
 
-**Sin rotura ni mentira en la UI.** No existe `backend` en `Config` (solo
-`inject_backend`, de la inyección Linux); `src/ui` no menciona CUDA/GPU; el
-único consumidor de backend sería `backend.txt`, que no tiene lector. El exe
-CPU (`target/release/silb.exe`, 23.675.392 B) no importa CUDA, y el
-`llama-server.exe`/`llama-server-impl.dll` vendados tampoco: el server arranca
-en CPU sin `cuda\`. La app degrada por diseño: sin `cuda\` el cwd es el del
-exe y no toca el PATH; con `cuda\` y driver usa GPU solo para el LLM. El
-`backend.txt` muerto es H3.
+**Ni se rompe ni engaña a la vista.** No existe `backend` en `Config` (solo
+`inject_backend`, el de la escritura en Linux); `src/ui` no menciona CUDA ni GPU;
+el único que leería el backend sería `backend.txt`, que no tiene lector. El exe
+de CPU (`target/release/silb.exe`, 23.675.392 B) no usa CUDA, y el
+`llama-server.exe`/`llama-server-impl.dll` que viajan con la app tampoco: el
+servidor arranca en CPU sin `cuda\`. La app se degrada sola por diseño: sin
+`cuda\` la carpeta de trabajo es la del exe y no toca el PATH; con `cuda\` y
+driver usa la GPU solo para la IA. El `backend.txt` muerto es H3.
 
 ### e) `linux-check.sh`
 
-Mecánica correcta: cuenta fallos (`EXIT=3` con tres pasos fallidos), regenera
+La mecánica está bien: cuenta fallos (`EXIT=3` con tres pasos fallidos), rehace
 el informe (dos ejecuciones → una sola cabecera `VERIFICACIÓN LINUX`), funciona
-sin `.git` (`Commit: (sin git)`) y con `SKIP_BUILD=1`. Los defectos son de
-informe, no de ejecución: H8 (medía el binario viejo; corregido en `778cedf`),
-H9 (la cabecera promete parar y no para; «ver detalle arriba» no aplica a
-stdout) y H10 (TODO OK sin binario). `step` no aborta a propósito, así que el recuento y el código de
-salida son coherentes con lo que hace, no con lo que dice la cabecera.
+sin `.git` (`Commit: (sin git)`) y con `SKIP_BUILD=1`. Los defectos son del
+informe, no de la ejecución: H8 (medía el binario viejo; corregido en `778cedf`),
+H9 (la cabecera promete parar y no para; «ver detalle arriba» no vale para
+stdout) y H10 (TODO OK sin binario). `step` no se para a propósito, así que el
+recuento y el código de salida cuadran con lo que hace, no con lo que dice la
+cabecera.
 
 ### f) Referencias a `target/release/whispr-open`
 
 **Ninguna viva.** `scripts/linux-check.sh:55` era la última y se corrigió en
-`778cedf` (H8). `CHANGELOG.md:103` es histórica (describe la variante portable
-anterior al renombrado) y `EMPAQUETADO.md` explica el nombre viejo. No hay CI:
-`.github` solo tiene plantillas de issues/PR, sin workflows. `build-linux.sh`,
-`run-linux.sh` y `measure-release-profile.sh` ya usan `silb`.
+`778cedf` (H8). `CHANGELOG.md:103` es histórica (describe la versión portable
+anterior al cambio de nombre) y `EMPAQUETADO.md` explica el nombre viejo. No hay
+integración continua: `.github` solo tiene plantillas de issues/PR, sin
+workflows. `build-linux.sh`, `run-linux.sh` y `measure-release-profile.sh` ya
+usan `silb`.
 
 ---
 
@@ -177,39 +181,42 @@ con silb (778cedf)            → "binario: target/release/silb 1.0K"
 
 ## No verificado (y por qué)
 
-- `scripts/install-smoke.py`: prohibido por la tarea (desinstala la
-  instalación real).
-- Instalación real del base o del pack, actualización en sitio y
-  desinstalación con el AppId real: no se ha tocado la instalación del
-  usuario; la migración se probó con un AppId sintético.
-- Arranque del exe CUDA sin runtime: se deduce de la tabla de imports (el
-  loader exige las DLLs antes de `main`); no se lanzó para no dejar un diálogo
-  modal de Windows.
-- Guard de `PrepareToInstall`: compila en las dos ramas (base y
-  `/DMyCudaPack`), pero no se ejecutó ninguna instalación; su comportamiento
-  en runtime es el documentado por Inno (string no vacío → para en
-  «Preparando la instalación» y sale con código propio).
-- Flujo de micrófono/UI y ejecución nativa en Linux: fuera de alcance; se usa
-  la línea base del usuario.
+- `scripts/install-smoke.py`: la tarea lo prohibía (desinstala la instalación
+  real).
+- Instalación real del base o del pack, actualización encima y desinstalación con
+  el AppId real: no se ha tocado la instalación del usuario; la migración se
+  probó con un AppId inventado.
+- Arranque del exe CUDA sin runtime: se deduce de la tabla de dependencias (el
+  cargador de Windows pide esas DLL antes de llegar a `main`); no se lanzó para no
+  dejar una ventana modal de Windows abierta.
+- La comprobación de `PrepareToInstall`: compila en las dos ramas (base y
+  `/DMyCudaPack`), pero no se ejecutó ninguna instalación; su comportamiento en
+  marcha es el que documenta Inno (texto no vacío → se para en «Preparando la
+  instalación» y sale con código propio).
+- El flujo de micrófono e interfaz y la ejecución nativa en Linux: fuera de
+  alcance; se usa la línea base del usuario.
 
 ---
 
 ## Resumen (5 líneas)
 
-1. **El base de 0.6 es publicable**: 15,4 MB, payload verificado sin `cuda\`,
-   exe CPU sin imports CUDA y `llama-server` vendado sin dependencias CUDA;
-   faltan el bump a 0.6.0 y la prueba de instalación real.
-2. **El pack CUDA no era publicable**: `silb-cuda.exe` exige `cudart64_12` /
-   `cublas64_12` y el pack trae CUDA 13; el chequeo de 0.5.0 se había perdido.
-   Corregido en `e46a41b`; hay que **recompilar el pack** para que lo lleve.
-3. **La migración 0.5→0.6 base no rompe**, pero deja 656 MB de `cuda\` y el
-   LLM sigue en GPU; el desinstalador sí borra esos ficheros (probado).
-4. **`backend.txt` es metadato muerto** (nadie lo lee); la UI no miente porque
-   no muestra backend, pero el trabajo del instalador no sirve de nada.
-5. **Linux:** scripts y binario `silb` correctos; H8 corregido en `778cedf` y
-   quedan H9/H10, dos detalles de informe que no bloquean la release.
+1. **El base de 0.6 se puede publicar**: 15,4 MB, contenido comprobado sin
+   `cuda\`, exe de CPU sin dependencias de CUDA y `llama-server` de la app sin
+   dependencias de CUDA; faltan subir la versión a 0.6.0 y probar la instalación
+   de verdad.
+2. **El pack CUDA no se podía publicar**: `silb-cuda.exe` exige `cudart64_12` /
+   `cublas64_12` y el pack trae CUDA 13; la comprobación de 0.5.0 se había
+   perdido. Corregido en `e46a41b`; hay que **recompilar el pack** para que lo
+   lleve.
+3. **La migración 0.5→0.6 base no rompe**, pero deja 656 MB de `cuda\` y la IA
+   sigue en GPU; el desinstalador sí borra esos ficheros (probado).
+4. **`backend.txt` es un dato muerto** (nadie lo lee); la interfaz no engaña
+   porque no enseña el backend, pero el trabajo del instalador no sirve de nada.
+5. **Linux:** los scripts y el binario `silb` están bien; H8 corregido en
+   `778cedf` y quedan H9/H10, dos detalles del informe que no bloquean la
+   release.
 
-**¿Se puede publicar 0.6 como está?** El base sí, tras subir la versión y
-recompilarlo. El pack CUDA **no** hasta recompilarlo con el arreglo `e46a41b`
-(y, aun así, solo sirve en equipos con el runtime CUDA 12; el arreglo de raíz
-es recompilar `silb-cuda.exe` contra CUDA 13 o empaquetar el runtime 12).
+**¿Se puede publicar la 0.6 tal como está?** El base sí, después de subir la
+versión y recompilarlo. El pack CUDA **no** hasta recompilarlo con el arreglo
+`e46a41b` (y, aun así, solo sirve en equipos con el runtime CUDA 12; el arreglo de
+raíz es recompilar `silb-cuda.exe` contra CUDA 13 o meter el runtime 12 dentro).
