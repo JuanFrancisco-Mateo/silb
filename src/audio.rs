@@ -22,9 +22,29 @@ pub const MAX_RECORDING_SECS: u64 = 2 * 60 * 60;
 pub fn input_devices() -> Vec<String> {
     let host = cpal::default_host();
     match host.input_devices() {
-        Ok(devices) => devices.filter_map(|device| device.name().ok()).collect(),
+        Ok(devices) => devices
+            .filter_map(|device| device.name().ok())
+            .filter(|name| is_real_capture(name))
+            .collect(),
         Err(_) => vec![],
     }
+}
+
+/// En Linux el host de cpal es ALSA y `input_devices()` devuelve todo el zoo de
+/// plugins (`null`, `lavrate`, `speexrate`, `jack`, `oss`, `upmix`…), que no
+/// son micrófonos y llenaban el selector de ruido. Solo pasan la entrada por
+/// defecto y los PCM de tarjeta.
+#[cfg(target_os = "linux")]
+fn is_real_capture(name: &str) -> bool {
+    matches!(name, "default" | "pipewire" | "pulse")
+        || ["hw:", "plughw:", "sysdefault:", "front:"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn is_real_capture(_name: &str) -> bool {
+    true
 }
 
 /// Decisión (pura, sin cpal) sobre qué dispositivo de entrada abrir según la
@@ -158,6 +178,13 @@ impl AudioCapture {
             .default_input_config()
             .map_err(|error| format!("no se pudo abrir la config de entrada: {error}"))?;
         let rate = config.sample_rate().0;
+        crate::log!(
+            "audio",
+            "dispositivo de entrada: «{}»",
+            device
+                .name()
+                .unwrap_or_else(|_| "desconocido".to_string())
+        );
         crate::log!(
             "audio",
             "config de entrada nativa: {rate} Hz, {} canales, {:?} ({}); \
@@ -541,5 +568,38 @@ mod tests {
         assert!(aviso.contains("Micrófono (Realtek(R) Audio)"), "{aviso}");
         assert!(aviso.contains("no está disponible"), "{aviso}");
         assert!(aviso.contains("Ajustes"), "dice cómo arreglarlo: {aviso}");
+    }
+
+    /// En Linux el host de cpal lista todo el zoo de plugins de ALSA como si
+    /// fueran entradas: el selector enseñaba «null», «jack», «speexrate»…
+    /// junto a los micrófonos de verdad.
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn el_zoo_de_plugins_de_alsa_no_cuenta_como_microfono() {
+        for plugin in [
+            "null",
+            "lavrate",
+            "samplerate",
+            "speexrate",
+            "speex",
+            "jack",
+            "oss",
+            "upmix",
+            "vdownmix",
+            "usbstream:CARD=Generic",
+        ] {
+            assert!(!is_real_capture(plugin), "«{plugin}» no es una entrada");
+        }
+        for real in [
+            "default",
+            "pipewire",
+            "pulse",
+            "sysdefault:CARD=Generic_1",
+            "hw:CARD=Generic_1,DEV=0",
+            "plughw:CARD=Generic,DEV=0",
+            "front:CARD=Generic,DEV=0",
+        ] {
+            assert!(is_real_capture(real), "«{real}» sí es una entrada");
+        }
     }
 }
