@@ -8,7 +8,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-7C6CFF?style=flat-square)](https://www.rust-lang.org/)
 [![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11%20%C2%B7%20Linux-7C6CFF?style=flat-square)](#compilar-desde-el-código)
 [![whisper.cpp](https://img.shields.io/badge/whisper.cpp-local-7C6CFF?style=flat-square)](https://github.com/ggerganov/whisper.cpp)
-[![Tests](https://img.shields.io/badge/tests-341%20passed-3fb950?style=flat-square)](#tests)
+[![Tests](https://img.shields.io/badge/tests-345%20passed-3fb950?style=flat-square)](#tests)
 
 [Instalar](#instalar) · [Compilar](#compilar-desde-el-código) · [Uso](#uso) · [Configuración](#configuración-avanzada-configjson) · [Contribuir](#contribuir)
 
@@ -168,11 +168,11 @@ funcionar**.
 3. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar) y habla. Al soltar, el texto se
    transcribe y se escribe en la app que tenga el foco.
 
-La **corrección con IA local es opcional**: solo si quieres el corrector «de
-fábrica» necesitas `llama-server.exe` y un modelo GGUF (ver
-[`docs/SETUP.md`](docs/SETUP.md)). La app **busca sola** el servidor y el
-modelo; si no los encuentra, la corrección se desactiva con un aviso y el
-dictado sigue funcionando.
+La **corrección con IA local es opcional**: el servidor (`llama-server.exe`)
+viaja con la app y el **modelo se elige y se descarga desde Ajustes** (lista de
+tres modelos pequeños, o un repo/URL de Hugging Face en «Otro»; ver
+[`docs/SETUP.md`](docs/SETUP.md)). Si no hay modelo, la corrección se desactiva
+con un aviso y el dictado sigue funcionando.
 
 ## Uso
 
@@ -204,8 +204,12 @@ La guía sin palabras técnicas está en
   OpenAI-compatible · Cloud — OpenAI. Por defecto: Local.»
 - *Endpoint LLM*: «Dirección del servidor de IA (API compatible con OpenAI).
   Local: http://127.0.0.1:8081/v1.»
-- *Modelo IA*: «El modelo que corrige. Debe estar en tu servidor local o ser
-  uno de los que ofrece la nube.»
+- *Modelo IA local* (proveedor Local): desplegable con tres modelos pequeños
+  (Qwen2.5-0.5B ~491 MB, el recomendado · Llama 3.2 1B ~808 MB · Qwen2.5-1.5B
+  ~1,1 GB) y «Otro (repo o URL de Hugging Face)…» para pegar `owner/repo` o la
+  dirección de un `.gguf`. Si el fichero no está en el disco, el bloque enseña
+  **Descargar** y lo baja a `models-llm/` con progreso.
+- *Modelo IA* (solo Custom/Cloud): «El modelo que corrige en la nube.»
 - *API key* (solo Custom/Cloud): «Clave del endpoint si la exige (Custom:
   opcional · Cloud: obligatoria). Se guarda en el Administrador de credenciales
   de Windows, nunca en la config.»
@@ -286,7 +290,7 @@ registrado se muestra en la app (Ajustes).
 ## Tests
 
 ```powershell
-cargo test   # 341 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo test   # 345 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 cargo check  # sin errores
 ```
 

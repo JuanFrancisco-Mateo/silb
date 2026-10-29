@@ -103,27 +103,40 @@ por cada movimiento del ratón al arrastrar la burbuja. Ahora:
   con un botón para abrir la carpeta (junto al estado de `WHISPR_DEBUG` y a dónde
   viven las imágenes propias).
 
-## 8. Próximas ideas — elegir el modelo de IA desde Ajustes (0.7)
+## 8. Elegir el modelo de IA desde Ajustes (0.7) — implementado
 
-Hoy, en **Ajustes → Corrección IA**, el modelo local se escribe a mano en un
-campo de texto. La idea es que pase a ser un **desplegable** (o un menú) con
-modelos de **Hugging Face**, y que **la app los descargue** sola, como ya hace
-con el modelo de voz. Nada de ir a la web a bajar el fichero y dejarlo en la
-carpeta `models-llm`.
+**Ya está hecho** (commits `1c0e7c9`, `7981f3c`, `f7ec5f0`). Antes, en
+**Ajustes → Corrección IA**, el modelo local se escribía a mano en un campo de
+texto y había que ir a la web a bajar el GGUF y dejarlo en la carpeta
+`models-llm`. Ahora se elige en un desplegable y la app lo trae sola.
 
-Decisiones pendientes antes de ponerse:
+Qué se eligió:
 
-- ¿Desplegable con una **lista corta elegida por el proyecto** (los recomendados
-  que ya aparecen en esa pantalla: Qwen2.5-0.5B, Llama 3.2 1B, Qwen2.5-1.5B) o
-  un **buscador libre** de Hugging Face donde se pega el nombre del repo o la
-  URL?
-- Si alguien elige un modelo que **no es GGUF** (safetensors, por ejemplo),
-  ¿se avisa y se descarta? Hoy tanto whisper como el servidor de corrección
-  trabajan solo con GGUF.
+- **Desplegable con lista curada**, la opción barata de las dos: Qwen2.5-0.5B
+  (~491 MB, recomendado), Llama 3.2 1B (~808 MB) y Qwen2.5-1.5B (~1,1 GB). Son
+  los tres pequeños que ya recomendaba la pantalla, con su nombre de fichero y
+  su dirección reales en `src/llm.rs` (`SMALL_LLM_MODELS`).
+- **«Otro (repo o URL de Hugging Face)…»** para lo que no esté en la lista: abre
+  un campo donde se pega `owner/repo` (se leen los ficheros del repo por la API
+  y se escoge el GGUF, prefiriendo `q4_k_m`) o la dirección directa del `.gguf`.
+  Es el único sitio donde se escribe a mano.
+- **Solo GGUF.** Si el repo no trae ningún GGUF, se avisa y no se baja nada; el
+  fichero que llega se comprueba por su marca (`GGUF` en los primeros bytes), no
+  por el nombre. Whisper y el servidor de corrección solo entienden GGUF.
+- **Dónde se descarga**: en la carpeta propia del corrector,
+  `%APPDATA%\whispr-open\models-llm\` (en Linux
+  `~/.local/share/whispr-open/models-llm/`), en un hilo aparte con progreso
+  («Descargando… 123 MB de 491 MB (25 %)», o sin total si el servidor no lo
+  dice). Al terminar, el servidor de IA se relanza por el camino de arranque de
+  siempre; el nombre que se guarda es el del fichero, no la ruta dentro del repo.
 
-Encaja con lo que ya existe (`CORRECCION-VOZ.md`): el modelo local se resuelve
-por nombre dentro de `models-llm`; esto añade delante el paso de elegirlo y
-traerlo, sin tocar el resto del camino.
+Límites, dichos claros en la propia pantalla:
+
+- **No se reanudan descargas a medias**: cada intento empieza de cero y el
+  `.part` se queda donde estaba hasta que otro intento lo pisa.
+- **Solo GGUF públicos**: nada de repos privados ni de safetensors.
+- La descarga **no toca el dictado**: si falla, queda un aviso en el bloque y se
+  sigue dictando (sin corrección si no había modelo).
 
 ## 9. Criterios de aceptación
 

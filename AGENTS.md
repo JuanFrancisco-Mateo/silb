@@ -31,7 +31,7 @@ Leer este archivo ANTES de tocar nada.
 
 ## Definición de "done" (criterios innegociables)
 
-1. `cargo test` → **341 pasan, 0 fallan, 1 ignorado**.
+1. `cargo test` → **345 pasan, 0 fallan, 1 ignorado**.
 2. `cargo check` → sin errores (los 2 avisos conocidos de `src/hotkey.rs` se
    toleran).
 3. Commit por fase lógica, mensaje en español.

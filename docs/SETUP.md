@@ -18,23 +18,29 @@ Custom y Cloud.
 Sin internet y sin API key: la app arranca `llama-server.exe` al abrirse y le
 pasa el modelo GGUF. Proveedor en Configuración → Corrección IA → **Local**.
 
-### 1. Descargar el modelo GGUF
+### 1. Conseguir el modelo GGUF
 
-El modelo por defecto es `ornith-1.0-9b`. Si tu equipo va justo de VRAM,
-cualquier GGUF pequeño de un modelo instruct decente sirve igual (cambia el
-campo Modelo IA).
+Desde la 0.7 **no hay que bajar nada a mano**: en Ajustes → Corrección IA →
+Local, el desplegable **Modelo IA local** trae tres modelos pequeños
+(Qwen2.5-0.5B ~491 MB, el recomendado; Llama 3.2 1B ~808 MB; Qwen2.5-1.5B
+~1,1 GB) y el botón **Descargar** los baja solo a
+`%APPDATA%\whispr-open\models-llm\`. Con «Otro (repo o URL de Hugging Face)…» se
+pega el `owner/repo` o la dirección de un `.gguf` público; solo se aceptan GGUF y
+si el repo no trae ninguno, se avisa. Las descargas a medias no se reanudan: cada
+intento empieza de cero.
 
-- Bájalo de Hugging Face (por ejemplo, de un repo de `lmstudio-community` para
-  que la búsqueda automática lo encuentre) o de donde prefieras.
-- Ponlo en cualquiera de estas rutas (la app las mira en este orden):
-  - `%USERPROFILE%\.lmstudio\models\...` (la carpeta de modelos de LM Studio,
-    incluida `lmstudio-community\...`)
-  - `D:\LlamaCPP\models\...` o `C:\LlamaCPP\models\...`
-  - `D:\models\...` o `C:\models\...`
-- La búsqueda va por **nombre de archivo exacto** y baja hasta 6 niveles de
-  profundidad: si tu GGUF se llama distinto, cambia el campo **Modelo IA** en
-  Ajustes (por ejemplo `qwen3-0.8b-q8_0.gguf`) o pon la ruta completa al
-  archivo.
+Si ya tienes un GGUF en el equipo, la app lo encuentra por **nombre de archivo
+exacto** (baja hasta 6 niveles) en estas rutas, en este orden:
+
+- `%APPDATA%\whispr-open\models-llm\` (la carpeta propia del corrector)
+- `%USERPROFILE%\.lmstudio\models\...` (la carpeta de modelos de LM Studio,
+  incluida `lmstudio-community\...`)
+- `D:\LlamaCPP\models\...` o `C:\LlamaCPP\models\...`
+- `D:\models\...` o `C:\models\...`
+
+En «Otro» puedes **escribir ese nombre de archivo** (se usa el que ya tienes, sin
+descargar nada) o pegar el `owner/repo` / la dirección `.gguf` de Hugging Face
+para que la app se lo baje a `models-llm/`.
 
 ### 2. Localizar llama-server.exe
 

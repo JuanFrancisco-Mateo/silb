@@ -29,7 +29,7 @@ use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
 use crate::app::{
     dictionary_list, filler_lists, language_hint, language_label, llm_status_ui, ui_text,
-    FillerCategory, Message, SettingsSection, WhisprApp,
+    FillerCategory, LlmDownload, Message, SettingsSection, WhisprApp,
 };
 use crate::config::{
     BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, CorrectionProvider, FontSize,
@@ -159,6 +159,25 @@ fn model_row_height(ty: DesignType) -> f32 {
     let line = |size: u16| size as f32 * 1.3;
     let text = line(ty.nav) + 5.0 + line(ty.body);
     (text + 40.0).max(theme::GRID_MODEL_ROW_HEIGHT)
+}
+
+/// «Descargando… 123 MB de 491 MB (25 %)». Si el servidor no dice el tamaño se
+/// enseña lo que hay, sin inventarse un total.
+fn llm_download_text(downloaded: u64, total: u64) -> String {
+    let mb = |b: u64| b / (1024 * 1024);
+    if total == 0 {
+        return format!(
+            "Descargando… {} MB (el servidor no dice el tamaño)",
+            mb(downloaded)
+        );
+    }
+    let pct = downloaded.saturating_mul(100) / total;
+    format!(
+        "Descargando… {} MB de {} MB ({} %)",
+        mb(downloaded),
+        mb(total),
+        pct
+    )
 }
 
 /// Fila de preferencia de la rejilla (nodo `3:656`, 68 px): rótulo de 14 px
@@ -1432,34 +1451,91 @@ impl WhisprApp {
                     ),
         ];
         if is_local {
-            main_rows.push(note_row(
-                "Modelos pequeños recomendados (<1,2 GB): Qwen2.5-0.5B (~491 MB) · \
-                 Llama 3.2 1B (~808 MB) · Qwen2.5-1.5B (~1,1 GB). El server \
-                 (llama-server.exe) viaja con la app; el GGUF se busca solo en \
-                 vendor/models y en %APPDATA%/whispr-open/models (también \
-                 models-llm/). Si no hay modelo, el dictado sigue funcionando \
-                 sin corrección.",
-                c.faint,
-                ty,
-            ));
+            // (0.7) El modelo se elige en un desplegable y, si falta el GGUF, la
+            // app lo baja de Hugging Face sin salir de Ajustes.
+            let curado = self.llm_curated();
+            let elegido = curado.map(|m| m.label.to_string());
+            let mut opciones: Vec<String> = crate::llm::SMALL_LLM_MODELS
+                .iter()
+                .map(|m| m.label.to_string())
+                .collect();
+            opciones.push(crate::llm::LLM_OTHER_CHOICE.to_string());
             main_rows.push(preference_row(
                 "Modelo IA local",
                 None,
-                text_input(
-                    "qwen2.5-0.5b-instruct-q4_k_m.gguf",
-                    self.config.llm_model.as_deref().unwrap_or(""),
-                )
-                .on_input(Message::LlmModelChanged)
-                .padding(theme::FIELD_PADDING)
-                .size(ty.control)
-                .style(theme::text_input)
-                .width(Length::Fill)
-                .into(),
+                pick_list(opciones, elegido, Message::LlmModelPicked)
+                    .placeholder("Elige un modelo")
+                    .width(Length::Fill)
+                    .text_size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .style(theme::pick_list)
+                    .into(),
                 c,
                 ty,
             ));
+            // «Otro»: el único sitio donde se escribe a mano un repo o una
+            // dirección de Hugging Face.
+            if curado.is_none() {
+                main_rows.push(preference_row(
+                    "Repo o dirección",
+                    None,
+                    text_input(
+                        "owner/repo o URL del .gguf",
+                        self.config.llm_model.as_deref().unwrap_or(""),
+                    )
+                    .on_input(Message::LlmModelChanged)
+                    .padding(theme::FIELD_PADDING)
+                    .size(ty.control)
+                    .style(theme::text_input)
+                    .width(Length::Fill)
+                    .into(),
+                    c,
+                    ty,
+                ));
+            }
+            // Qué pasa con el fichero: bajando, ya en disco o falta y se ofrece
+            // el botón. El aviso de un fallo se queda aquí, sin tocar el dictado.
+            let fichero = curado
+                .map(|m| m.file_name.to_string())
+                .or_else(|| self.config.llm_model.clone())
+                .unwrap_or_default();
+            match &self.llm_dl {
+                Some(LlmDownload::Downloading {
+                    downloaded, total, ..
+                }) => main_rows.push(note_row(
+                    &llm_download_text(*downloaded, *total),
+                    c.faint,
+                    ty,
+                )),
+                Some(LlmDownload::Done(aviso)) => {
+                    main_rows.push(note_row(aviso, c.faint, ty))
+                }
+                Some(LlmDownload::Failed(aviso)) => main_rows.push(note_row(aviso, t.err, ty)),
+                None if crate::llm::llm_model_on_disk(&fichero) => {
+                    main_rows.push(note_row(&format!("Ya descargado: {fichero}."), c.faint, ty))
+                }
+                None => {
+                    let texto = match curado {
+                        Some(m) => format!("Descargar (~{} MB)", m.approx_mb),
+                        None => "Descargar".to_string(),
+                    };
+                    main_rows.push(preference_row(
+                        "Descargar el modelo",
+                        None,
+                        button(text(texto).size(ty.control))
+                            .on_press(Message::LlmDownloadRequested)
+                            .padding(theme::ACTION_BUTTON_PADDING)
+                            .style(theme::primary)
+                            .into(),
+                        c,
+                        ty,
+                    ));
+                }
+            }
             main_rows.push(note_row(
-                "Nombre del GGUF en models-llm/. Vacío = Qwen2.5-0.5B por defecto.",
+                "Solo GGUF públicos. Los de la lista son pequeños (<1,2 GB): con \
+                 uno grande la corrección tarda más. Si no hay modelo, el dictado \
+                 sigue funcionando sin corrección.",
                 c.faint,
                 ty,
             ));

@@ -106,6 +106,29 @@ impl WhisprApp {
                 self.save_config();
                 Task::none()
             }
+            Message::LlmModelPicked(etiqueta) => {
+                // El desplegable solo pinta etiquetas: el nombre del fichero sale
+                // de la lista curada. «Otro» no cambia lo que hubiera guardado:
+                // abre el campo de texto, y lo escrito ahí es la referencia.
+                match crate::llm::SMALL_LLM_MODELS
+                    .iter()
+                    .find(|m| m.label == etiqueta)
+                {
+                    Some(m) => {
+                        self.llm_pick_other = false;
+                        self.config.llm_model = Some(m.file_name.to_string());
+                        self.save_config();
+                    }
+                    None => self.llm_pick_other = true,
+                }
+                // El aviso de la descarga era del modelo anterior.
+                self.llm_dl = None;
+                Task::none()
+            }
+            Message::LlmDownloadRequested => {
+                self.start_llm_download();
+                Task::none()
+            }
             Message::LlmApiKeyChanged(s) => {
                 let trimmed = s.trim();
                 self.config.llm_api_key = if trimmed.is_empty() {

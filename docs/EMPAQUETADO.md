@@ -152,13 +152,15 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
 
 ## 4. Versionado (SemVer)
 
-- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.4.0** (`Cargo.toml`).
+- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.7.0** (`Cargo.toml`).
   - `0.x`: la interfaz interna todavía cambia; cada función nueva sube MINOR y
     los arreglos PATCH.
   - Se pasa a `1.0.0` cuando la app tenga el recorrido completo (corrección por
     voz incluida) y una estabilidad de formato demostrada.
 - Un único sitio manda: la `version` de `Cargo.toml`. El instalador lee la
-  versión de la variable de entorno `WHISPR_VERSION` (por defecto `0.4.0`).
+  versión de la variable de entorno `WHISPR_VERSION` y, si no está puesta, usa la
+  que trae `packaging/whispr-open.iss` en `MyAppVersion` (hoy `0.7.0`): al subir
+  de versión se cambian los dos.
 - Convención de commits (opcional): prefijos `feat:` / `fix:` / `docs:` /
   `chore:` (ya se usan en el repo) para sacar el CHANGELOG y la subida de
   versión.
