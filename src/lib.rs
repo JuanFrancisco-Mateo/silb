@@ -1,20 +1,20 @@
-//! Silb — dictado local de escritorio nativo (Iced + whisper.cpp).
+//! Silb — dictado local, una app de escritorio normal (Iced + whisper.cpp).
 //!
 //! Módulos:
-//! - `domain`: lógica pura portada de la versión web (corrección, muletillas, diccionario).
-//! - `audio`: captura de micrófono (cpal).
-//! - `transcribe`: transcripción con whisper-rs (GGML).
-//! - `inject`: escritura en la app activa (arboard + enigo).
+//! - `domain`: lógica pura traída de la versión web (corrección, muletillas, diccionario).
+//! - `audio`: captura del micrófono (cpal).
+//! - `transcribe`: pasa el audio a texto con whisper-rs (GGML).
+//! - `inject`: escribe en la app que tengas delante (arboard + enigo).
 //! - `hotkey`: atajo global (global-hotkey).
-//! - `theme`: tokens de diseño 2026 + estilos de widgets (única fuente de color).
-//! - `fonts`: fuente de marca Inter embebida (Regular/Medium/SemiBold) y carga
-//!   de la fuente emoji (Segoe UI Emoji) para que los símbolos de la UI
-//!   (✓ ☀ ☾ ▾ ▸ ● → ✕ ⚠ ↩) no se vean como cajas vacías.
-//! - `tray`: bandeja del sistema (icono + menú Mostrar/Ocultar/Salir).
-//! - `app`: UI Iced (estado + `update` + `view`; los manejadores y las vistas
-//!   grandes viven en `ui`).
-//! - `ui`: submódulos de UI extraídos de `app` (vistas de Ajustes, manejadores
-//!   de mensajes).
+//! - `theme`: colores y estilos de los controles del diseño 2026 (aquí sale todo el color).
+//! - `fonts`: la fuente de marca Inter va dentro del binario (Regular/Medium/SemiBold)
+//!   y se carga la fuente de emojis (Segoe UI Emoji) para que los símbolos de la UI
+//!   (✓ ☀ ☾ ▾ ▸ ● → ✕ ⚠ ↩) no salgan como cajas vacías.
+//! - `tray`: icono en la bandeja del sistema con menú Mostrar/Ocultar/Salir.
+//! - `app`: la interfaz en Iced (estado + `update` + `view`; las funciones que
+//!   atienden mensajes y las pantallas grandes viven en `ui`).
+//! - `ui`: partes de la interfaz que salieron de `app` (pantallas de Ajustes,
+//!   qué hace cada mensaje).
 
 pub mod app;
 pub mod audio;
