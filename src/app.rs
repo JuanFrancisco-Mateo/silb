@@ -130,24 +130,25 @@ pub(crate) struct MicUi {
     pub(crate) hint: String,
 }
 
-/// La instrucción hablada que se está enviando al LLM corrector. Si la
-/// llamada falla o el diff no aplica, se reinserta como dictado normal
-/// (spec §3.3.1: nunca perder texto). `target` es el turno sobre el que se
-/// pidió la corrección (capturado al despachar: un turno nuevo dictado
-/// mientras el LLM trabaja no debe desviar el diff a otro texto).
+/// La frase hablada que se está mandando al modelo que corrige. Si la
+/// llamada falla o el cambio no se puede aplicar, el texto se vuelve a
+/// escribir como dictado normal (spec §3.3.1: no se pierde texto nunca).
+/// `target` es el turno sobre el que se pidió la corrección, copiado al
+/// enviarla: si dictas otro turno mientras el modelo trabaja, el cambio no
+/// se va a parar a otro texto.
 ///
 /// Desde t_78d9e1fa hay dos modos:
 ///
-/// - `CrossTurn`: el LLM devuelve un `Diff {find, replace}` que se aplica
-///   sobre `target`. Modo histórico (spec §3.2-3.4).
-/// - `InTurn`: el LLM devuelve el texto FINAL corregido del turno (sin
-///   meta-lengua). `target` es el turno completo enviado al LLM; el
-///   resultado REEMPLAZA ese turno entero. Modo principal desde el
+/// - `CrossTurn`: el modelo devuelve un `Diff {find, replace}` que se aplica
+///   sobre `target`. Es el modo de antes (spec §3.2-3.4).
+/// - `InTurn`: el modelo devuelve el texto final del turno, ya corregido y
+///   sin hablar de sí mismo. `target` es el turno entero que se le mandó, y
+///   lo que vuelve lo sustituye de arriba abajo. Es el modo normal desde el
 ///   10/09/2026 (spec §3.5).
 ///
-/// `instruction` solo se usa en `CrossTurn`; en `InTurn` el input que
-/// recibió el LLM es exactamente `target`. Se conserva el campo por
-/// uniformidad (los logs y el fallback de error son más fáciles).
+/// `instruction` solo se usa en `CrossTurn`; en `InTurn` lo que recibe el
+/// modelo es justo `target`. El campo se queda por comodidad: así los logs y
+/// el camino del error se escriben igual en los dos modos.
 pub(crate) enum LlmMode {
     CrossTurn,
     InTurn,
@@ -156,21 +157,21 @@ pub(crate) enum LlmMode {
 pub(crate) struct LlmPending {
     pub(crate) mode: LlmMode,
     pub(crate) instruction: String,
-    /// Último turno dictado que la instrucción pretende corregir
-    /// (cross-turn) o turno completo enviado al LLM (in-turn).
+/// Último turno dictado que la frase quiere corregir (cross-turn) o el
+/// turno entero que se mandó al modelo (in-turn).
     pub(crate) target: String,
-    /// El turno venía de la burbuja (inyección forzada al soltar).
+/// El turno salió de la burbuja: se pega al soltar, sí o sí.
     pub(crate) force_inject: bool,
 }
 
-/// Resultado del LLM que viaja por el canal `llm_rx`. El despacho mete
-/// el resultado dentro del enum correspondiente; la UI lo consume en
-/// `handle_llm_correction` o `handle_llm_redaction` según `mode`.
+/// Lo que devuelve el modelo y viaja por el canal `llm_rx`. Quien despacha
+/// lo mete en el enum que toque; la interfaz lo recoge en
+/// `handle_llm_correction` o `handle_llm_redaction` según el modo.
 ///
-/// `pub` porque aparece dentro de `Message::CorrectionDone(Result<LlmResult, String>)`,
-/// que sí es público (variante del enum usado por la API de mensajes
-/// de iced). El enum no se expone al usuario final; solo es la firma
-/// del canal interno entre el hilo del LLM y el bucle de UI.
+/// Es `pub` porque aparece dentro de `Message::CorrectionDone(Result<LlmResult, String>)`,
+/// que sí es público (una variante del enum de mensajes de iced). No lo ve el
+/// usuario: solo es la firma del canal interno entre el hilo del modelo y el
+/// bucle de la interfaz.
 #[derive(Debug, Clone)]
 pub enum LlmResult {
     Diff(crate::domain::corrective::Diff),
@@ -183,84 +184,80 @@ pub(crate) struct PendingDiff {
     force_inject: bool,
 }
 
-/// Todos los eventos que la UI sabe procesar: pulsaciones de botones,
-/// resultados de hilos (transcripción, corrección), eventos del sistema
-/// (atajo, bandeja, ventanas) y el tick del Poll. Es la «bandeja de
-/// entrada» única del bucle de eventos de Iced.
+/// Todo lo que la interfaz sabe atender: clics de botones, resultados de
+/// hilos (transcripción, corrección), cosas del sistema (atajo, bandeja,
+/// ventanas) y el tick del `Poll`. Es la única «bandeja de entrada» del
+/// bucle de eventos de iced.
 #[derive(Debug, Clone)]
 pub enum Message {
     Toggle,
     StartRecording,
     StopRecording,
-    /// El stream de audio murió a mitad de grabación (micro desconectado,
-    /// driver caído). Llega desde el Poll al drenar el canal de errores de
-    /// `AudioCapture`: el turno se corta YA y se transcribe lo grabado hasta
-    /// ese momento (nunca se pierde) con un aviso visible.
+/// El chorro de audio se cortó a mitad de grabación (micro desconectado,
+/// driver caído). Llega del `Poll` al vaciar el canal de errores de
+/// `AudioCapture`: el turno se cierra ahí mismo y se transcribe lo grabado
+/// hasta ese momento (no se pierde) con un aviso a la vista.
     AudioDeviceLost(String),
     TranscriptionDone(Result<String, String>),
     ModelSelected(Model),
     ToggleCleanup(bool),
     ToggleAutoInject(bool),
-    /// Corrección IA (otro modelo) activada/desactivada — Ajustes.
+/// Corrección IA (con otro modelo) encendida o apagada — Ajustes.
     ToggleAiCorrection(bool),
-    /// Proveedor de corrección: local por defecto, cloud o endpoint propio.
+/// Con qué se corrige: local por defecto, en la nube o un servidor propio.
     CorrectionProviderChanged(CorrectionProvider),
-    /// Endpoint del LLM corrector (base_url OpenAI-compatible). Vacío
-    /// en la UI cae al default `http://127.0.0.1:8081/v1`.
+/// Dirección del corrector (base_url de un servicio OpenAI-compatible).
+/// Si el campo queda vacío en la interfaz se usa `http://127.0.0.1:8081/v1`.
     LlmEndpointChanged(String),
-    /// Modelo del corrector. Vacío en la UI cae al default
-    /// `ornith-1.0-9b`.
+/// Modelo del corrector. Si el campo queda vacío se usa `ornith-1.0-9b`.
     LlmModelChanged(String),
-    /// Ruta explícita del server LLM local (vacío = autodetección).
-    /// Vive en Avanzado → Corrección IA (sprint final).
+/// Ruta al servidor LLM local, escrita a mano (vacío = que la busque
+/// sola). Está en Avanzado → Corrección IA (sprint final).
     LlmServerPathChanged(String),
     LlmApiKeyChanged(String),
-    /// Timeout HTTP en segundos (1..=120). Sale del slider; el getter
-    /// lo pasa a `LlmConfig::timeout_secs` y `ureq::timeout`.
+/// Cuánto se espera la respuesta, en segundos (1..=120). Viene del slider;
+/// el getter lo pasa a `LlmConfig::timeout_secs` y a `ureq::timeout`.
     LlmTimeoutChanged(u32),
-    /// Umbral del clasificador (0..=100). 0 = clasificador pasivo
-    /// (atajo equivalente al toggle maestro apagado); 100 =
-    /// imposible que enrute; default 50 = conducta previa.
+/// Umbral del clasificador (0..=100). Con 0 no manda nada (como tener el
+/// interruptor general apagado); con 100 no enruta nunca; 50 por defecto,
+/// que es como se comportaba antes.
     LlmThresholdChanged(u32),
-    /// Modo «confirmar antes de aplicar» (spec §4.2). Cuando está on,
-    /// al volver del LLM el diff se muestra con botones «Aplicar» /
-    /// «Descartar» en vez de aplicarse automáticamente.
+/// Modo «preguntar antes de aplicar» (spec §4.2). Cuando está encendido,
+/// al volver el modelo el cambio se enseña con botones «Aplicar» /
+/// «Descartar» en vez de aplicarse solo.
     LlmConfirmToggled(bool),
-    /// Aplica el diff pendiente que se mostró tras una corrección IA
-    /// cuando `ai_correction_confirm` está activo.
+/// Aplica el cambio que se dejó pendiente tras una corrección, cuando
+/// `ai_correction_confirm` está activo.
     ApplyPendingDiff,
-    /// Descarta el diff pendiente (reinserta la instrucción hablada
-    /// como dictado normal, spec §3.3.1).
+/// Tira el cambio pendiente y vuelve a escribir la frase hablada como
+/// dictado normal (spec §3.3.1).
     DiscardPendingDiff,
-    /// Resultado del LLM corrector. Llega por `Message::CorrectionDone`
-    /// con un `LlmResult` que indica el modo:
-    ///   - `LlmResult::Diff(diff)` (cross-turn, spec §3.2-3.4): se aplica
-    ///     el diff sobre `target` (el último turno).
-    ///   - `LlmResult::Redacted(text)` (in-turn, spec §3.5): el LLM
-    ///     devuelve el texto final corregido del turno (sin meta-lengua);
-    ///     sustituye a `target` por completo.
-    ///
-    /// El despacho del corrector decide el modo mirando
-    /// `self.llm_pending.mode`; el result type no necesita su propio
-    /// discriminador de modo (lo que viaja es la forma del output, no
-    /// la intención del clasificador). Esto simplifica el Poll y el
-    /// manejo de errores.
+/// Resultado del corrector. Llega por `Message::CorrectionDone` con un
+/// `LlmResult` que dice de qué forma viene:
+///   - `LlmResult::Diff(diff)` (cross-turn, spec §3.2-3.4): se aplica el
+///     cambio sobre `target`, el último turno.
+///   - `LlmResult::Redacted(text)` (in-turn, spec §3.5): el modelo devuelve
+///     el turno entero ya corregido; sustituye a `target` completo.
+///
+/// Quien despacha mira `self.llm_pending.mode` para saber el modo. Al
+/// resultado no le hace falta llevar su propia etiqueta: lo que viaja es la
+/// forma de la respuesta, no lo que pretendía el clasificador. Así el `Poll`
+/// y los errores se quedan sencillos.
     CorrectionDone(Result<LlmResult, String>),
-    /// Deshacer la última corrección IA aplicada (un nivel).
+/// Deshace la última corrección aplicada (solo un paso atrás).
     UndoLastCorrection,
     // ── Nota editable (requisito R3) ────────────────────────────────────
-    /// Acción del editor multilínea del transcript (teclear, borrar,
-    /// pegar, mover el cursor…). Se aplica al `Content` y se sincroniza
-    /// `transcript`/`last_turn`: editar a mano y seguir dictando no se
-    /// pisan.
+/// Lo que hace el editor de varias líneas de la nota (teclear, borrar,
+/// pegar, mover el cursor…). Se aplica al `Content` y se pone al día
+/// `transcript`/`last_turn`: escribir a mano y seguir dictando no se pisan.
     TranscriptEdited(text_editor::Action),
-    /// Primer clic en «Limpiar»: ARMA la confirmación («Sí, borrar» /
-    /// «No»). Borrar la nota es destructivo y debe ser explícito.
+/// Primer clic en «Limpiar»: pide confirmación («Sí, borrar» / «No»).
+/// Borrar la nota es definitivo, así que se pregunta.
     ClearPressed,
-    /// Confirmación del borrado (segundo clic). Borra con backup para
-    /// «Deshacer borrado».
+/// Confirmación del borrado (segundo clic). Borra guardando una copia, por
+/// si hay que «Deshacer borrado».
     ClearTranscript,
-    /// Restaura la nota borrada desde el backup del borrado.
+/// Devuelve la nota borrada desde esa copia.
     UndoClearTranscript,
     CopyTranscript,
     InjectLast,
@@ -269,8 +266,8 @@ pub enum Message {
     EntryToChanged(String),
     RemoveEntry(usize),
     // ── Muletillas (Ajustes) ──────────────────────────────────────────────
-    /// Añade la muletilla escrita en `filler_input` a la categoría
-    /// seleccionada (botón «Añadir» o Enter en el input).
+/// Añade la muletilla escrita en `filler_input` a la categoría elegida
+/// (botón «Añadir» o Enter en el campo).
     AddFiller,
     FillerInputChanged(String),
     FillerCategorySelected(FillerCategory),
@@ -278,183 +275,182 @@ pub enum Message {
         category: FillerCategory,
         index: usize,
     },
-    /// Vuelve a las listas por defecto de `cleanup.rs` (config.fillers = None).
+/// Vuelve a las listas de serie de `cleanup.rs` (config.fillers = None).
     ResetFillers,
     // ── Diccionario: importar/exportar (backup/restore a JSON) ────────────
-    /// Exporta el diccionario a `%APPDATA%/whispr-open/dictionary.json`.
+/// Saca el diccionario a `%APPDATA%/whispr-open/dictionary.json`.
     ExportDictionary,
-    /// Importa el diccionario desde ese fichero (reemplaza la lista actual).
+/// Lo trae de ese fichero (sustituye la lista que hubiera).
     ImportDictionary,
     InputDeviceSelected(String),
-    /// Texto del campo de atajo global (sprint final: el atajo se cambia
-    /// desde Ajustes → General, no solo en config.json).
+/// Texto del campo del atajo global (sprint final: el atajo se cambia desde
+/// Ajustes → General, no solo en config.json).
     ShortcutInputChanged(String),
-    /// Aplica el atajo del campo (re-registra el hotkey global).
+/// Aplica el atajo del campo (lo vuelve a dar de alta en el sistema).
     ShortcutApply,
-    /// Vuelve al atajo por defecto (`Ctrl+Shift+D`).
+/// Vuelve al atajo de serie (`Ctrl+Shift+D`).
     ShortcutReset,
-    /// Idioma de transcripción seleccionado en Ajustes. Valor crudo:
-    /// `"auto"` → autodetección; cualquier otro → BCP-47 (`"es"`, `"en"`,
-    /// …). Se persiste tal cual en `config.language`; el getter decide
-    /// cómo traducirlo a `whisper_full_params`.
+/// Idioma de transcripción elegido en Ajustes. Se guarda tal cual:
+/// `"auto"` = que lo adivine; cualquier otra cosa es BCP-47 (`"es"`,
+/// `"en"`, …). Se queda así en `config.language`; el getter decide cómo
+/// pasarlo a `whisper_full_params`.
     LanguageSelected(String),
-    /// Beam size elegido por el usuario (1..=8). Se persiste en
-    /// `config.beam_size`; el getter clampea al rango válido.
+/// Beam size elegido (1..=8). Se guarda en `config.beam_size`; el getter lo
+/// deja dentro del rango.
     BeamSizeChanged(u32),
-    /// Hilos del decoder elegidos por el usuario (1..=32). Persistido
-    /// en `config.n_threads`; el getter clampea.
+/// Hilos del decodificador elegidos (1..=32). Se guardan en
+/// `config.n_threads`; el getter los deja dentro del rango.
     ThreadsChanged(u32),
-    /// Modo de tema elegido en Ajustes (el header cicla el mismo estado).
+/// Tema elegido en Ajustes (el header cambia el mismo estado).
     ThemeModeChanged(ThemeMode),
-    /// Tamaño de fuente global elegido en Ajustes (se aplica a toda la vista).
+/// Tamaño de letra global elegido en Ajustes (vale para toda la vista).
     FontSizeChanged(FontSize),
-    /// Tamaño del círculo de la burbuja (resize EN CALIENTE vía window::resize).
+/// Tamaño del círculo de la burbuja (se redimensiona en caliente con
+/// `window::resize`).
     BubbleSizeChanged(BubbleSize),
-    /// Esquina de anclaje de la burbuja (mover en caliente vía winapi).
+/// Esquina donde se ancla la burbuja (se mueve en caliente con winapi).
     BubbleCornerChanged(BubbleCorner),
-    /// Opacidad de la burbuja en % (slider 20–100, alpha por-pixel).
+/// Cuánto se ve la burbuja, en % (slider 20–100; el alfa va por píxel).
     BubbleOpacityChanged(u32),
     BubbleStyleChanged(BubbleStyle),
-    /// Auto-ocultar la burbuja tras N segundos sin dictar (Nunca = desactivado).
+/// Esconde la burbuja tras N segundos sin dictar (Nunca = no se esconde).
     BubbleHideTimeoutChanged(BubbleHideTimeout),
     ToggleTheme,
     ToggleSettings,
-    /// Abre/cierra el panel «Ajustes avanzados» dentro de Ajustes (las
-    /// opciones técnicas quedan ocultas por defecto; el estado expandido o
-    /// colapsado se persiste en `config.advanced_settings_open`).
-    ///
-    /// NOTA (R7 — Personalización I): tras el refactor por pestañas el panel
-    /// «Ajustes avanzados» deja de existir como bloque colapsable dentro del
-    /// panel. Lo técnico del corrector pasa a la pestaña «Corrección IA» y lo
-    /// técnico del motor de voz a «Dictado». El mensaje se mantiene por
-    /// compatibilidad hacia atrás pero ya no se envía desde la UI.
+/// Abre o cierra el panel «Ajustes avanzados» dentro de Ajustes (lo técnico
+/// queda escondido hasta que se pide; si estaba abierto o cerrado se guarda
+/// en `config.advanced_settings_open`).
+///
+/// NOTA (R7 — Personalización I): después del cambio a pestañas ese panel ya
+/// no existe como bloque que se despliega. Lo técnico del corrector se fue a
+/// la pestaña «Corrección IA» y lo técnico del motor de voz a «Dictado». El
+/// mensaje se queda para no romper nada viejo, pero la interfaz ya no lo
+/// manda.
     ToggleAdvancedSettings,
-    /// Cambia la pestaña activa dentro del panel de Ajustes (R7). Solo
-    /// relevante mientras `settings_open` sea true.
+/// Cambia de pestaña dentro de Ajustes (R7). Solo hace algo con
+/// `settings_open` en true.
     SettingsSectionSelected(SettingsSection),
-    /// Cambia la SECCIÓN de la ventana principal (H2 — UI 24/09/2026):
-    /// `Dictado` (hero del micro + nota) o `Ajustes` (panel completo). El
-    /// estado sigue siendo `settings_open`: esta sección es solo su lectura
-    /// desde la vista, para que la ventana tenga pestañas como Ajustes en vez
-    /// de una columna de cosas.
+/// Cambia la SECCIÓN de la ventana principal (H2 — UI 24/09/2026):
+/// `Dictado` (el micro grande y la nota) o `Ajustes` (el panel entero). El
+/// estado de verdad sigue siendo `settings_open`; esto es solo cómo lo lee la
+/// vista, para que la ventana tenga pestañas en vez de una columna de cosas.
     WindowSectionSelected(WindowSection),
-    /// Arrastra la ventana principal desde la barra de ventana propia: la
-    /// decoración nativa está desactivada (el marco la dibuja la app), así que
-    /// el movimiento de la ventana lo pide la UI con `window::drag`.
+/// Mueve la ventana principal desde su barra propia: la decoración del
+/// sistema está apagada (el marco lo dibuja la app), así que el arrastre lo
+/// pide la interfaz con `window::drag`.
     DragMainWindow,
-    /// Minimiza la ventana principal (control propio de la barra de ventana).
+/// Minimiza la ventana principal (botón de la barra propia).
     MinimizeMainWindow,
-    /// Alterna maximizada / restaurada (control propio de la barra).
+/// Pone la ventana maximizada o la devuelve a su tamaño (botón de la barra).
     MaximizeMainWindow,
-    /// Abre el panel de Ajustes en una sección concreta: lo usan los atajos del
-    /// marco (el icono de ayuda de la barra lateral → Avanzado; el de sliders
-    /// de la tarjeta de grabación → Dictado).
+/// Abre Ajustes en una pestaña concreta: lo usan los atajos del marco (la
+/// ayuda de la barra lateral → Avanzado; los sliders de la tarjeta de
+/// grabación → Dictado).
     OpenSettingsSection(SettingsSection),
-    /// Abre en el Explorador la carpeta donde vive el registro
-    /// (`%APPDATA%/whispr-open/`). Pedido del usuario: «me pierdo buscando el
-    /// log» (H2 del QA 24/09/2026).
+/// Abre en el Explorador la carpeta del registro
+/// (`%APPDATA%/whispr-open/`). Lo pidió el usuario: «me pierdo buscando el
+/// log» (H2 del QA 24/09/2026).
     OpenLogFolder,
     Poll,
     // ── Personalización II (R7): paleta editable ─────────────────────────
-    /// Texto del campo hex de un campo concreto de la paleta. Cada tecla
-    /// actualiza la previsualización (en el swatch + el aviso de contraste)
-    /// pero NO persiste hasta que el usuario pulsa «Aplicar» o edita otro
-    /// campo (debounce, como el resto de inputs de Ajustes).
+/// Texto del campo hex de un color de la paleta. Cada tecla actualiza la
+/// vista previa (el cuadradito y el aviso de contraste), pero NO se guarda
+/// hasta que se pulsa «Aplicar» o se pasa a otro campo (igual que el resto
+/// de campos de Ajustes).
     PaletteFieldChanged(theme::PaletteField, String),
-    /// «Aplicar» de un campo concreto: persiste el valor actual del input
-    /// (parseo robusto, hex inválido = se ignora).
+/// «Aplicar» de un campo: guarda lo que hay en el input (si el hex no vale,
+/// se ignora).
     PaletteFieldApply(theme::PaletteField),
-    /// «Restaurar» un campo concreto: lo devuelve a `None` (default del
-    /// modo activo).
+/// «Restaurar» un campo: lo deja en `None` (el color de serie del modo
+/// activo).
     PaletteFieldReset(theme::PaletteField),
-    /// «Restaurar TODO»: borra la paleta entera (vuelve a defaults DARK/LIGHT).
+/// «Restaurar TODO»: borra la paleta entera (vuelve a la de DARK/LIGHT).
     PaletteResetAll,
-    /// Aplicar un preset (5 disponibles). Pasa a `Config::palette` el
-    /// `PaletteConfig` correspondiente al modo activo (DARK o LIGHT según
-    /// `ThemeMode` resuelto).
+/// Aplica uno de los 5 presets. Pone en `Config::palette` la
+/// `PaletteConfig` del modo activo (DARK o LIGHT, según `ThemeMode`).
     PalettePresetApply(theme::PalettePreset),
-    /// Exporta la paleta a un fichero JSON elegido por el usuario con
-    /// `rfd::FileDialog::save_file`. El resultado (ruta o None si se
-    /// canceló) vuelve como `Message::PaletteExportPicked`.
+/// Saca la paleta a un JSON en la ruta que elija el usuario con
+/// `rfd::FileDialog::save_file`. El resultado (ruta o None si canceló) vuelve
+/// como `Message::PaletteExportPicked`.
     PaletteExport,
-    /// Resultado del diálogo de export. `Some(ruta)` = JSON escrito; `None`
-    /// = usuario canceló (no es error).
+/// Resultado del diálogo de exportación. `Some(ruta)` = JSON escrito; `None`
+/// = el usuario canceló (no es un error).
     PaletteExportPicked(Option<std::path::PathBuf>),
-    /// Importa la paleta desde un fichero JSON elegido con
-    /// `rfd::FileDialog::pick_file`. El resultado vuelve como
-    /// `PaletteImportPicked`. Un JSON corrupto o inválido se rechaza SIN
-    /// tocar la paleta actual (la UI sigue con lo que tenía).
+/// Mete una paleta desde un JSON elegido con `rfd::FileDialog::pick_file`.
+/// El resultado vuelve como `PaletteImportPicked`. Si el JSON está roto o no
+/// vale, se rechaza SIN tocar la paleta actual (la interfaz sigue como
+/// estaba).
     PaletteImport,
-    /// Resultado del diálogo de import: ruta o cancelación. La ruta se
-    /// procesa en `update` para leer + parsear + fundir con la paleta actual
-    /// (preservando lo que el usuario no esté reemplazando explícitamente).
+/// Resultado del diálogo de importación: ruta o cancelación. La ruta se
+/// trabaja en `update`: se lee, se parsea y se mezcla con la paleta actual
+/// (se respeta lo que el usuario no esté cambiando).
     PaletteImportPicked(Option<std::path::PathBuf>),
     // ── Personalización III (R7): imágenes del usuario ────────────────
-    /// Abrir el diálogo nativo para elegir la imagen de fondo de la
-    /// ventana principal. `rfd::FileDialog` filtra por extensiones de
-    /// imagen comunes; el resultado (ruta o None si se canceló) vuelve
-    /// como `BgImagePicked`.
+/// Abre el diálogo del sistema para elegir la imagen de fondo de la ventana
+/// principal. `rfd::FileDialog` filtra por las extensiones de imagen
+/// habituales; el resultado (ruta o None si canceló) vuelve como
+/// `BgImagePicked`.
     BgImageBrowse,
-    /// Resultado del diálogo de imagen de fondo. `Some(path)` = persistir
-    /// y aplicar; `None` = usuario canceló (no es error).
+/// Resultado del diálogo de imagen de fondo. `Some(path)` = se guarda y se
+/// aplica; `None` = el usuario canceló (no es un error).
     BgImagePicked(Option<String>),
-    /// Vacía la ruta de la imagen de fondo (vuelve al fondo del tema).
+/// Deja la imagen de fondo sin ruta (vuelve al fondo del tema).
     BgImageClear,
     /// Abrir el diálogo para elegir el sprite estático de la burbuja.
     BubbleImageBrowse,
     BubbleImagePicked(Option<String>),
     BubbleImageClear,
-    /// Abrir el diálogo para elegir la carpeta con los frames de la
-    /// animación de la burbuja. `rfd::FileDialog::pick_folder`.
+/// Abre el diálogo para elegir la carpeta con los fotogramas de la
+/// animación de la burbuja. `rfd::FileDialog::pick_folder`.
     BubbleFramesBrowse,
     BubbleFramesPicked(Option<String>),
     BubbleFramesClear,
-    /// FPS de la animación de la burbuja (1..=30). Sale del slider; el
-    /// getter ya clampea.
+/// Fotogramas por segundo de la animación de la burbuja (1..=30). Viene del
+/// slider; el getter ya lo deja en el rango.
     BubbleFpsChanged(u32),
-    /// Tick del reloj de animación: avanza el frame del sprite de la
-    /// burbuja. Se envía desde la subscription de `iced::time::every`
-    /// solo cuando la animación está activa (carpeta de frames
-    /// resuelta + FPS > 0). El Poll lo ignora si la animación está
-    /// parada.
+/// Pulso del reloj de la animación: pasa al siguiente fotograma del sprite de
+/// la burbuja. Lo manda la suscripción de `iced::time::every` solo con la
+/// animación encendida (hay carpeta de fotogramas y los FPS son mayores que 0).
+/// El `Poll` lo ignora si la animación está parada.
     AnimationTick,
     // ── Burbuja flotante (overlay) ────────────────────────────────────────
-    /// La ventana de la burbuja ya fue creada (aplicar WS_EX_NOACTIVATE).
+    /// La ventana de la burbuja ya existe (hay que ponerle WS_EX_NOACTIVATE).
     BubbleOpened(window::Id),
-    /// Botón izquierdo pulsado dentro de la burbuja (empieza a grabar).
+    /// Clic izquierdo dentro de la burbuja (empieza a grabar).
     BubblePress,
-    /// Botón izquierdo soltado (transcribir + escribir en la app activa).
+    /// Se suelta el botón izquierdo (se transcribe y se escribe en la app que
+    /// esté delante).
     BubbleRelease,
-    /// Botón derecho pulsado dentro de la burbuja (arma el arrastre).
+    /// Clic derecho dentro de la burbuja (deja listo el arrastre).
     BubbleRightPress,
-    /// Botón derecho soltado (fin del arrastre; clic simple = no-op).
+    /// Se suelta el botón derecho (fin del arrastre; un clic suelto no hace nada).
     BubbleRightRelease,
-    /// Cursor movido dentro de la burbuja (detección de arrastre derecho).
+    /// El cursor se movió dentro de la burbuja (así se sabe si es un arrastre).
     BubbleCursorMoved(Point),
-    /// Cursor salió de la burbuja sin soltar (cerrar botones pendientes).
+    /// El cursor salió de la burbuja sin soltar (se cierran los botones a medias).
     BubbleCursorLeft,
-    /// El usuario pidió cerrar una ventana (X de la principal → a la bandeja).
+    /// Se pidió cerrar una ventana (la X de la principal manda a la bandeja).
     WindowCloseRequested(window::Id),
     // ── Bandeja del sistema (tray) ────────────────────────────────────────
-    /// Se abrió una ventana; con su id se identifica la principal.
+    /// Se abrió una ventana; por su id se reconoce la principal.
     WindowOpened(window::Id),
-    /// «Mostrar/Ocultar ventana» pulsado en el menú de la bandeja.
+    /// «Mostrar/Ocultar ventana» del menú de la bandeja.
     ToggleMainWindow,
-    /// La fuente emoji terminó de cargarse en el FontSystem de Iced
-    /// (resultado de `iced::font::load` al arrancar; `Error` es ininhabitable
-    /// en iced 0.13, pero se loguea por si en el futuro se propaga algo).
+    /// La fuente de emojis terminó de cargarse en el FontSystem de iced
+    /// (resultado de `iced::font::load` al arrancar). En iced 0.13 `Error` no
+    /// tiene valores posibles, pero se anota en el log por si algún día llega algo.
     FontLoaded(Result<(), iced::font::Error>),
     // ── Arranque (prerroll whisper + server LLM) ──────────────────────────
-    /// Evento del hilo de arranque en background (ver [`StartupEvent`]).
+    /// Evento del hilo de arranque, que va en segundo plano (ver [`StartupEvent`]).
     Startup(StartupEvent),
-    /// «Reintentar» desde la pantalla de error de arranque: relanza el
-    /// prerroll completo (whisper → LLM).
+    /// «Reintentar» desde la pantalla de error del arranque: vuelve a empezar
+    /// el arranque entero (whisper → LLM).
     RetryStartup,
 }
 
-/// La aplicación completa: configuración, estado de dictado, nota editable
-/// y los canales de los hilos de trabajo. Es la única estructura con
-/// acceso a la UI; todo lo demás son módulos sin estado.
+/// La aplicación entera: configuración, estado del dictado, la nota editable y
+/// los canales de los hilos de trabajo. Es la única estructura que toca la
+/// interfaz; el resto son módulos sin estado.
 pub struct WhisprApp {
     pub(crate) config: Config,
     pub(crate) status: Status,
@@ -468,169 +464,173 @@ pub struct WhisprApp {
     pub(crate) transcribe_rx: Option<Receiver<Result<String, String>>>,
     pub(crate) hotkey_rx: crossbeam_channel::Receiver<GlobalHotKeyEvent>,
     pub(crate) hotkey: HotkeyManager,
-    /// Etiqueta canónica del atajo global registrado («Ctrl+Shift+D» o el
-    /// `shortcut` de config.json) para los textos de la UI.
+    /// Nombre canónico del atajo global ya registrado («Ctrl+Shift+D» o el
+    /// `shortcut` de config.json) para los textos de la interfaz.
     pub(crate) hotkey_label: String,
-    /// Borrador del campo de atajo (None = sin edición en curso).
+    /// Borrador del campo de atajo (None = no se está editando).
     pub(crate) shortcut_input: Option<String>,
-    /// Error de la última aplicación de atajo (formato inválido u ocupado).
+    /// Error del último intento de cambiar el atajo (formato inválido u ocupado).
     pub(crate) shortcut_error: Option<String>,
-    /// Placeholder del editor de la nota (vive como campo porque la API
-    /// del editor pide un `&str` prestado por frame).
+    /// Texto de ayuda del editor de la nota (va como campo porque la API del
+    /// editor pide un `&str` que solo vive un frame).
     pub(crate) placeholder_text: String,
-    /// Editor multilínea del transcript (requisito R3: la nota se puede
-    /// corregir a mano). Es la vista viva del texto; `transcript` sigue
-    /// siendo la fuente de verdad del pipeline (inyección, correcciones,
-    /// copiado) y se sincroniza en cada acción de edición.
+    /// Editor de varias líneas de la nota (requisito R3: la nota se puede
+    /// corregir a mano). Es la vista viva del texto; `transcript` sigue siendo
+    /// la fuente de verdad para lo demás (escribir en la app, correcciones,
+    /// copiar) y se pone al día con cada acción de edición.
     pub(crate) transcript_editor: text_editor::Content,
-    /// Momento del último «Copiar» con éxito: alimenta la confirmación
-    /// visual breve del botón («✓ Copiado», ~2 s, requisito R3).
+    /// Cuándo se copió bien por última vez: así el botón enseña «✓ Copiado»
+    /// unos 2 s (requisito R3).
     pub(crate) copied_at: Option<std::time::Instant>,
-    /// El botón «Limpiar» está armado esperando la confirmación explícita
-    /// («Sí, borrar» / «No») — borrar la nota es destructivo y debe ser
-    /// una acción deliberada (requisito R3). Caduca a los 5 s.
+    /// El botón «Limpiar» está esperando a que se confirme («Sí, borrar» /
+    /// «No»). Borrar la nota no se puede recuperar sola, así que se pide un
+    /// segundo clic a propósito (requisito R3). Caduca a los 5 s.
     pub(crate) clear_armed: bool,
     pub(crate) clear_armed_at: Option<std::time::Instant>,
-    /// Backup (transcript, last_turn) del último borrado, para «Deshacer
-    /// borrado» (requisito R3: reversible).
+    /// Copia (transcript, last_turn) del último borrado, para «Deshacer
+    /// borrado» (requisito R3: se puede recuperar).
     pub(crate) cleared_backup: Option<(String, String)>,
-    /// Velocidad de descarga estimada (EMA de bytes/s) para el tiempo
-    /// restante del estado de descarga (requisito R4: MB + ETA, no solo %).
+    /// Velocidad de descarga estimada (media de bytes/s) para calcular el
+    /// tiempo que queda en el estado de descarga (requisito R4: MB y tiempo
+    /// restante, no solo el %).
     pub(crate) dl_rate: Option<f64>,
-    /// Última muestra de progreso (bytes, instante) para la EMA.
+    /// Última muestra de progreso (bytes, instante) para esa media.
     pub(crate) dl_last: Option<(u64, std::time::Instant)>,
     pub(crate) entry_from: String,
     pub(crate) entry_to: String,
-    /// Muletilla en curso de escritura (Ajustes → Muletillas).
+    /// Muletilla que se está escribiendo (Ajustes → Muletillas).
     pub(crate) filler_input: String,
-    /// Categoría seleccionada en el `pick_list` de muletillas.
+    /// Categoría elegida en el desplegable de muletillas.
     pub(crate) filler_category: FillerCategory,
     pub(crate) settings_open: bool,
-    /// Pestaña activa dentro del panel de Ajustes (R7 — Personalización I).
-    /// In-memory; NO se persiste en config.json (regla del producto: la
-    /// última sección abierta solo se recuerda dentro de la sesión).
-    /// Se resetea a `General` cada vez que se cierra el panel, para que
-    /// al volver a abrirse el usuario aterrice en lo más común (requisito
-    /// 5 de la tarea R7: «recordar la última sección solo en el estado de
-    /// sesión»).
+    /// Pestaña activa dentro de Ajustes (R7 — Personalización I). Vive en
+    /// memoria; NO se guarda en config.json (regla del producto: la última
+    /// pestaña abierta solo se recuerda mientras la app está abierta). Cada vez
+    /// que se cierra el panel vuelve a `General`, para que al abrirlo otra vez
+    /// se aterrice en lo más común (requisito 5 de la tarea R7: «recordar la
+    /// última sección solo en el estado de sesión»).
     pub(crate) settings_section: SettingsSection,
     // ── Personalización II (R7): buffers de input por campo de paleta ────────
-    /// Texto en vuelo del input hex de cada campo de la paleta (lo que el
-    /// usuario está tecleando, antes de pulsar «Aplicar» o pasar a otro
-    /// campo). Vacío por defecto; se rellena al entrar a la sección Apariencia
-    /// con el hex actual de cada campo (o vacío si está en default). La razón
-    /// de vivir aquí (vs. un `State` de iced): queremos comparar contra el
-    /// valor persistido para no machacar lo que el usuario está escribiendo.
+    /// Texto a medio escribir del input hex de cada color de la paleta (lo que
+    /// el usuario está tecleando, antes de pulsar «Aplicar» o pasar a otro
+    /// campo). Vacío al empezar; se rellena al entrar en Apariencia con el hex
+    /// de cada campo (o vacío si está en el color de serie). Vive aquí y no en un
+    /// `State` de iced porque hay que compararlo con el valor guardado para no
+    /// pisar lo que el usuario está escribiendo.
     pub(crate) palette_inputs: std::collections::HashMap<theme::PaletteField, String>,
     // ── Estado de la burbuja flotante ─────────────────────────────────────
     pub(crate) bubble_id: Option<window::Id>,
     pub(crate) bubble_pressed: bool, // botón izquierdo pulsado (graba)
     pub(crate) bubble_last_pos: Point,
-    /// Escritura de configuración diferida para no bloquear la UI al teclear
-    /// endpoint/model/key ni al mover sliders.
+    /// Cuándo toca escribir la configuración: se retrasa para no dejar la
+    /// interfaz colgada al teclear dirección/modelo/clave ni al mover sliders.
     pub(crate) config_save_deadline: Option<std::time::Instant>,
-    /// Botón derecho: solo arrastra la burbuja (nunca graba ni abre nada).
+    /// Botón derecho: solo arrastra la burbuja (no graba ni abre nada).
     pub(crate) bubble_right: crate::bubble::RightDragState,
-    /// Captura del ratón + seguimiento de la posición durante el arrastre.
+    /// Captura del ratón y seguimiento de la posición mientras se arrastra.
     pub(crate) bubble_drag: Option<crate::bubble::BubbleDrag>,
     pub(crate) pending_inject: bool, // la próxima transcripción debe inyectarse sí o sí
-    /// Índice de frame actual en la animación por conmutación de la
-    /// burbuja. Avanzado por `Message::AnimationTick` (enviado desde la
-    /// suscripción de `iced::time::every` cuando hay frames resueltos).
-    /// `0` por defecto; se reinicia al elegir una nueva carpeta de
-    /// frames (ver `Message::BubbleFramesPicked`).
+    /// Fotograma actual de la animación de la burbuja. Lo avanza
+    /// `Message::AnimationTick` (que manda la suscripción de `iced::time::every`
+    /// cuando hay fotogramas). Empieza en `0` y vuelve a `0` al elegir otra
+    /// carpeta de fotogramas (ver `Message::BubbleFramesPicked`).
     pub(crate) bubble_frame_index: usize,
-    /// Frames GIF decodificados en memoria (un solo archivo, sprint final).
-    /// Se cargan de forma perezosa cuando `bubble_image_path` es un `.gif`;
-    /// vacíos = sin GIF activo. `gif_loaded_for` evita re-decodificar a 60 Hz.
+    /// Fotogramas del GIF ya descodificados en memoria (un solo archivo,
+    /// sprint final). Se cargan solo cuando `bubble_image_path` es un `.gif`;
+    /// vacíos = no hay GIF. `gif_loaded_for` evita volver a descodificarlo 60
+    /// veces por segundo.
     pub(crate) gif_frames: Vec<iced::widget::image::Handle>,
     pub(crate) gif_loaded_for: Option<std::path::PathBuf>,
     // ── Corrección IA (LLM) ────────────────────────────────────────────────
     pub(crate) llm_rx: Option<Receiver<Result<LlmResult, String>>>,
-    /// Instrucción en ruta al LLM (con el target capturado): si la llamada
-    /// falla o el diff no aplica, se reinserta como dictado normal.
+    /// La frase que va camino del modelo (con el `target` copiado): si la
+    /// llamada falla o el cambio no encaja, se vuelve a escribir como dictado
+    /// normal.
     pub(crate) llm_pending: Option<LlmPending>,
-    /// Diff pendiente de confirmación. Conserva también el turno objetivo y
-    /// el modo de inyección para que dictados posteriores no redirijan la
-    /// corrección a otro texto.
+    /// Cambio esperando confirmación. Guarda también el turno al que va y cómo
+    /// se escribió, para que lo que se dicte después no desvíe la corrección a
+    /// otro texto.
     pub(crate) pending_diff: Option<PendingDiff>,
-    /// Undo de 1 nivel: (transcript, last_turn) antes de la última corrección.
+    /// Deshacer de un solo paso: (transcript, last_turn) antes de la última
+    /// corrección.
     pub(crate) undo_state: Option<(String, String)>,
     // ── Bandeja del sistema ───────────────────────────────────────────────
     pub(crate) tray: Option<crate::tray::SystemTray>,
     /// Id de la ventana principal (se descubre con `window::open_events()`:
-    /// iced no lo expone al crear la ventana desde `program::run`).
+    /// iced no lo da al crear la ventana desde `program::run`).
     pub(crate) main_window_id: Option<window::Id>,
-    /// Si la ventana principal está visible (controla el texto del menú).
+    /// Si la ventana principal está a la vista (de ahí el texto del menú).
     pub(crate) main_visible: bool,
     // ── Apariencia (tema auto + auto-ocultar de la burbuja) ──────────────
     /// Último estado conocido del tema del SISTEMA (AppsUseLightTheme). Se
-    /// cachea aquí porque el view se redibuja ~10×/s y leer el registro en
-    /// cada redibujo sería derrochador; el Poll lo refresca cada 5 s.
+    /// guarda aquí porque la vista se redibuja unas 10 veces por segundo y leer
+    /// el registro en cada redibujo sería un desperdicio; el `Poll` lo refresca
+    /// cada 5 s.
     pub(crate) system_dark: bool,
-    /// Última vez que se refrescó `system_dark` (tema auto, cada 5 s).
+    /// Última vez que se miró `system_dark` (tema auto, cada 5 s).
     pub(crate) last_theme_check: std::time::Instant,
-    /// Cuándo auto-ocultar la burbuja (Some = timer armado tras un turno).
-    /// `None` = visible sin plazo (Nunca o turno sin terminar).
+    /// Cuándo toca esconder la burbuja sola (Some = cuenta atrás en marcha tras
+    /// un turno). `None` = se queda a la vista sin plazo (Nunca, o turno a
+    /// medias).
     pub(crate) bubble_hide_deadline: Option<std::time::Instant>,
-    /// La burbuja está oculta por el auto-ocultar (evita re-enviar
-    /// change_mode(Windowed) a una ventana que ya está visible).
+    /// La burbuja está escondida por el auto-ocultar (así no se le manda
+    /// `change_mode(Windowed)` a una ventana que ya se ve).
     pub(crate) bubble_hidden: bool,
     // ── Arranque (prerroll whisper + server LLM) ─────────────────────────
-    /// Fase de arranque: Loading/Ready/Failed. Mientras no esté Ready la
-    /// vista principal es solo la pantalla de carga y el dictado está
-    /// bloqueado.
+    /// Fase del arranque: Loading/Ready/Failed. Mientras no esté en Ready la
+    /// vista principal es solo la pantalla de carga y no se puede dictar.
     pub(crate) startup: StartupPhase,
-    /// Estado del corrector LLM tras el auto-inicio (gate del enrutado).
+    /// Estado del corrector tras el auto-arranque (decide si se enruta o no).
     pub(crate) llm_status: LlmStatus,
-    /// Canal de eventos del hilo de arranque (se drena en el Poll; None al
-    /// terminar o si no hay arranque en curso).
+    /// Canal de eventos del hilo de arranque (se vacía en el `Poll`; `None`
+    /// cuando ya terminó o no hay arranque en marcha).
     pub(crate) startup_rx: Option<Receiver<StartupEvent>>,
-    /// Token de cancelación de la fase LLM en vuelo (toggle off en caliente):
-    /// cuando el usuario apaga la corrección IA, la fase que esté lanzando o
-    /// esperando al server debe abortar sin dejar modelo cargado. Cada fase
-    /// nueva recibe su propio `AtomicBool` compartido con su hilo.
+    /// Marca para cancelar la fase del modelo que esté en marcha (apagar la
+    /// corrección IA en caliente): la fase que esté lanzando o esperando al
+    /// servidor tiene que abortar sin dejar el modelo cargado. Cada fase nueva
+    /// recibe su propia marca, compartida con su hilo.
     pub(crate) llm_phase_cancel: Option<Arc<AtomicBool>>,
-    /// Texto de la línea de estado de la pantalla de carga («Cargando modelo
-    /// de voz…», «Preparando corrección IA…», …).
+    /// Texto de la línea de estado de la pantalla de carga («Cargando modelo de
+    /// voz…», «Preparando corrección IA…», …).
     pub(crate) startup_label: String,
-    /// Tick de animación del spinner de carga (lo avanza el Poll a 10 Hz).
+    /// Contador para mover el spinner de carga (lo avanza el `Poll` 10 veces
+    /// por segundo).
     pub(crate) startup_tick: u32,
     // ── Robustez de grabación ────────────────────────────────────────────
-    /// Cuándo empezó el turno en curso (`None` = no se está grabando). El
-    /// Poll lo vigila: al llegar a `audio::MAX_RECORDING_SECS` el turno se
-    /// detiene solo (memoria acotada en dictados maratonianos) y el audio
-    /// grabado hasta ahí se transcribe con normalidad.
+    /// Cuándo empezó el turno en curso (`None` = no se está grabando). El `Poll`
+    /// lo vigila: al llegar a `audio::MAX_RECORDING_SECS` el turno se corta solo
+    /// (así la memoria no crece sin freno en dictados eternos) y lo grabado
+    /// hasta ahí se transcribe con normalidad.
     pub(crate) recording_started: Option<std::time::Instant>,
-    /// El turno en curso terminó porque el micrófono murió a mitad (el
-    /// mensaje de `AudioDeviceLost`). La transcripción resultante se
-    /// acompaña de un aviso claro en vez de aparecer como si nada.
+    /// El turno terminó porque el micrófono murió a mitad (mensaje
+    /// `AudioDeviceLost`). La transcripción que salga lleva un aviso claro en vez
+    /// de aparecer como si nada.
     pub(crate) device_lost: bool,
-    /// Nota pendiente de mostrar cuando llegue la transcripción del turno
-    /// (p. ej. el aviso del tope de duración). `apply_pipeline` limpia
-    /// `last_correction` al procesar un turno normal, así que la nota se
-    /// aplica DESPUÉS, al recibir `TranscriptionDone`.
+    /// Aviso que hay que enseñar cuando llegue la transcripción del turno (por
+    /// ejemplo el del tope de duración). `apply_pipeline` limpia
+    /// `last_correction` al procesar un turno normal, así que el aviso se pone
+    /// DESPUÉS, al recibir `TranscriptionDone`.
     pub(crate) pending_turn_note: Option<String>,
 }
 
 impl WhisprApp {
-    /// Construye la app: carga config, registra atajo/bandeja, abre la
-    /// burbuja y lanza el hilo de arranque (descarga + preroll de whisper,
-    /// server LLM si aplica). Devuelve el estado inicial y la primera
-    /// `Task` de Iced (abrir la burbuja + cargar la fuente emoji).
+    /// Monta la app: carga la config, registra el atajo y la bandeja, abre la
+    /// burbuja y lanza el hilo de arranque (descarga y primera carga de whisper,
+    /// servidor LLM si toca). Devuelve el estado inicial y la primera `Task` de
+    /// iced (abrir la burbuja y cargar la fuente de emojis).
     pub fn new() -> (Self, Task<Message>) {
-        // Config persistente. Antes de nada, saneado de la ruta del server
-        // LLM (t_75732630): una ruta legacy al wrapper `llama.exe` —o a un
-        // fichero inexistente— se corrige al `llama-server.exe` nativo y se
-        // PERSISTE. Con el wrapper, el proceso lanzado por la app no casaba
-        // con la validación por nombre de imagen al salir y quedaba huérfano
-        // en VRAM.
+        // Config guardada en disco. Antes de nada se arregla la ruta del servidor
+        // LLM (t_75732630): una ruta vieja al envoltorio `llama.exe` —o a un
+        // fichero que no existe— pasa al `llama-server.exe` nativo y se GUARDA.
+        // Con el envoltorio, el proceso que lanzaba la app no coincidía con la
+        // comprobación por nombre de imagen al salir y se quedaba huérfano
+        // ocupando VRAM.
         let mut config = Config::load();
         let _ = config.heal_llama_server_path();
-        // H4 (QA 24/09/2026): las rutas de personalización que ya no apuntan a
-        // nada se quitan del config al arrancar (avisando en el log). El
-        // usuario que vacía Descargas deja de arrastrar una ruta muerta; una
-        // config vieja con una ruta externa que SIGUE existiendo no se toca.
+        // H4 (QA 24/09/2026): al arrancar se quitan de la config las rutas de
+        // personalización que ya no llevan a nada (avisando en el log). Quien
+        // vacía Descargas deja de arrastrar una ruta muerta; una config vieja con
+        // una ruta externa que SIGUE existiendo no se toca.
         if crate::custom_image::sanitize_config_assets(&mut config) {
             config.save();
         }
@@ -647,22 +647,22 @@ impl WhisprApp {
             }
         };
         let hotkey_label = hotkey.label();
-        // Placeholder del editor (se calcula ANTES del struct literal: la
-        // etiqueta se mueve dentro de él).
+        // Texto de ayuda del editor (se calcula ANTES del struct literal: la
+        // etiqueta del atajo se mueve dentro de él).
         let placeholder_text = transcript_placeholder(&hotkey_label);
 
-        // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando la
-        // ventana exista llegará `Message::BubbleOpened` y se le aplicará
-        // WS_EX_NOACTIVATE + posición/esquina + tamaño (apply_bubble_extras).
+        // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando
+        // exista llegará `Message::BubbleOpened` y se le pondrán
+        // WS_EX_NOACTIVATE, posición, esquina y tamaño (apply_bubble_extras).
         let (bubble_id, bubble_task) = {
             let (id, task) = window::open(crate::bubble::bubble_settings(&config));
             (Some(id), task.map(Message::BubbleOpened))
         };
 
         // Bandeja del sistema. Se crea aquí (hilo principal, el mismo donde
-        // corre el bucle de winit): en Windows, tray-icon crea su ventana
-        // oculta en el hilo llamante y los eventos llegan por canal global.
-        // Si falla, la app sigue funcionando sin bandeja (se avisa en el log).
+        // corre el bucle de winit): en Windows, tray-icon crea su ventana oculta
+        // en el hilo que la llama y los eventos llegan por un canal global. Si
+        // falla, la app sigue sin bandeja (se avisa en el log).
         let tray = match crate::tray::SystemTray::new() {
             Ok(tray) => Some(tray),
             Err(e) => {
@@ -671,10 +671,10 @@ impl WhisprApp {
             }
         };
 
-        // Fuente emoji (Segoe UI Emoji en Windows): que los símbolos de la UI
-        // (✓ ☀ ☾ ▾ ▸ ● → ✕) no aparezcan como cajas vacías. La carga añade
-        // los bytes al FontSystem de Iced; los textos se re-shapean solos al
-        // cambiar la versión del FontSystem (ver src/fonts.rs).
+        // Fuente de emojis (Segoe UI Emoji en Windows): para que los símbolos de
+        // la interfaz (✓ ☀ ☾ ▾ ▸ ● → ✕) no salgan como cuadros vacíos. Cargarla
+        // mete los bytes en el FontSystem de iced; los textos se recolocan solos
+        // cuando cambia la versión del FontSystem (ver src/fonts.rs).
         let font_task = match crate::fonts::load_emoji_font() {
             Some(task) => task.map(Message::FontLoaded),
             None => Task::none(),
@@ -728,15 +728,15 @@ impl WhisprApp {
             tray,
             main_window_id: None,
             main_visible: true,
-            // Arranque: el tema del sistema se lee una vez (el Poll lo
-            // refresca cada 5 s si el modo es Auto) y la burbuja nace visible
-            // (sin timer de auto-ocultar armado).
+            // Arranque: el tema del sistema se lee una vez (el `Poll` lo refresca
+            // cada 5 s si el modo es Auto) y la burbuja nace a la vista (sin
+            // cuenta atrás para esconderse).
             system_dark: theme::system_dark_mode(),
             last_theme_check: std::time::Instant::now(),
             bubble_hide_deadline: None,
             bubble_hidden: false,
-            // Arranque: la app levanta TODO por sí misma en background —
-            // pantalla de carga visible (spinner + fase) y dictado bloqueado
+            // Arranque: la app levanta TODO por su cuenta en segundo plano —
+            // pantalla de carga a la vista (spinner y fase) y dictado bloqueado
             // hasta que whisper está listo (requisito UX 09/09/2026).
             startup: StartupPhase::Loading,
             llm_status: LlmStatus::Unknown,
@@ -749,10 +749,10 @@ impl WhisprApp {
             pending_turn_note: None,
         };
 
-        // Hilo de arranque: descarga si hace falta + carga whisper en cache
-        // + verifica/lanza el server LLM. Los eventos llegan por canal y el
-        // Poll los procesa (mismo patrón que transcribe_rx/llm_rx). La
-        // pantalla de carga se ve desde el primer frame.
+        // Hilo de arranque: descarga si hace falta, carga whisper en memoria y
+        // comprueba o lanza el servidor LLM. Los eventos llegan por canal y el
+        // `Poll` los atiende (igual que transcribe_rx/llm_rx). La pantalla de
+        // carga se ve desde el primer frame.
         let (startup_tx, startup_rx) = mpsc::channel();
         let startup_config = app.config.clone();
         let startup_cancel = Arc::new(AtomicBool::new(false));
@@ -770,16 +770,16 @@ impl WhisprApp {
         self.config_save_deadline = Some(std::time::Instant::now() + Duration::from_millis(300));
     }
 
-    /// Toma el buffer en vuelo de `palette_inputs[field]` (si existe) o el
-    /// hex ya persistido (si el usuario solo tocó «Aplicar» sin teclear);
-    /// parsea robusto; persiste; vacía el buffer. Si el input está vacío se
-    /// interpreta como «restaurar este campo al default» (= `None`).
+    /// Coge el texto a medio escribir de `palette_inputs[field]` (si lo hay) o
+    /// el hex ya guardado (si solo se pulsó «Aplicar» sin teclear), lo lee con
+    /// cuidado, lo guarda y vacía el buffer. Si el input está vacío se entiende
+    /// como «este campo vuelve al color de serie» (= `None`).
     pub(crate) fn apply_palette_field(&mut self, field: theme::PaletteField) {
         let raw_input = self
             .palette_inputs
             .remove(&field)
             .unwrap_or_else(|| {
-                // Sin buffer → tomar el valor ya persistido para mantenerlo.
+                // Sin buffer → se coge el valor guardado para dejarlo igual.
                 let cfg = self.config.palette.as_ref();
                 let current = match cfg {
                     Some(c) => match field {
@@ -800,10 +800,10 @@ impl WhisprApp {
                 };
                 current.unwrap_or_default()
             });
-        // Trim antes de decidir vacío.
+        // Se quitan los espacios antes de decidir si está vacío.
         let trimmed = raw_input.trim().to_string();
         if trimmed.is_empty() {
-            // Vacío = restaurar default (None en el slot).
+            // Vacío = vuelve al color de serie (None en el hueco).
             let cfg = self
                 .config
                 .palette
