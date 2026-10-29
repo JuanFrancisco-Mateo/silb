@@ -39,6 +39,19 @@ corresponde portarlo.
    feature dbus → camino pendiente de probe (Parte 3).
 4. **Burbuja flotante.** src/bubble.rs ya compila stub no-Windows. Port
    real Wayland (winit LayerShell, with_active/unfocus) es Parte 3.
+
+   **Hecho en 0.6:** la burbuja existe en Linux con clase `whispr-open-bubble`
+   y título `Silb-Bubble`, pero Wayland no deja fijarla por encima ni fuera del
+   workspace desde la app (`WS_EX_NOACTIVATE` no existe aquí). Se resuelve con
+   una regla del compositor; en Hyprland (config Lua de Omarchy), en
+   `~/.config/hypr/bindings.lua`:
+
+   ```lua
+   o.window({ class = "whispr-open-bubble" }, { float = true, pin = true })
+   ```
+
+   Sin `pin` la burbuja se quedaba en el workspace donde arrancó el dictado.
+
 5. **build.rs / winresource (.ico + manifest).** Fuera de la parte 4 por
    diseño (Parte 3: recursos de build); en Windows deben conservar el
    recurso incrustado; en no-Windows winresource se salta (build.rs a
