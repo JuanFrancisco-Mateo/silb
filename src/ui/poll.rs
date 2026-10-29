@@ -1,4 +1,4 @@
-//! Tick del `Poll`: drena los canales de los hilos y vigila los plazos.
+//! Cada vuelta del `Poll`: recoge los canales de los hilos y vigila los plazos.
 
 use std::sync::mpsc;
 use std::time::Duration;
@@ -10,20 +10,19 @@ use crate::config::ThemeMode;
 use crate::theme;
 
 impl WhisprApp {
-    /// Tick del `Poll` (10 Hz): drena los canales de los hilos (atajo
-    /// global, bandeja, errores de audio, descargas, arranque, LLM),
-    /// vigila el tope de grabación, refresca el tema del sistema y avanza
-    /// la animación de la burbuja.
+    /// Cada vuelta del `Poll` (10 Hz): recoge los canales de los hilos (atajo
+    /// global, bandeja, errores de audio, descargas, arranque, modelo), vigila el
+    /// tope de grabación, refresca el tema del sistema y mueve la animación de la
+    /// burbuja.
     ///
     /// Movido tal cual desde `WhisprApp::update` (ver `app.rs`).
     pub(crate) fn handle_poll(&mut self, m: Message) -> Task<Message> {
         match m {
             Message::Poll => {
-                // ── Arranque: eventos del hilo background + spinner ────────
-                // El prerroll de whisper y la verificación del server LLM
-                // corren en su hilo; aquí solo se drena el canal (nunca
-                // bloquea) y se anima el spinner mientras la pantalla de
-                // carga esté visible.
+                // ── Arranque: avisos del hilo de fondo + spinner ────────────
+                // La carga de whisper y la comprobación del servidor LLM van en su
+                // hilo; aquí solo se recoge el canal (nunca espera) y se mueve el
+                // spinner mientras se ve la pantalla de carga.
                 if let Some(rx) = &self.startup_rx {
                     match rx.try_recv() {
                         Ok(event) => return self.update(Message::Startup(event)),
@@ -33,8 +32,8 @@ impl WhisprApp {
                             }
                         }
                         Err(mpsc::TryRecvError::Disconnected) => {
-                            // El hilo murió sin evento terminal: no dejar la
-                            // app colgada en «cargando».
+                            // El hilo murió sin avisar del final: no dejar la app
+                            // colgada en «cargando».
                             self.startup_rx = None;
                             if matches!(self.startup, StartupPhase::Loading) {
                                 self.startup = StartupPhase::Failed {
@@ -45,10 +44,10 @@ impl WhisprApp {
                     }
                 }
 
-                // ── Tema auto: refresco periódico del estado del sistema ──
-                // Cada 5 s se relee AppsUseLightTheme (registro). El view se
-                // redibuja con cada tick del Poll (100 ms), así que el cambio
-                // de tema se propaga solo, sin tareas extra.
+                // ── Tema auto: mira el estado del sistema cada poco ────────
+                // Cada 5 s se vuelve a leer AppsUseLightTheme (registro). La vista
+                // se redibuja en cada vuelta del `Poll` (100 ms), así que el cambio
+                // de tema entra solo, sin tareas de más.
                 if self.last_theme_check.elapsed() >= Duration::from_secs(5) {
                     self.last_theme_check = std::time::Instant::now();
                     if self.config.theme_mode() == ThemeMode::Auto {
@@ -56,10 +55,10 @@ impl WhisprApp {
                     }
                 }
 
-                // ── Auto-ocultar la burbuja ────────────────────────────────
-                // Timer armado al terminar un turno (arm_bubble_hide_timeout):
-                // al expirar, la burbuja se oculta. Se re-muestra al pulsar el
-                // micrófono o al abrirla.
+                // ── Esconder la burbuja sola ────────────────────────────────
+                // Temporizador que se arma al terminar un turno
+                // (arm_bubble_hide_timeout): al cumplirse, la burbuja se oculta.
+                // Vuelve a salir al pulsar el micro o al abrirla.
                 if let Some(deadline) = self.bubble_hide_deadline {
                     if std::time::Instant::now() >= deadline {
                         self.bubble_hide_deadline = None;
@@ -70,13 +69,13 @@ impl WhisprApp {
                     }
                 }
 
-                // ── Robustez de grabación ────────────────────────────────
-                // 1) El stream puede morir a mitad de turno (micro
-                //    desconectado, driver caído): el canal de errores lo
-                //    cuenta aquí y el turno se corta con lo grabado.
-                // 2) Un turno maratoniano se detiene solo al tope
-                //    (`audio::MAX_RECORDING_SECS`): memoria acotada y el
-                //    audio grabado hasta ahí se transcribe con normalidad.
+                // ── Grabación a prueba de fallos ────────────────────────────
+                // 1) Puede morir la entrada a mitad de turno (micro desconectado,
+                //    driver caído): el canal de errores lo cuenta aquí y el turno
+                //    se corta con lo grabado.
+                // 2) Un turno eterno se para solo al llegar al tope
+                //    (`audio::MAX_RECORDING_SECS`): memoria controlada y lo
+                //    grabado hasta ahí se transcribe igual.
                 if let Some(audio) = &self.audio {
                     if let Some(reason) = audio.take_stream_error() {
                         return self.update(Message::AudioDeviceLost(reason));
@@ -91,10 +90,10 @@ impl WhisprApp {
                             "tope de {} s de grabación: el turno se detiene solo",
                             crate::audio::MAX_RECORDING_SECS
                         );
-                        // El aviso viaja como nota pendiente: se muestra al
+                        // El aviso viaja como nota pendiente: se enseña al
                         // llegar la transcripción (apply_pipeline limpia
-                        // last_correction en el camino y se comería un aviso
-                        // puesto ya).
+                        // last_correction por el camino y se comería un aviso ya
+                        // puesto).
                         self.pending_turn_note = Some(format!(
                             "Dictado larguísimo: parado a las {} h para no agotar la memoria; \
                              lo grabado hasta ahí se transcribe normal.",
@@ -104,10 +103,10 @@ impl WhisprApp {
                     }
                 }
 
-                // ── Confirmaciones efímeras ─────────────────────────────
-                // «✓ Copiado» vive ~2 s en el botón; la confirmación de
-                // borrado armada caduca a los 5 s (un «¿Borrar?» olvidado
-                // no puede esperar para siempre).
+                // ── Confirmaciones que duran poco ───────────────────────────
+                // «✓ Copiado» se queda ~2 s en el botón; la confirmación de
+                // borrado caduca a los 5 s (un «¿Borrar?» olvidado no puede
+                // quedarse para siempre).
                 if self
                     .copied_at
                     .is_some_and(|t| t.elapsed() >= Duration::from_secs(2))
@@ -122,8 +121,8 @@ impl WhisprApp {
                     self.clear_armed_at = None;
                 }
 
-                // Atajo global: toggle al detectar press de NUESTRO atajo (se filtra
-                // por id: el canal es global y podría traer eventos ajenos).
+                // Atajo global: cambia al ver la pulsación de NUESTRO atajo (se
+                // filtra por id: el canal es general y puede traer cosas de otros).
                 let mut toggled = false;
                 let hotkey_id = self.hotkey.id();
                 for _ in 0..4 {
@@ -143,8 +142,8 @@ impl WhisprApp {
                     return self.update(Message::Toggle);
                 }
 
-                // Bandeja: clics del menú contextual (mostrar/ocultar, salir).
-                // Mismo patrón que el atajo global: canal global drenado aquí.
+                // Bandeja: clics del menú (mostrar/ocultar, salir). Mismo método
+                // que el atajo global: canal general recogido aquí.
                 if let Some(tray) = &self.tray {
                     for _ in 0..8 {
                         match tray.events.try_recv() {
@@ -169,13 +168,13 @@ impl WhisprApp {
 
                 self.flush_config();
 
-                // Auto-recuperación del arrastre con botón derecho: si el
-                // sistema roba la captura (alt-tab, menú del sistema, doble
-                // clic en otra ventana) o el evento de soltado se pierde, se
-                // cierra el arrastre limpio para no quedarse «atascado» ni
-                // acumular saltos. `GetCapture` es el detector fiable de robo
-                // de captura (equivale a WM_CAPTURECHANGED); el botón ya
-                // liberado es la red de seguridad del evento perdido.
+                // Arreglo del arrastre con el botón derecho: si el sistema se
+                // lleva la captura (alt-tab, menú del sistema, clic en otra
+                // ventana) o se pierde el evento de soltar, se cierra el arrastre
+                // limpio para no quedarse «atascado» ni acumular saltos.
+                // `GetCapture` es la forma fiable de ver que se llevaron la
+                // captura (equivale a WM_CAPTURECHANGED); el botón ya suelto es la
+                // red de seguridad del evento perdido.
                 if self.bubble_pressed && !crate::bubble::left_button_down() {
                     let _ = self.update(Message::BubbleRelease);
                 }
@@ -191,17 +190,17 @@ impl WhisprApp {
                         self.bubble_right.cancel();
                         self.end_bubble_drag("captura perdida (botón liberado)");
                     } else if self.bubble_right.dragging {
-                        // Seguimiento redundante (anclaje absoluto, idempotente):
-                        // si el bucle de eventos no entrega CursorMoved con el
-                        // cursor fuera de la ventana, el poll sigue al cursor
-                        // igualmente a 10 Hz.
+                        // Seguimiento de más (posición absoluta, se puede repetir
+                        // sin efecto): si el bucle de eventos no manda CursorMoved
+                        // con el cursor fuera de la ventana, el poll sigue al
+                        // cursor igual cada 100 ms.
                         if let Some(drag) = &mut self.bubble_drag {
                             drag.follow();
                         }
                     }
                 }
 
-                // Resultado de transcripción/descarga.
+                // Resultado de la transcripción o la descarga.
                 let _tx_drained: Task<Message> = if let Some(rx) = &self.transcribe_rx {
                     match rx.try_recv() {
                         Ok(Ok(msg)) if msg.starts_with("__PROGRESS__") => {
@@ -209,8 +208,8 @@ impl WhisprApp {
                                 let mut it = rest.split(':');
                                 if let (Some(d), Some(t)) = (it.next(), it.next()) {
                                     if let (Ok(d), Ok(t)) = (d.parse::<u64>(), t.parse::<u64>()) {
-                                        // Mismo tracker de velocidad que la
-                                        // pantalla de carga (MB + ETA, R4).
+                                        // El mismo medidor de velocidad que la
+                                        // pantalla de carga (MB + tiempo restante).
                                         self.note_download_progress(d, t);
                                     }
                                 }
@@ -220,10 +219,10 @@ impl WhisprApp {
                         Ok(Ok(msg)) if msg == "__DOWNLOAD_OK__" => {
                             self.transcribe_rx = None;
                             self.status = Status::Idle;
-                            // Onboarding (sprint final): si la descarga terminó
-                            // mientras el arranque estaba en Failed (primera
-                            // configuración inicial), relanzar el arranque solo
-                            // en vez de dejar la pantalla de error colgada.
+                            // Onboarding: si la descarga terminó mientras el
+                            // arranque estaba en Failed (primera configuración),
+                            // relanzar el arranque en vez de dejar la pantalla de
+                            // error colgada.
                             if matches!(self.startup, StartupPhase::Failed { .. }) {
                                 return self.update(Message::RetryStartup);
                             }
@@ -250,8 +249,8 @@ impl WhisprApp {
                     Task::none()
                 };
 
-                // Resultado de la corrección IA (mismo patrón que la
-                // transcripción: canal mpsc drenado sin bloquear el bucle).
+                // Resultado de la corrección IA (igual que la transcripción:
+                // canal mpsc recogido sin bloquear el bucle).
                 if let Some(rx) = &self.llm_rx {
                     return match rx.try_recv() {
                         Ok(result) => self.update(Message::CorrectionDone(result)),
