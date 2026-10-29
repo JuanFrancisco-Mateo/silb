@@ -9,7 +9,6 @@
 //! que llama a una función por familia de mensajes), `subscription`, `theme`,
 //! `view` y los ayudantes pequeños de estado. El resto de la interfaz vive en
 //! `src/ui/`:
-//! `src/ui/`:
 //! - `ui::settings`: las pantallas de Ajustes
 //!   (`settings_view`, `settings_nav`, `settings_section_*`) y los ayudantes de
 //!   la paleta.
@@ -23,7 +22,6 @@
 //! - `ui::bubble`: lo que pasa en la burbuja flotante
 //!   (`handle_bubble_events`).
 //! - `ui::window_tray`: ventana, bandeja y arranque
-//!   (`handle_window_and_tray`).
 //!   (`handle_window_and_tray`).
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -215,8 +213,8 @@ pub enum Message {
 /// sola). Está en Avanzado → Corrección IA (sprint final).
     LlmServerPathChanged(String),
     LlmApiKeyChanged(String),
-/// Cuánto se espera la respuesta, en segundos (1..=120). Viene del slider;
-/// el getter lo pasa a `LlmConfig::timeout_secs` y a `ureq::timeout`.
+/// Cuánto se espera la respuesta, en segundos (1..=120). Viene del deslizador;
+/// quien lo lee lo pasa a `LlmConfig::timeout_secs` y a `ureq::timeout`.
     LlmTimeoutChanged(u32),
 /// Umbral del clasificador (0..=100). Con 0 no manda nada (como tener el
 /// interruptor general apagado); con 100 no enruta nunca; 50 por defecto,
@@ -292,14 +290,14 @@ pub enum Message {
     ShortcutReset,
 /// Idioma de transcripción elegido en Ajustes. Se guarda tal cual:
 /// `"auto"` = que lo adivine; cualquier otra cosa es BCP-47 (`"es"`,
-/// `"en"`, …). Se queda así en `config.language`; el getter decide cómo
+/// `"en"`, …). Se queda así en `config.language`; quien lo lee decide cómo
 /// pasarlo a `whisper_full_params`.
     LanguageSelected(String),
-/// Beam size elegido (1..=8). Se guarda en `config.beam_size`; el getter lo
+/// Beam size elegido (1..=8). Se guarda en `config.beam_size`; quien lo lee lo
 /// deja dentro del rango.
     BeamSizeChanged(u32),
 /// Hilos del decodificador elegidos (1..=32). Se guardan en
-/// `config.n_threads`; el getter los deja dentro del rango.
+/// `config.n_threads`; quien los lee los deja dentro del rango.
     ThreadsChanged(u32),
 /// Tema elegido en Ajustes (el header cambia el mismo estado).
     ThemeModeChanged(ThemeMode),
@@ -310,7 +308,7 @@ pub enum Message {
     BubbleSizeChanged(BubbleSize),
 /// Esquina donde se ancla la burbuja (se mueve en caliente con winapi).
     BubbleCornerChanged(BubbleCorner),
-/// Cuánto se ve la burbuja, en % (slider 20–100; el alfa va por píxel).
+/// Cuánto se ve la burbuja, en % (deslizador 20–100; el alfa va por píxel).
     BubbleOpacityChanged(u32),
     BubbleStyleChanged(BubbleStyle),
 /// Esconde la burbuja tras N segundos sin dictar (Nunca = no se esconde).
@@ -344,7 +342,7 @@ pub enum Message {
 /// Pone la ventana maximizada o la devuelve a su tamaño (botón de la barra).
     MaximizeMainWindow,
 /// Abre Ajustes en una pestaña concreta: lo usan los atajos del marco (la
-/// ayuda de la barra lateral → Avanzado; los sliders de la tarjeta de
+/// ayuda de la barra lateral → Avanzado; los deslizadores de la tarjeta de
 /// grabación → Dictado).
     OpenSettingsSection(SettingsSection),
 /// Abre en el Explorador la carpeta del registro
@@ -358,7 +356,7 @@ pub enum Message {
 /// hasta que se pulsa «Aplicar» o se pasa a otro campo (igual que el resto
 /// de campos de Ajustes).
     PaletteFieldChanged(theme::PaletteField, String),
-/// «Aplicar» de un campo: guarda lo que hay en el input (si el hex no vale,
+/// «Aplicar» de un campo: guarda lo que hay en el campo (si el hex no vale,
 /// se ignora).
     PaletteFieldApply(theme::PaletteField),
 /// «Restaurar» un campo: lo deja en `None` (el color de serie del modo
@@ -382,7 +380,7 @@ pub enum Message {
 /// estaba).
     PaletteImport,
 /// Resultado del diálogo de importación: ruta o cancelación. La ruta se
-/// trabaja en `update`: se lee, se parsea y se mezcla con la paleta actual
+/// trabaja en `update`: se lee, se interpreta y se mezcla con la paleta actual
 /// (se respeta lo que el usuario no esté cambiando).
     PaletteImportPicked(Option<std::path::PathBuf>),
     // ── Personalización III (R7): imágenes del usuario ────────────────
@@ -396,7 +394,7 @@ pub enum Message {
     BgImagePicked(Option<String>),
 /// Deja la imagen de fondo sin ruta (vuelve al fondo del tema).
     BgImageClear,
-    /// Abrir el diálogo para elegir el sprite estático de la burbuja.
+/// Abre el diálogo para elegir el sprite fijo de la burbuja.
     BubbleImageBrowse,
     BubbleImagePicked(Option<String>),
     BubbleImageClear,
@@ -406,14 +404,14 @@ pub enum Message {
     BubbleFramesPicked(Option<String>),
     BubbleFramesClear,
 /// Fotogramas por segundo de la animación de la burbuja (1..=30). Viene del
-/// slider; el getter ya lo deja en el rango.
+/// deslizador; quien lo lee ya lo deja en el rango.
     BubbleFpsChanged(u32),
 /// Pulso del reloj de la animación: pasa al siguiente fotograma del sprite de
 /// la burbuja. Lo manda la suscripción de `iced::time::every` solo con la
 /// animación encendida (hay carpeta de fotogramas y los FPS son mayores que 0).
 /// El `Poll` lo ignora si la animación está parada.
     AnimationTick,
-    // ── Burbuja flotante (overlay) ────────────────────────────────────────
+    // ── Burbuja flotante ──────────────────────────────────────────────────
     /// La ventana de la burbuja ya existe (hay que ponerle WS_EX_NOACTIVATE).
     BubbleOpened(window::Id),
     /// Clic izquierdo dentro de la burbuja (empieza a grabar).
@@ -440,7 +438,7 @@ pub enum Message {
     /// (resultado de `iced::font::load` al arrancar). En iced 0.13 `Error` no
     /// tiene valores posibles, pero se anota en el log por si algún día llega algo.
     FontLoaded(Result<(), iced::font::Error>),
-    // ── Arranque (prerroll whisper + server LLM) ──────────────────────────
+    // ── Arranque (whisper y servidor LLM) ─────────────────────────────────
     /// Evento del hilo de arranque, que va en segundo plano (ver [`StartupEvent`]).
     Startup(StartupEvent),
     /// «Reintentar» desde la pantalla de error del arranque: vuelve a empezar
@@ -510,8 +508,8 @@ pub struct WhisprApp {
     /// se aterrice en lo más común (requisito 5 de la tarea R7: «recordar la
     /// última sección solo en el estado de sesión»).
     pub(crate) settings_section: SettingsSection,
-    // ── Personalización II (R7): buffers de input por campo de paleta ────────
-    /// Texto a medio escribir del input hex de cada color de la paleta (lo que
+    // ── Personalización II (R7): texto a medio escribir por campo de paleta ──
+    /// Texto a medio escribir del campo hex de cada color de la paleta (lo que
     /// el usuario está tecleando, antes de pulsar «Aplicar» o pasar a otro
     /// campo). Vacío al empezar; se rellena al entrar en Apariencia con el hex
     /// de cada campo (o vacío si está en el color de serie). Vive aquí y no en un
@@ -523,7 +521,7 @@ pub struct WhisprApp {
     pub(crate) bubble_pressed: bool, // botón izquierdo pulsado (graba)
     pub(crate) bubble_last_pos: Point,
     /// Cuándo toca escribir la configuración: se retrasa para no dejar la
-    /// interfaz colgada al teclear dirección/modelo/clave ni al mover sliders.
+    /// interfaz colgada al teclear dirección/modelo/clave ni al mover deslizadores.
     pub(crate) config_save_deadline: Option<std::time::Instant>,
     /// Botón derecho: solo arrastra la burbuja (no graba ni abre nada).
     pub(crate) bubble_right: crate::bubble::RightDragState,
@@ -576,7 +574,7 @@ pub struct WhisprApp {
     /// La burbuja está escondida por el auto-ocultar (así no se le manda
     /// `change_mode(Windowed)` a una ventana que ya se ve).
     pub(crate) bubble_hidden: bool,
-    // ── Arranque (prerroll whisper + server LLM) ─────────────────────────
+    // ── Arranque (whisper y servidor LLM) ────────────────────────────────
     /// Fase del arranque: Loading/Ready/Failed. Mientras no esté en Ready la
     /// vista principal es solo la pantalla de carga y no se puede dictar.
     pub(crate) startup: StartupPhase,
@@ -772,14 +770,14 @@ impl WhisprApp {
 
     /// Coge el texto a medio escribir de `palette_inputs[field]` (si lo hay) o
     /// el hex ya guardado (si solo se pulsó «Aplicar» sin teclear), lo lee con
-    /// cuidado, lo guarda y vacía el buffer. Si el input está vacío se entiende
+    /// cuidado, lo guarda y vacía el campo. Si el campo está vacío se entiende
     /// como «este campo vuelve al color de serie» (= `None`).
     pub(crate) fn apply_palette_field(&mut self, field: theme::PaletteField) {
         let raw_input = self
             .palette_inputs
             .remove(&field)
             .unwrap_or_else(|| {
-                // Sin buffer → se coge el valor guardado para dejarlo igual.
+                // Sin texto propio → se coge el valor guardado para dejarlo igual.
                 let cfg = self.config.palette.as_ref();
                 let current = match cfg {
                     Some(c) => match field {
@@ -831,13 +829,13 @@ impl WhisprApp {
                 theme::PaletteField::Err => cfg.err = Some(trimmed),
                 theme::PaletteField::Border => cfg.border = Some(trimmed),
             }
-            // Una vez guardado, se vacía el buffer para que el input suelte el hex
-            // a medio escribir (la interfaz enseñará el valor guardado).
+            // Una vez guardado, se vacía el campo para que suelte el hex a medio
+            // escribir (la interfaz enseñará el valor guardado).
             self.palette_inputs.remove(&field);
         } else {
             // Hex inválido: se IGNORA (regla: NUNCA romper la interfaz). Se apunta
-            // en el log para poder mirarlo y se vacía el buffer, para que el input
-            // no siga enseñando basura (y valga «input vacío = color de serie»).
+            // en el log para poder mirarlo y se vacía el campo, para que no siga
+            // enseñando basura (y valga «campo vacío = color de serie»).
             crate::log!(
                 "palette",
                 "hex inválido descartado en {:?}: «{}»",
@@ -2107,7 +2105,7 @@ impl WhisprApp {
         // un reloj que pasa de fotograma cada `1000/fps` ms. Sin animación se
         // devuelve `Subscription::none()` (iced ve que la suscripción está vacía y
         // no la crea): no cuesta nada. `interval_from_fps` se queda con el valor
-        // de serie si los FPS no valen (defensa de más: el getter ya los deja en
+        // de serie si los FPS no valen (defensa de más: quien los lee ya los deja en
         // rango).
         let animation = if self.bubble_frames_resolved().is_some()
             || self.gif_animation_active()
@@ -2147,14 +2145,14 @@ impl WhisprApp {
 
     /// Dibuja la ventana principal: pantalla de carga hasta que el arranque
     /// termine; después, cabecera + barra de SECCIONES (Dictado / Ajustes) y el
-    /// cuerpo de la sección activa: «Dictado» junta el chip de corrección IA, el
+    /// cuerpo de la sección activa: «Dictado» junta el indicador de corrección IA, el
     /// hero del micrófono, la nota editable, las acciones y el feedback;
     /// «Ajustes» es el panel de siempre. El pie de confianza va siempre.
     pub fn view(&self) -> Element<'_, Message> {
-        // R7-II: instala la paleta resuelta en el thread-local de `theme` para
-        // que los style closures de los widgets (`primary`, `secondary`, …)
-        // lean los overrides del usuario sin tocar sus firmas. El scope se
-        // libera al volver (Drop) ⇒ el siguiente frame empieza limpio.
+        // R7-II: deja puesta la paleta resuelta en el almacén interno de `theme`
+        // para que los estilos de los widgets (`primary`, `secondary`, …) usen los
+        // colores del usuario sin cambiar sus firmas. Al salir de aquí se limpia
+        // sola (Drop) → el siguiente frame empieza de cero.
         let _palette_scope = theme::PaletteOverrideScope::new(self.resolved_palette());
         let t = theme::tokens(&self.theme()).into_owned();
         // Tamaño de letra global resuelto (Ajustes → Apariencia): TODOS los textos
@@ -2534,7 +2532,7 @@ pub(crate) fn secondary_button<'a>(label: impl Into<String>) -> Button<'a, Messa
         .style(theme::secondary)
 }
 
-/// Lo que la interfaz enseña del corrector IA (el chip del estado principal y
+/// Lo que la interfaz enseña del corrector IA (el indicador del estado principal y
 /// la línea de estado en Ajustes). Función pura y fácil de probar: decir
 /// CUÁNDO se usa el modelo es requisito de UX (10/09/2026), así que la lógica
 /// de las etiquetas no puede vivir solo dentro de la vista.
@@ -2960,7 +2958,7 @@ fn run_llm_phase(cfg: Config, tx: Sender<StartupEvent>, cancel: Arc<AtomicBool>)
     if !crate::llm::is_local_endpoint(&llm.base_url) {
         // Custom/Cloud remoto: no hay servidor local que levantar, pero SÍ se
         // comprueba que la dirección contesta (con la clave si la hay; sin ella un
-        // 401 daría un «caído» falso). Así el chip de estado enseña el proveedor
+        // 401 daría un «caído» falso). Así el indicador de estado enseña el proveedor
         // que está en uso: si la dirección no contesta o rechaza la petición, la
         // corrección se apaga con aviso a la vista y el dictado sigue a texto
         // bruto.
@@ -3079,7 +3077,7 @@ mod tests {
     use super::*;
 
     /// Que se vea claro lo que hace el corrector (requisito UX 10/09/2026): el
-    /// chip de estado debe decir SIEMPRE algo coherente con (interruptor, estado
+    /// indicador de estado debe decir SIEMPRE algo coherente con (interruptor, estado
     /// del server) y nombrar el modelo solo cuando la corrección puede actuar.
     #[test]
     fn chip_muestra_modelo_solo_cuando_la_correccion_esta_activa() {
@@ -3136,7 +3134,7 @@ mod tests {
     }
 
     /// Proveedor Custom/Cloud remoto caído (requisito 10/09/2026): el motivo que
-    /// se ve en el chip nombra la dirección y deja claro que el dictado NUNCA se
+    /// se ve en el indicador nombra la dirección y deja claro que el dictado NUNCA se
     /// bloquea (se queda en texto bruto).
     #[test]
     fn endpoint_remoto_caido_desactiva_con_aviso_que_no_bloquea() {
