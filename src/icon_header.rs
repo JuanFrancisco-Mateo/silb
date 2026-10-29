@@ -1,15 +1,15 @@
-//! Test del icono multirresolución (header ICO + contenido BMP DIB).
+//! Test del icono con varios tamaños (cabecera ICO + contenido BMP DIB).
 //!
-//! Verifica end-to-end:
-//! - El script `assets/build_icon.py` se ejecuta y produce un `.ico`.
-//! - El header ICONDIR (reserved, type, count) cumple el formato.
-//! - Cada entrada: ancho/alto en {16,24,32,48,64,128,256}, bpp=32,
-//!   plano=1, offset sin solapes, tamaño coherente, formato BMP DIB
-//!   (compatibilidad máxima con el cargador de recursos de Windows).
-//! - Decodificación de la entrada mayor: píxel central violeta opaco,
-//!   esquina transparente.
+//! Comprueba de principio a fin:
+//! - Que el script `assets/build_icon.py` se ejecute y saque un `.ico`.
+//! - Que la cabecera ICONDIR (reserved, type, count) siga el formato.
+//! - Que cada entrada tenga ancho/alto en {16,24,32,48,64,128,256}, bpp=32,
+//!   plano=1, un offset que no se pise con otra, tamaño coherente y formato BMP
+//!   DIB (el que mejor traga el cargador de recursos de Windows).
+//! - Que la entrada más grande se decodifique bien: píxel central violeta
+//!   opaco y esquina transparente.
 //!
-//! Se ejecuta con ``cargo test --lib icon_header::tests``.
+//! Se lanza con ``cargo test --lib icon_header::tests``.
 
 #[cfg(test)]
 mod tests {
@@ -18,10 +18,10 @@ mod tests {
 
     const SIZES: &[u16] = &[16, 24, 32, 48, 64, 128, 256];
     const ACCENT: (u8, u8, u8) = (0x7C, 0x6C, 0xFF);
-    /// Color de la onda del símbolo (misma tinta que el SVG de Figma).
+    /// Color de la onda del símbolo (la misma tinta que el SVG de Figma).
     const WAVE: (u8, u8, u8) = (0xF7, 0xF6, 0xF3);
 
-    /// Encuentra un Python ejecutable (mismo orden que build.rs).
+    /// Busca un Python que se pueda ejecutar (mismo orden que build.rs).
     fn find_python() -> Option<&'static str> {
         for c in &["python", "py", "python3"] {
             if Command::new(c).arg("-V").output().is_ok() {
@@ -134,7 +134,7 @@ mod tests {
 
     #[test]
     fn icon_header_and_payload_are_valid() {
-        // 1. Generar el icono en un directorio temporal.
+        // 1. Generar el icono en una carpeta temporal.
         let tmp = std::env::temp_dir().join(format!(
             "whispr-open-icon-test-{}",
             std::process::id()
@@ -142,10 +142,10 @@ mod tests {
         std::fs::create_dir_all(&tmp).expect("mkdir tmp");
         let ico_path = run_generator(&tmp);
 
-        // 2. Parsear header.
+        // 2. Leer la cabecera.
         let (count, entries) = parse_ico(&ico_path);
 
-        // 3. Validar conjunto de tallas exacto.
+        // 3. Comprobar que están exactamente esas tallas.
         let mut seen: std::collections::HashSet<u32> = std::collections::HashSet::new();
         for (w, h, _bpp, _size, _offset, _payload) in &entries {
             assert_eq!(w, h, "entrada no cuadrada");
@@ -162,7 +162,7 @@ mod tests {
             SIZES.len()
         );
 
-        // 4. Pixel check en la entrada más grande (decodificación BMP DIB).
+        // 4. Mirar un píxel de la entrada más grande (decodificar el BMP DIB).
         let (bw, bh, _, _, _, bp) = entries
             .iter()
             .max_by_key(|(w, _, _, _, _, _)| *w)

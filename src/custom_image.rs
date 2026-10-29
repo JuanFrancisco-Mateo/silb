@@ -1,52 +1,49 @@
-//! Imágenes de usuario y animación por frames (Personalización III).
+//! Imágenes del usuario y animación por fotogramas (Personalización III).
 //!
 //! El usuario puede elegir:
 //!
 //! - Una **imagen de fondo** para la ventana principal.
-//! - Un **sprite estático** O una **secuencia de frames PNG** para la
-//!   burbuja flotante (animación por conmutación manual: iced 0.13 no
-//!   expone un widget de GIF/WebP animado, requisito de la tarea;
-//!   la migración a iced 0.14 — que ya lo trae — queda fuera de alcance).
+//! - Una **imagen fija** O una **secuencia de PNG** para la burbuja flotante
+//!   (la animación va cambiando de imagen a mano: iced 0.13 no trae nada para
+//!   GIF/WebP animado, y pasar a iced 0.14 —que sí lo trae— queda fuera).
 //!
-//! Reglas (verificado en tests de regresión):
+//! Reglas (comprobadas con tests):
 //!
-//! 1. **Rutas como dato, nunca hardcoded**. La ruta viene de config.json
-//!    (`config.bg_image_path`, `config.bubble_image_path`,
-//!    `config.bubble_frames_path`). Si el fichero no existe o el formato
-//!    no es legible, el render vuelve al aspecto original (fallback
-//!    obligatorio: nunca ventana en negro, nunca crash).
-//! 2. **Animación sin gif nativo**: la lista de frames se ordena
-//!    alfabéticamente (estable cross-platform en Windows) y se avanza
-//!    con `iced::time::every` cada `1000/fps` ms. El frame index hace
-//!    wrap (no desborda). Si la carpeta está vacía → fallback estático.
-//! 3. **Desactivar todo es de primera clase**: rutas en blanco =
-//!    apariencia original. El botón "Quitar" vacía la ruta
-//!    correspondiente en config.json (sin perder la otra).
+//! 1. **Las rutas van en el config, nunca escritas en el código**. La ruta
+//!    sale de config.json (`config.bg_image_path`, `config.bubble_image_path`,
+//!    `config.bubble_frames_path`). Si el fichero no existe o no se puede leer,
+//!    se vuelve al aspecto de siempre (obligatorio: nunca una ventana en negro
+//!    ni un cierre).
+//! 2. **Animación sin GIF**: la lista de imágenes se ordena por nombre
+//!    y se avanza con `iced::time::every` cada `1000/fps` ms. El índice da
+//!    la vuelta sin salirse. Si la carpeta está vacía, se vuelve a la
+//!    imagen fija.
+//! 3. **Apagarlo del todo es normal**: rutas en blanco = aspecto original. El
+//!    botón «Quitar» vacía la ruta que toque en config.json (sin tocar la otra).
 //!
-//! ## Decisión sobre carga
+//! ## Cómo se cargan las imágenes
 //!
-//! iced 0.13 `widget::image::Handle::from_path` exige una ruta que
-//! exista en disco (la app intenta leer los bytes al renderizar, no
-//! en la creación del Handle). Por eso la validación corre en este
-//! módulo ANTES de construir el Handle: si el path no existe o no
-//! es un archivo regular → `None` (el caller pinta el fallback). No
-//! se cachea el Handle porque un reload rápido en caliente (al
-//! re-elegir el mismo fichero) debe reflejarse inmediatamente.
+//! En iced 0.13, `widget::image::Handle::from_path` pide una ruta que exista
+//! en el disco (los bytes se leen al dibujar, no al crear el Handle). Por eso
+//! se comprueba aquí ANTES de crear el Handle: si la ruta no existe o no es un
+//! fichero normal → `None` (quien pinta pone el aspecto de siempre). El Handle
+//! no se guarda en memoria porque hay que poder recargar en caliente (elegir
+//! otra vez el mismo fichero tiene que verse al momento).
 
 use std::collections::HashSet;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-/// Extensiones aceptadas para imágenes (en minúsculas, sin el punto).
-/// Coincide con las capacidades del crate `image` 0.25 (PNG, JPEG,
-/// BMP, GIF, WebP, TIFF, …). Lo que iced 0.13 puede decodificar
-/// depende de las features del crate `image`; la feature `image`
-/// de iced activa `image/default`, que incluye los codecs comunes.
+/// Extensiones que se aceptan para imágenes (en minúsculas, sin el punto).
+/// Son las que entiende el crate `image` 0.25 (PNG, JPEG, BMP, GIF, WebP,
+/// TIFF…). Lo que iced 0.13 puede decodificar depende de las opciones del
+/// crate `image`; la opción `image` de iced activa `image/default`, que trae
+/// los formatos habituales.
 const SUPPORTED_EXTS: &[&str] = &["png", "jpg", "jpeg", "bmp", "gif", "webp", "tiff"];
 
 /// ¿La extensión del fichero está en `SUPPORTED_EXTS`?
-/// Comparación en minúsculas; sin extensión → falso.
+/// Se compara en minúsculas; sin extensión → falso.
 pub fn is_supported_extension(path: &Path) -> bool {
     path.extension()
         .and_then(|s| s.to_str())
@@ -55,59 +52,52 @@ pub fn is_supported_extension(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// ¿La ruta es utilizable como imagen de fondo / sprite?
+/// ¿La ruta sirve como imagen de fondo o fija?
 ///
-/// Reglas (todas requeridas para que el widget iced no falle):
-/// - El path existe y es un archivo regular (no un directorio).
+/// Tiene que cumplir todo esto para que el widget de iced no falle:
+/// - La ruta existe y es un fichero normal (no una carpeta).
 /// - La extensión está en `SUPPORTED_EXTS`.
 ///
-/// Esto NO decodifica el fichero (lo decodifica iced al dibujar);
-/// el coste de un check adicional por frame es despreciable porque
-/// solo se llama al cambiar la ruta en Ajustes o al construir el
-/// `Loaded::current_frame` cada vez que se recarga.
+/// Esto NO abre el fichero (eso lo hace iced al dibujar); comprobar una vez
+/// más por imagen sale casi gratis porque solo se llama al cambiar la ruta en
+/// Ajustes o al montar `Loaded::current_frame` cada vez que se recarga.
 pub fn is_loadable(path: &Path) -> bool {
     path.is_file() && is_supported_extension(path)
 }
 
-/// Resuelve la ruta almacenada en config:
+/// Resuelve la ruta guardada en el config:
 ///
-/// - `None` o vacía / solo espacios → `None` (sin imagen).
-/// - Trim + accesibilidad: si la ruta existe y tiene extensión
-///   soportada, se devuelve normalizada (`canonicalize` cuando es
-///   posible; cae a la ruta original si canonicalize falla por
-///   permisos o por tratarse de una ruta recién escrita por el
-///   diálogo de archivo antes de que el FS refresque).
+/// - `None`, vacía o solo espacios → `None` (sin imagen).
+/// - Si la ruta existe y tiene extensión aceptada, se devuelve limpia
+///   (`canonicalize` cuando se puede; si falla por permisos o porque el
+///   diálogo de archivos acaba de escribirla, se devuelve la original).
 ///
-/// Devolver `None` siempre significa "fallback al render original".
+/// Devolver `None` siempre significa "se pinta el aspecto de siempre".
 pub fn resolve_static(path: Option<&str>) -> Option<PathBuf> {
     let trimmed = path.map(str::trim).filter(|s| !s.is_empty())?;
     let p = PathBuf::from(trimmed);
     if !is_loadable(&p) {
         return None;
     }
-    // canonicalize falla si la ruta no existe (en ese caso `is_loadable`
-    // ya habría devuelto false), pero también si hay un problema de
-    // permisos o si el path es muy largo en Windows. La ruta original
-    // sigue siendo utilizable por iced: la canonicalización es solo
-    // cosmética para el log.
+    // `canonicalize` falla si la ruta no existe (ahí `is_loadable` ya habría
+    // dicho que no), pero también con problemas de permisos o con rutas muy
+    // largas en Windows. La original le vale a iced igual: limpiarla es solo
+    // para que el log quede bonito.
     Some(std::fs::canonicalize(&p).unwrap_or(p))
 }
 
-/// Lista los frames de una carpeta, ordenados alfabéticamente.
+/// Lista las imágenes de una carpeta, ordenadas por nombre.
 ///
-/// - `None` o vacía → `None` (sin animación; el caller pinta sprite estático).
-/// - Directorio inexistente → `None`.
-/// - Directorio vacío o sin extensiones soportadas → `None`.
-/// - Si hay al menos un frame válido → `Some(vec)` con las rutas en orden.
+/// - `None` o vacía → `None` (sin animación; quien pinta usa la imagen fija).
+/// - Carpeta que no existe → `None`.
+/// - Carpeta vacía o sin extensiones aceptadas → `None`.
+/// - Con al menos una imagen válida → `Some(vec)` con las rutas en orden.
 ///
-/// Se filtran: subdirectorios, ficheros sin extensión soportada, y
-/// entradas que fallen el predicado `is_loadable` (por ejemplo,
-/// enlaces simbólicos rotos). El orden es el de `read_dir` post-sort,
-/// que es estable y case-insensitive en Windows (NTFS preserva el
-/// orden de inserción del directorio; aquí ordenamos explícitamente
-/// por `to_string_lossy` para que "frame_2.png" vaya detrás de
-/// "frame_10.png" en lexicografía ASCII pura — se asume que los
-/// nombres siguen el patrón del usuario).
+/// Se descartan carpetas, ficheros sin extensión aceptada y entradas que fallen
+/// `is_loadable` (por ejemplo enlaces rotos). El orden es de menor a mayor
+/// nombre con `to_string_lossy`: "frame_10.png" va antes que "frame_2.png"
+/// (orden de texto puro); se da por hecho que el usuario nombra los ficheros
+/// con ceros a la izquierda.
 pub fn resolve_frames(dir: Option<&str>) -> Option<Vec<PathBuf>> {
     let trimmed = dir.map(str::trim).filter(|s| !s.is_empty())?;
     let p = PathBuf::from(trimmed);
@@ -138,38 +128,36 @@ pub fn resolve_frames(dir: Option<&str>) -> Option<Vec<PathBuf>> {
     Some(frames)
 }
 
-/// Avanza el índice de frame N frames más (1 por convención del caller) y
-/// devuelve el nuevo índice con wrap. Saturación segura: si `frames_len`
-/// es 0 → 0; cualquier `current` fuera de rango se normaliza a 0 antes
-/// de avanzar. Función pura (sin estado) para que los tests la cubran
-/// sin un runtime de iced.
+/// Avanza el índice de imagen N puestos (1 en el uso normal) y devuelve el
+/// nuevo, dando la vuelta. Si `frames_len` es 0 → 0; un `current` fuera de
+/// rango se lleva a 0 antes de avanzar. Función suelta (sin estado) para
+/// poder probarla sin arrancar iced.
 pub fn next_frame_index(current: usize, frames_len: usize) -> usize {
     if frames_len == 0 {
         return 0;
     }
     let cur = current.min(frames_len - 1);
-    // saturating_add: si por algún motivo `current` es `usize::MAX`, no
-    // desborda; sumamos 1 módulo frames_len.
+    // `saturating_add`: si `current` fuera `usize::MAX`, no se desborda;
+    // se suma 1 y se da la vuelta con el módulo.
     (cur + 1) % frames_len
 }
 
-/// FPS por defecto para la animación de la burbuja. Suficientemente
-/// rápido para que un sprite se sienta "vivo" pero no consume CPU
-/// (~16 ms/tick → ~60 Hz). El usuario puede bajarlo (1..=30).
+/// Imágenes por segundo por defecto para la animación. Rápido para que la
+/// imagen se sienta viva sin gastar CPU (~16 ms por vuelta → ~60 Hz). El
+/// usuario puede bajarlo (1..=30).
 pub const DEFAULT_BUBBLE_FPS: u8 = 12;
 
-/// FPS tope aceptado. Por encima de esto el sprite se vuelve
-/// inmanejable en pantallas estándar y el coste de CPU/IO del Poll
-/// no compensa. 30 fps es el techo de sprites 2D clásicos (consola).
+/// Imágenes por segundo máximas. Por encima, la animación se vuelve
+/// inmanejable en pantallas normales y el gasto de CPU y disco en el `Poll` no
+/// compensa. 30 es el techo clásico de los sprites 2D.
 pub const MAX_BUBBLE_FPS: u8 = 30;
 
-/// FPS mínimo aceptado. Por debajo de 1 la animación es
-/// imperceptible; un valor de 0 rompería la división de
-/// `interval_from_fps`. Se usa 1 como suelo.
+/// Mínimo aceptado. Por debajo de 1 no se nota la animación; un 0 rompería la
+/// división de `interval_from_fps`. Se usa 1 como suelo.
 pub const MIN_BUBBLE_FPS: u8 = 1;
 
-/// Valida y normaliza un FPS elegido por el usuario. Fuera de rango
-/// cae al DEFAULT. Función pura testeable.
+/// Comprueba y ajusta las imágenes por segundo que elige el usuario. Si se sale
+/// del rango, se usa el valor por defecto. Función suelta, se puede probar.
 pub fn clamp_fps(value: u8) -> u8 {
     if value < MIN_BUBBLE_FPS || value > MAX_BUBBLE_FPS {
         DEFAULT_BUBBLE_FPS
@@ -178,23 +166,23 @@ pub fn clamp_fps(value: u8) -> u8 {
     }
 }
 
-/// Calcula el intervalo entre ticks a partir de un FPS validado.
-/// Función pura; 0 frames por segundo cae al default (caso
-/// patológico: el caller debería haber llamado a `clamp_fps` antes).
+/// Calcula cuánto hay que esperar entre vueltas a partir de un valor ya
+/// validado. Función suelta; 0 imágenes por segundo cae al valor por defecto
+/// (caso raro: quien llama debería haber pasado antes por `clamp_fps`).
 pub fn interval_from_fps(fps: u8) -> std::time::Duration {
     let fps = clamp_fps(fps).max(1);
     std::time::Duration::from_millis(1_000_u64 / u64::from(fps))
 }
 
-/// ── GIF animado de un solo archivo (sprint final) ─────────────────────────
+/// ── GIF animado de un solo fichero (último sprint) ────────────────────────
 ///
-/// La burbuja acepta UN archivo: PNG/JPG/WebP estático o GIF animado.
-/// iced 0.13 solo pinta el primer frame del GIF, así que los frames se
-/// decodifican aquí con el crate `image` y se sirven como RGBA en memoria
-/// (la animación avanza con el mismo `AnimationTick` que las carpetas
-/// legacy). Un GIF corrupto o de un solo frame → `None`/fallback estático.
+/// La burbuja acepta UN fichero: PNG/JPG/WebP fijo o GIF animado. iced 0.13
+/// solo pinta el primer fotograma del GIF, así que aquí se sacan todos con el
+/// crate `image` y se guardan como RGBA en memoria (la animación avanza con el
+/// mismo `AnimationTick` que las carpetas de siempre). Un GIF roto o de un
+/// solo fotograma → `None`/imagen fija.
 
-/// ¿Es ruta a un `.gif`? Solo extensión (sin I/O).
+/// ¿La ruta es un `.gif`? Solo mira la extensión (no abre el fichero).
 pub fn is_gif_path(path: &std::path::Path) -> bool {
     path.extension()
         .and_then(|s| s.to_str())
@@ -202,7 +190,7 @@ pub fn is_gif_path(path: &std::path::Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Un frame GIF decodificado: dimensiones + píxeles RGBA + retardo en ms.
+/// Un fotograma de GIF ya decodificado: tamaño, píxeles RGBA y espera en ms.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GifFrame {
     pub width: u32,
@@ -211,10 +199,10 @@ pub struct GifFrame {
     pub delay_ms: u64,
 }
 
-/// Decodifica TODOS los frames de un GIF a RGBA en memoria.
-/// `None` si el fichero no existe, no es GIF o está corrupto.
-/// Capado a 256 frames / 512×512 por frame para no reventar la RAM con
-/// un GIF patológico (un sprite de burbuja no necesita más).
+/// Saca TODOS los fotogramas de un GIF como RGBA en memoria.
+/// `None` si el fichero no existe, no es un GIF o está roto.
+/// Tope de 256 fotogramas y 512×512 por fotograma para no reventar la memoria
+/// con un GIF absurdo (una burbuja no necesita más).
 pub fn decode_gif_frames(path: &std::path::Path) -> Option<Vec<GifFrame>> {
     use image::AnimationDecoder;
     if !path.is_file() || !is_gif_path(path) {
@@ -248,50 +236,49 @@ pub fn decode_gif_frames(path: &std::path::Path) -> Option<Vec<GifFrame>> {
     Some(out)
 }
 
-/// Mensaje del Poll que se traduce a `Message::AnimationTick` (en
-/// `app.rs`) cuando hay animación activa. Existe como `pub` para que
-/// el módulo que arma la subscription (`app::WhisprApp::subscription`)
-/// pueda armar el `map` con esta misma firma.
+/// Mensaje del `Poll` que se traduce a `Message::AnimationTick` (en `app.rs`)
+/// cuando hay animación. Es `pub` para que el módulo que arma la suscripción
+/// (`app::WhisprApp::subscription`) pueda montar el `map` con esta misma forma.
 pub fn tick_to_instant(_instant: std::time::Instant) -> std::time::Instant {
-    // Wrapper trivial; el Poll real vive en `app.rs` y solo necesita
-    // poder hacer `.map(Message::AnimationTick)` sobre la subscription
-    // de tiempo. Mantener la indirección aquí permite evolucionar la
-    // lógica del tick (p. ej. detectar stalls) sin tocar el message
-    // dispatch de la UI.
+    // Envoltorio sencillo; el `Poll` de verdad vive en `app.rs` y solo
+    // necesita poder hacer `.map(Message::AnimationTick)` sobre la suscripción
+    // de tiempo. Dejar el paso por aquí permite cambiar lo del tick (por
+    // ejemplo detectar atascos) sin tocar el reparto de mensajes de la interfaz.
     std::time::Instant::now()
 }
 
-/// ── Persistencia de assets (H4 del QA 24/09/2026) ─────────────────────────
+/// ── Guardar los ficheros del usuario (H4 del QA 24/09/2026) ───────────────
 ///
-/// El usuario elegía el fondo o los frames desde `Descargas` y el config
+/// El usuario elegía el fondo o las imágenes desde `Descargas` y el config
 /// guardaba ESA ruta: al vaciar Descargas, la personalización desaparecía sin
 /// avisar. Ahora `import_asset` / `import_frames_dir` copian el material a
-/// `%APPDATA%/whispr-open/assets/` y el config guarda la copia, así que sobrevive
-/// a limpiezas de carpetas temporales.
+/// `%APPDATA%/whispr-open/assets/` y el config guarda la copia, así que aguanta
+/// que se limpien carpetas temporales.
 ///
-/// Compatibilidad: una config vieja con una ruta externa que SIGUE existiendo
-/// se respeta tal cual (no se migra a la fuerza); solo se limpia del config
+/// Compatibilidad: un config viejo con una ruta de fuera que SIGUE existiendo
+/// se respeta tal cual (no se cambia a la fuerza); solo se borra del config
 /// cuando apunta a algo que ya no está (`sanitize_config_assets`).
 
-/// Carpeta de datos de la app (`%APPDATA%/whispr-open/`): la misma que usa el
-/// log (`crate::log::log_dir`), para que un backup de esa carpeta lo incluya todo.
+/// Carpeta de datos de la app (`%APPDATA%/whispr-open/`): la misma del log
+/// (`crate::log::log_dir`), para que una copia de esa carpeta lo tenga todo.
 pub fn app_data_dir() -> PathBuf {
     crate::log::log_dir()
 }
 
-/// Carpeta donde la app guarda copia de los assets elegidos por el usuario:
+/// Carpeta donde la app guarda copia de los ficheros elegidos:
 /// `%APPDATA%/whispr-open/assets/`.
 pub fn assets_dir() -> PathBuf {
     app_data_dir().join("assets")
 }
 
-/// Rutas ya avisadas como desaparecidas: el render valida la ruta en cada
-/// frame (~60 Hz), así que el aviso se emite UNA vez por ruta y no inunda el log.
+/// Rutas de las que ya se avisó que faltaban: la ruta se comprueba en cada
+/// vuelta del dibujo (~60 Hz), así que el aviso sale UNA vez por ruta y no
+/// llena el log.
 static WARNED_MISSING: Mutex<Option<HashSet<String>>> = Mutex::new(None);
 
-/// Registra «asset desaparecido, cayendo al tema» una sola vez por
-/// `kind`+`path`. Devuelve `true` si esta llamada fue la que avisó (los tests
-/// lo usan para comprobar la deduplicación).
+/// Apunta «falta el fichero, se pinta el tema» una sola vez por `kind`+`path`.
+/// Devuelve `true` si el aviso lo dio esta llamada (los tests lo usan para
+/// comprobar que no se repite).
 pub fn warn_missing_once(kind: &str, path: &str) -> bool {
     let key = format!("{kind}|{path}");
     let mut guard = WARNED_MISSING.lock().unwrap_or_else(|e| e.into_inner());
@@ -307,9 +294,9 @@ pub fn warn_missing_once(kind: &str, path: &str) -> bool {
     true
 }
 
-/// Como [`resolve_static`] pero avisa (una vez por ruta) cuando la ruta
-/// configurada ya no sirve. Es lo que deben usar los getters de la UI: el
-/// fallback deja de ser silencioso.
+/// Como [`resolve_static`] pero avisa (una vez por ruta) cuando la ruta del
+/// config ya no sirve. Es lo que tienen que usar los getters de la interfaz:
+/// así el cambio no pasa desapercibido.
 pub fn resolve_static_or_warn(kind: &str, path: Option<&str>) -> Option<PathBuf> {
     let resolved = resolve_static(path);
     if resolved.is_none() {
@@ -320,8 +307,8 @@ pub fn resolve_static_or_warn(kind: &str, path: Option<&str>) -> Option<PathBuf>
     resolved
 }
 
-/// Como [`resolve_frames`] pero avisa (una vez por ruta) cuando la carpeta
-/// configurada ya no existe o se quedó sin imágenes.
+/// Como [`resolve_frames`] pero avisa (una vez por ruta) cuando la carpeta del
+/// config ya no existe o se quedó sin imágenes.
 pub fn resolve_frames_or_warn(kind: &str, path: Option<&str>) -> Option<Vec<PathBuf>> {
     let resolved = resolve_frames(path);
     if resolved.is_none() {
@@ -332,12 +319,12 @@ pub fn resolve_frames_or_warn(kind: &str, path: Option<&str>) -> Option<Vec<Path
     resolved
 }
 
-/// Comprueba una ruta de imagen configurada:
+/// Comprueba una ruta de imagen del config:
 ///
-/// - Ruta vacía o en blanco → `None` (desactivado a propósito, sin aviso).
-/// - Ruta utilizable → `Some(ruta original, sin tocar)`.
-/// - Ruta que ya no existe / formato no soportado → aviso al log + `None`
-///   (el caller la borra del config: no se deja una ruta muerta).
+/// - Vacía o en blanco → `None` (apagada a propósito, sin aviso).
+/// - Ruta que sirve → `Some(ruta original, sin tocar)`.
+/// - Ruta que ya no existe o formato no aceptado → aviso en el log + `None`
+///   (quien llama la borra del config: no se deja una ruta muerta).
 pub fn sanitize_static_path(kind: &str, path: Option<&str>) -> Option<String> {
     let trimmed = path.map(str::trim).filter(|s| !s.is_empty())?;
     if is_loadable(Path::new(trimmed)) {
@@ -347,8 +334,8 @@ pub fn sanitize_static_path(kind: &str, path: Option<&str>) -> Option<String> {
     None
 }
 
-/// Igual que [`sanitize_static_path`] para la carpeta de frames: se mantiene
-/// solo si el directorio existe y contiene al menos una imagen soportada.
+/// Lo mismo que [`sanitize_static_path`] con la carpeta de imágenes: se queda
+/// solo si la carpeta existe y tiene al menos una imagen aceptada.
 pub fn sanitize_frames_path(kind: &str, path: Option<&str>) -> Option<String> {
     let trimmed = path.map(str::trim).filter(|s| !s.is_empty())?;
     if resolve_frames(Some(trimmed)).is_some() {
@@ -358,12 +345,12 @@ pub fn sanitize_frames_path(kind: &str, path: Option<&str>) -> Option<String> {
     None
 }
 
-/// Sanea las tres rutas de personalización de `config` (H4). Devuelve `true`
-/// si algo cambió — el caller decide persistir el config.
+/// Limpia las tres rutas de personalización de `config` (H4). Devuelve `true`
+/// si cambió algo — quien llama decide si guardar el config.
 ///
-/// No migra rutas que siguen funcionando (compatibilidad con configs viejas):
-/// solo quita las que apuntan a ficheros/carpetas inexistentes, después de
-/// decirlo en el log.
+/// No mueve las rutas que siguen funcionando (compatibilidad con configs
+/// viejas): solo quita las que apuntan a ficheros o carpetas que no están,
+/// después de decirlo en el log.
 pub fn sanitize_config_assets(config: &mut crate::config::Config) -> bool {
     let mut changed = false;
 
@@ -395,9 +382,9 @@ pub fn sanitize_config_assets(config: &mut crate::config::Config) -> bool {
     changed
 }
 
-/// Nombre de fichero para la copia de un asset: componente saneado + huella
-/// corta de la ruta de origen, para que dos ficheros homónimos de carpetas
-/// distintas no se pisen.
+/// Nombre para la copia de un fichero: la parte bonita de la ruta más una
+/// huella corta de la ruta de origen, para que dos ficheros con el mismo
+/// nombre en carpetas distintas no se pisen.
 fn asset_file_name(src: &Path) -> Option<String> {
     let stem = src.file_stem()?.to_string_lossy().into_owned();
     let ext = src.extension()?.to_string_lossy().to_ascii_lowercase();
@@ -406,9 +393,9 @@ fn asset_file_name(src: &Path) -> Option<String> {
     Some(format!("{stem}-{fingerprint}.{ext}"))
 }
 
-/// Nombre de carpeta para la copia de una secuencia de frames: nombre saneado
-/// + huella de la lista de frames (contar distintos juegos de frames de una
-/// misma carpeta no debe pisarse).
+/// Nombre para la copia de una secuencia de imágenes: nombre limpio más la
+/// huella de la lista, para que dos juegos distintos de la misma carpeta no
+/// se pisen.
 fn frames_dir_name(src: &Path, frames: &[PathBuf]) -> Option<String> {
     let stem = sanitize_component(&src.file_name()?.to_string_lossy());
     let mut parts: Vec<String> = vec![src.to_string_lossy().into_owned()];
@@ -423,8 +410,8 @@ fn frames_dir_name(src: &Path, frames: &[PathBuf]) -> Option<String> {
     Some(format!("{stem}-{fingerprint}"))
 }
 
-/// Componente de ruta seguro (sin separadores ni caracteres de control): solo
-/// alfanuméricos, `-`, `_` y `.`; el resto pasa a `_`. Vacío → `asset`.
+/// Trozo de ruta seguro (sin separadores ni caracteres de control): solo
+/// letras, números, `-`, `_` y `.`; lo demás pasa a `_`. Si queda vacío → `asset`.
 fn sanitize_component(raw: &str) -> String {
     let cleaned: String = raw
         .trim()
@@ -447,7 +434,7 @@ fn sanitize_component(raw: &str) -> String {
 }
 
 /// Huella estable de 8 dígitos hexadecimales de los datos dados. `DefaultHasher`
-/// no es criptográfico: aquí solo sirve para no colisionar nombres de copia.
+/// no es criptográfico: aquí solo sirve para que no choquen nombres de copia.
 fn short_fingerprint(parts: &[&str]) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for p in parts {
@@ -457,19 +444,19 @@ fn short_fingerprint(parts: &[&str]) -> String {
     format!("{:08x}", (hasher.finish() & 0xffff_ffff) as u32)
 }
 
-/// ¿`path` vive dentro del directorio `dir`? Ambos se comparan
-/// canonicalizados: en Windows `canonicalize` devuelve el prefijo `\\?\`, que
-/// rompería un `starts_with` contra la ruta escrita a mano.
+/// ¿`path` está dentro de la carpeta `dir`? Se comparan las dos limpias
+/// (`canonicalize`): en Windows eso añade el prefijo `\\?\`, que rompería un
+/// `starts_with` contra la ruta escrita a mano.
 fn path_inside(dir: &Path, path: &Path) -> bool {
     let dir_abs = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
     path.starts_with(&dir_abs)
 }
 
-/// Copia `src` (una imagen utilizable) a `base` y devuelve la copia.
-/// `None` si `src` no es una imagen soportada o si la copia falla.
+/// Copia `src` (una imagen que sirve) a `base` y devuelve la copia.
+/// `None` si `src` no es una imagen aceptada o si la copia falla.
 ///
-/// Si `src` YA vive dentro de `base` se devuelve tal cual (re-elegir la copia
-/// no genera copias anidadas).
+/// Si `src` YA está dentro de `base`, se devuelve tal cual (elegir otra vez la
+/// copia no crea copias dentro de copias).
 pub fn import_asset_into(base: &Path, src: &Path) -> Option<PathBuf> {
     if !is_loadable(src) {
         return None;
@@ -487,14 +474,14 @@ pub fn import_asset_into(base: &Path, src: &Path) -> Option<PathBuf> {
 }
 
 /// Copia `src` a `%APPDATA%/whispr-open/assets/` y devuelve la copia (la ruta
-/// que debe quedar en config).
+/// que tiene que quedar en el config).
 pub fn import_asset(src: &Path) -> Option<PathBuf> {
     import_asset_into(&assets_dir(), src)
 }
 
-/// Copia la carpeta de frames `src` a `<base>/frames/<nombre>-<huella>` y
-/// devuelve la copia. `None` si `src` no es una carpeta con imágenes
-/// soportadas o si la copia falla.
+/// Copia la carpeta de imágenes `src` a `<base>/frames/<nombre>-<huella>` y
+/// devuelve la copia. `None` si `src` no es una carpeta con imágenes aceptadas
+/// o si la copia falla.
 pub fn import_frames_dir_into(base: &Path, src: &Path) -> Option<PathBuf> {
     let frames = resolve_frames(Some(&src.to_string_lossy()))?;
     let src_abs = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
@@ -513,8 +500,8 @@ pub fn import_frames_dir_into(base: &Path, src: &Path) -> Option<PathBuf> {
     Some(dest)
 }
 
-/// Copia la carpeta de frames `src` a `%APPDATA%/whispr-open/assets/frames/`
-/// y devuelve la copia (la ruta que debe quedar en config).
+/// Copia la carpeta de imágenes `src` a `%APPDATA%/whispr-open/assets/frames/`
+/// y devuelve la copia (la ruta que tiene que quedar en el config).
 pub fn import_frames_dir(src: &Path) -> Option<PathBuf> {
     import_frames_dir_into(&assets_dir(), src)
 }
@@ -524,9 +511,9 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// Crea un fichero temporal con una extensión concreta y devuelve
-    /// su ruta. `None` si el directorio temporal no se pudo crear.
-    /// Se borra al final del test (Drop sobre `TempPath`).
+    /// Crea un fichero temporal con una extensión concreta y devuelve su ruta.
+    /// `None` si no se pudo crear la carpeta temporal. Se borra al acabar el
+    /// test (Drop de `TempPath`).
     struct TempPath(PathBuf);
 
     impl Drop for TempPath {
@@ -542,9 +529,9 @@ mod tests {
         let mut p = dir;
         p.push(format!("{name}.{ext}"));
         let mut f = std::fs::File::create(&p).ok()?;
-        // 1 byte de "imagen": para el contrato de is_supported_extension
-        // basta con la extensión; iced no valida hasta que dibuja, y la
-        // ruta de fallback está cubierta por separado.
+        // 1 byte de "imagen": para `is_supported_extension` basta la
+        // extensión; iced no comprueba nada hasta dibujar, y el caso sin
+        // fichero está cubierto aparte.
         f.write_all(b"\x89PNG\r\n\x1a\n").ok()?;
         Some(TempPath(p))
     }
@@ -580,7 +567,7 @@ mod tests {
 
     #[test]
     fn resolve_static_none_y_vacia_y_blanco_son_none() {
-        // Requisito del producto: rutas vacías = sin imagen = fallback.
+        // Lo que pide el producto: ruta vacía = sin imagen = aspecto de siempre.
         assert_eq!(resolve_static(None), None);
         assert_eq!(resolve_static(Some("")), None);
         assert_eq!(resolve_static(Some("   ")), None);
@@ -588,7 +575,7 @@ mod tests {
 
     #[test]
     fn resolve_static_inexistente_es_none() {
-        // Ruta que no existe (aunque tenga extensión soportada): fallback.
+        // Ruta que no existe (aunque la extensión sea buena): aspecto de siempre.
         assert_eq!(
             resolve_static(Some("C:\\nope\\missing.png")),
             None
@@ -629,7 +616,7 @@ mod tests {
 
     #[test]
     fn resolve_frames_vacio_o_sin_extensiones() {
-        // Directorio vacío.
+        // Carpeta vacía.
         let dir = std::env::temp_dir().join(format!(
             "whispr_test_empty_{}",
             std::process::id()
@@ -639,7 +626,7 @@ mod tests {
         assert_eq!(res, None);
         std::fs::remove_dir(&dir).ok();
 
-        // Directorio con un .txt → no se cuenta como frame.
+        // Carpeta con un .txt → no cuenta como imagen.
         let dir = std::env::temp_dir().join(format!(
             "whispr_test_notext_{}",
             std::process::id()
@@ -663,7 +650,7 @@ mod tests {
         }
         let res = resolve_frames(Some(&dir.to_string_lossy()))
             .expect("al menos un frame");
-        // Los .txt se filtran; el resto, ordenados.
+        // Los .txt se descartan; el resto, ordenado.
         assert_eq!(res.len(), 4);
         let nombres: Vec<String> = res
             .iter()
@@ -677,22 +664,22 @@ mod tests {
 
     #[test]
     fn next_frame_index_envuelve_y_normaliza() {
-        // Wrap básico.
+        // Vuelta básica.
         assert_eq!(next_frame_index(0, 3), 1);
         assert_eq!(next_frame_index(1, 3), 2);
         assert_eq!(next_frame_index(2, 3), 0, "último → primero");
-        // frames_len=0 → 0 (caso degenerado).
+        // frames_len=0 → 0 (caso raro).
         assert_eq!(next_frame_index(99, 0), 0);
-        // current fuera de rango (más allá del último) se normaliza al
-        // último antes de avanzar: 100 con 3 frames se trata como 2.
+        // `current` fuera de rango (más allá del último) se lleva al último
+        // antes de avanzar: 100 con 3 imágenes cuenta como 2.
         assert_eq!(
             next_frame_index(100, 3),
             0,
             "100 con 3 frames normaliza a 2 y avanza a 0"
         );
-        // 1 frame: oscila entre 0 y 0.
+        // 1 imagen: se queda en 0.
         assert_eq!(next_frame_index(0, 1), 0);
-        // saturating_add: usize::MAX no debe hacer panic.
+        // `saturating_add`: `usize::MAX` no puede dar pánico.
         assert_eq!(next_frame_index(usize::MAX, 2), 0);
     }
 
@@ -702,7 +689,7 @@ mod tests {
         assert_eq!(clamp_fps(1), 1);
         assert_eq!(clamp_fps(12), 12);
         assert_eq!(clamp_fps(30), 30);
-        // Fuera del rango: cae al default.
+        // Fuera del rango: se usa el valor por defecto.
         assert_eq!(clamp_fps(0), DEFAULT_BUBBLE_FPS);
         assert_eq!(clamp_fps(31), DEFAULT_BUBBLE_FPS);
         assert_eq!(clamp_fps(255), DEFAULT_BUBBLE_FPS);
@@ -710,12 +697,12 @@ mod tests {
 
     #[test]
     fn interval_from_fps_calcula_y_redondea() {
-        // 12 fps → 83 ms (1000/12 ≈ 83.33).
+        // 12 fps → 83 ms (1000/12 ≈ 83,33).
         assert_eq!(
             interval_from_fps(12),
             std::time::Duration::from_millis(83)
         );
-        // 30 fps → 33 ms (1000/30 ≈ 33.33).
+        // 30 fps → 33 ms (1000/30 ≈ 33,33).
         assert_eq!(
             interval_from_fps(30),
             std::time::Duration::from_millis(33)
@@ -725,7 +712,7 @@ mod tests {
             interval_from_fps(1),
             std::time::Duration::from_millis(1000)
         );
-        // 0 → default (12 fps → 83 ms). Cubre el camino de "no se validó".
+        // 0 → valor por defecto (12 fps → 83 ms). Cubre el caso «no se validó».
         assert_eq!(
             interval_from_fps(0),
             std::time::Duration::from_millis(83)
@@ -734,16 +721,15 @@ mod tests {
 
     #[test]
     fn defaults_consistentes() {
-        // El default sensato debe estar dentro del rango válido; si
-        // alguien lo sube de 30 el test cae sin necesidad de tocar el
-        // rango.
+        // El valor por defecto tiene que estar dentro del rango bueno; si
+        // alguien lo sube de 30, el test falla sin tocar el rango.
         assert!(DEFAULT_BUBBLE_FPS >= MIN_BUBBLE_FPS);
         assert!(DEFAULT_BUBBLE_FPS <= MAX_BUBBLE_FPS);
     }
 
-    // ── H4: persistencia de assets y aviso de asset desaparecido ──────────
+    // ── H4: guardar los ficheros y avisar cuando desaparecen ────────────────
 
-    /// Directorio temporal propio de cada test (se borra al salir).
+    /// Carpeta temporal propia de cada test (se borra al salir).
     struct TempDir(PathBuf);
 
     impl TempDir {
@@ -783,7 +769,7 @@ mod tests {
         let dir = assets_dir();
         assert!(dir.to_string_lossy().contains("whispr-open"));
         assert!(dir.to_string_lossy().contains("assets"));
-        // Misma carpeta raíz que el log: un backup de %APPDATA%/whispr-open
+        // La misma carpeta raíz que el log: una copia de %APPDATA%/whispr-open
         // se lleva config, log y assets.
         assert!(dir.starts_with(app_data_dir()));
         assert_eq!(app_data_dir(), crate::log::log_dir());
@@ -804,13 +790,13 @@ mod tests {
             std::fs::read(&src).unwrap(),
             "contenido idéntico al original"
         );
-        // El nombre pierde espacios, paréntesis y mayúsculas de extensión.
+        // El nombre pierde espacios, paréntesis y mayúsculas de la extensión.
         let name = dest.file_name().unwrap().to_string_lossy().into_owned();
         assert!(!name.contains(' '), "nombre saneado: {name}");
         assert!(!name.contains('('), "nombre saneado: {name}");
         assert!(name.ends_with(".png"), "extensión normalizada: {name}");
 
-        // Re-elegir el mismo fichero no genera una copia nueva (mismo destino).
+        // Elegir otra vez el mismo fichero no crea una copia nueva (mismo destino).
         let again = import_asset_into(&base.0, &src).expect("copia repetida");
         assert_eq!(dest, again, "el destino es estable");
         let copias = std::fs::read_dir(&base.0)
@@ -855,17 +841,17 @@ mod tests {
         for name in ["a.png", "b.png", "c.png"] {
             write_png(&frames.join(name));
         }
-        // Un fichero que NO es imagen: no debe copiarse como frame.
+        // Un fichero que NO es imagen: no se copia como fotograma.
         std::fs::write(frames.join("leeme.txt"), b"txt").unwrap();
 
         let dest = import_frames_dir_into(&base.0, &frames).expect("copia");
         assert!(dest.starts_with(base.0.join("frames")), "vive en frames/: {dest:?}");
-        // La copia es una carpeta de frames utilizable por el render.
+        // La copia es una carpeta de imágenes que el dibujo puede usar.
         let resueltos = resolve_frames(Some(&dest.to_string_lossy())).expect("frames copiados");
         assert_eq!(resueltos.len(), 3, "solo imágenes soportadas");
         // El .txt no se copia.
         assert!(!dest.join("leeme.txt").exists());
-        // Re-elegir la copia no anida otra carpeta: devuelve la que ya existe.
+        // Elegir otra vez la copia no crea otra carpeta: devuelve la que ya hay.
         let again = import_frames_dir_into(&base.0, &dest).expect("ruta ya copiada");
         assert_eq!(
             std::fs::canonicalize(&dest).unwrap(),
@@ -886,18 +872,18 @@ mod tests {
         write_png(&vivo);
         let viva_s = vivo.to_string_lossy().into_owned();
 
-        // Ruta que existe: se devuelve tal cual (sin migrar a la fuerza).
+        // Ruta que existe: se devuelve tal cual (no se cambia a la fuerza).
         assert_eq!(
             sanitize_static_path("fondo de ventana", Some(&viva_s)),
             Some(viva_s.clone())
         );
-        // Vacía / en blanco: desactivado a propósito, sin ruido.
+        // Vacía o en blanco: apagada a propósito, sin ruido.
         assert_eq!(sanitize_static_path("fondo de ventana", Some("   ")), None);
         assert_eq!(sanitize_static_path("fondo de ventana", None), None);
-        // Desaparecida: se limpia.
+        // Ya no está: se borra.
         let muerta = dir.join("borrado.png").to_string_lossy().into_owned();
         assert_eq!(sanitize_static_path("fondo de ventana", Some(&muerta)), None);
-        // Y con extensión no soportada, también.
+        // Y con extensión no aceptada, también.
         let txt = dir.join("foto.txt").to_string_lossy().into_owned();
         assert_eq!(sanitize_static_path("fondo de ventana", Some(&txt)), None);
     }
@@ -924,7 +910,7 @@ mod tests {
 
     #[test]
     fn el_aviso_de_asset_desaparecido_solo_sale_una_vez_por_ruta() {
-        // Clave única por test para no chocar con el estado estático global.
+        // Clave distinta por test para no chocar con el estado compartido.
         let kind = "test-dedupe";
         let path = format!("C:\\nope\\desaparecido_{}.png", std::process::id());
         assert!(warn_missing_once(kind, &path), "el primer aviso se emite");
@@ -932,7 +918,7 @@ mod tests {
             !warn_missing_once(kind, &path),
             "el segundo ya no (el render valida ~60 veces/s)"
         );
-        // Y `resolve_*_or_warn` no resuelve, pero avisa una sola vez.
+        // `resolve_*_or_warn` no resuelve, pero avisa una sola vez.
         assert_eq!(resolve_static_or_warn(kind, Some(&path)), None);
         assert!(
             !warn_missing_once(kind, &path),
@@ -962,7 +948,7 @@ mod tests {
         assert_eq!(config.bubble_image_path, None);
         assert_eq!(config.bubble_frames_path, None);
 
-        // Un config ya sano no se toca (segunda pasada: idempotente).
+        // Un config que ya está bien no se toca (segunda pasada: igual).
         assert!(
             !sanitize_config_assets(&mut config),
             "sin cambios no hay nada que persistir"

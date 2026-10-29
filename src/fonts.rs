@@ -1,46 +1,46 @@
-//! Fuentes de la UI: **Inter** (embebida en el binario, la fuente del diseño
-//! de Figma) y una fuente emoji (Segoe UI Emoji en Windows) para que los
-//! símbolos de la interfaz (✓ ☀ ☾ ▾ ▸ ● → ✕ ⚠ ↩) no se vean como cajas vacías.
+//! Fuentes de la interfaz: **Inter** (metida en el binario, la del diseño de
+//! Figma) y una fuente de emojis (Segoe UI Emoji en Windows) para que los
+//! símbolos (✓ ☀ ☾ ▾ ▸ ● → ✕ ⚠ ↩) no salgan como cajas vacías.
 //!
-//! # Por qué Inter embebida (y no la fuente del sistema)
+//! # Por qué Inter va dentro (y no la fuente del sistema)
 //!
-//! El rediseño (`design/openwhispr-figma/`) especifica **Inter** (Regular 400,
+//! El rediseño (`design/openwhispr-figma/`) pide **Inter** (Regular 400,
 //! Medium 500, SemiBold 600). La app pedía pesos (`Weight::Medium`) sobre
-//! `Family::SansSerif`, que en Windows significa `Segoe UI`; como `Segoe UI`
-//! **no tiene variante Medium**, `cosmic-text` descartaba la familia entera y
-//! elegía una fuente arbitraria del sistema con peso 500 (a menudo serif o
-//! simbólica, sin tildes), apareciendo glifos `.notdef` (cajas `□`) en
-//! «Micrófono» o «Idioma de transcripción». Embeber Inter con sus tres pesos
-//! DA el peso pedido, el mismo en cualquier equipo, y elimina el fallback.
+//! `Family::SansSerif`, que en Windows es `Segoe UI`; como `Segoe UI` **no
+//! tiene Medium**, `cosmic-text` descartaba la familia entera y cogía una
+//! fuente cualquiera del sistema con peso 500 (a menudo con serifa o de
+//! símbolos, sin tildes), y salían cajas `□` en «Micrófono» o «Idioma de
+//! transcripción». Al meter Inter con sus tres pesos, el peso pedido sale de
+//! verdad y sale igual en cualquier equipo, sin depender de la del sistema.
 //!
-//! # Cómo se activa
+//! # Cómo se pone en marcha
 //!
-//! - `main.rs` carga los tres `.ttf` al arranque (`iced_winit::Settings.fonts`)
+//! - `main.rs` carga los tres `.ttf` al arrancar (`iced_winit::Settings.fonts`)
 //!   y fija `graphics::Settings.default_font = fonts::regular()`: TODO texto
-//!   sin `.font()` explícito (y los `pick_list`, `text_input`, `text_editor`,
-//!   menús…) sale ya en Inter Regular.
+//!   sin `.font()` propio (y los desplegables, campos de texto, editores y
+//!   menús) sale ya en Inter Regular.
 //! - Los textos que el diseño quiere en Medium/SemiBold piden
-//!   [`medium`]/[`semibold`] explícitamente.
+//!   [`medium`]/[`semibold`] a mano.
 //! - Los textos con símbolos usan `Shaping::Advanced` (ver `ui_text` en
-//!   `app.rs`): así el fallback por codepoint alcanza Segoe UI Emoji.
+//!   `app.rs`): así los emojis se buscan también en Segoe UI Emoji.
 
 use iced::font::Weight;
 use iced::Font;
 
-/// Familia de la fuente emoji por defecto (Windows: Segoe UI Emoji).
+/// Familia de la fuente de emojis por defecto (Windows: Segoe UI Emoji).
 pub const EMOJI_FAMILY: &str = "Segoe UI Emoji";
 
-/// Familia de la fuente de marca (Inter), embebida en el binario.
+/// Familia de la fuente de marca (Inter), metida en el binario.
 pub const INTER_FAMILY: &str = "Inter";
 
-/// Inter Regular (400): texto de cuerpo del diseño.
+/// Inter Regular (400): el texto de cuerpo del diseño.
 pub const INTER_REGULAR: &[u8] = include_bytes!("../assets/fonts/Inter-Regular.ttf");
 /// Inter Medium (500): rótulos, títulos de fila y acción principal.
 pub const INTER_MEDIUM: &[u8] = include_bytes!("../assets/fonts/Inter-Medium.ttf");
-/// Inter SemiBold (600): títulos de página y wordmark.
+/// Inter SemiBold (600): títulos de página y el nombre de la marca.
 pub const INTER_SEMIBOLD: &[u8] = include_bytes!("../assets/fonts/Inter-SemiBold.ttf");
 
-/// Inter Regular como [`Font`] de Iced. Es el `default_font` de la app.
+/// Inter Regular como [`Font`] de Iced. Es la fuente por defecto de la app.
 pub fn regular() -> Font {
     Font::with_name(INTER_FAMILY)
 }
@@ -61,10 +61,10 @@ pub fn semibold() -> Font {
     }
 }
 
-/// La fuente emoji como [`Font`] de Iced, para asignarla explícitamente a un
-/// texto si se necesita. El resto de la UI la usa como fallback automático
-/// (cosmic-text resuelve el glifo faltante contra esta familia). Solo es
-/// relevante con `Shaping::Advanced` (ver `ui_text`).
+/// La fuente de emojis como [`Font`] de Iced, para ponérsela a un texto si
+/// hace falta. El resto de la interfaz la usa sola cuando le falta un glifo
+/// (cosmic-text lo busca en esta familia). Solo cuenta con `Shaping::Advanced`
+/// (ver `ui_text`).
 pub fn emoji_font() -> Font {
     Font::with_name(EMOJI_FAMILY)
 }
@@ -78,14 +78,13 @@ pub fn inter_font_sources() -> Vec<std::borrow::Cow<'static, [u8]>> {
     ]
 }
 
-/// Archivos candidatos a fuente emoji, en orden de preferencia.
+/// Ficheros candidatos de fuente de emojis, por orden de preferencia.
 fn emoji_font_candidates() -> Vec<&'static str> {
     vec![
-        // Windows: Segoe UI Emoji (presente desde Windows 8; la interfaz de
-        // Silb es Windows-first).
+        // Windows: Segoe UI Emoji (está desde Windows 8; Silb es Windows-first).
         r"C:\Windows\Fonts\seguiemj.ttf",
         r"C:\Windows\Fonts\Segoe UI Emoji.ttf",
-        // Otras plataformas (desarrollo/CI): mejores aproximaciones.
+        // Otras plataformas (desarrollo y CI): lo más parecido que haya.
         "/System/Library/Fonts/Apple Color Emoji.ttc",
         "/usr/share/fonts/noto/NotoColorEmoji.ttf",
         "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
@@ -93,11 +92,12 @@ fn emoji_font_candidates() -> Vec<&'static str> {
     ]
 }
 
-/// Carga la primera fuente emoji disponible en el [`FontSystem`] de Iced.
+/// Carga la primera fuente de emojis que encuentre en el [`FontSystem`] de
+/// Iced.
 ///
-/// Devuelve la [`iced::Task`] resultante para encadenarla al arranque, o
-/// `None` si no hay ninguna fuente candidata (se avisa en el log; la UI
-/// funciona igual, pero los símbolos pueden verse como cajas).
+/// Devuelve la [`iced::Task`] para enlazarla al arranque, o `None` si no hay
+/// ninguna candidata (se avisa en el log; la interfaz funciona igual, pero los
+/// símbolos pueden salir como cajas).
 pub fn load_emoji_font() -> Option<iced::Task<Result<(), iced::font::Error>>> {
     for path in emoji_font_candidates() {
         if let Ok(bytes) = std::fs::read(path) {
@@ -117,8 +117,8 @@ pub fn load_emoji_font() -> Option<iced::Task<Result<(), iced::font::Error>>> {
     None
 }
 
-/// Inventario de símbolos que usa la UI actual (buscar en `src/`): son los
-/// glifos que deben renderizar sí o sí. Los tests lo recorren.
+/// Lista de símbolos que usa la interfaz hoy (sacada buscando en `src/`): son
+/// los que tienen que salir sí o sí. Los tests la recorren.
 pub const UI_EMOJI: &[&str] = &[
     "✓", // confirmación: inyección / copia al portapapeles
     "☀", "☾", // toggle de tema (claro / oscuro)
@@ -130,9 +130,9 @@ pub const UI_EMOJI: &[&str] = &[
     "↩", // deshacer
 ];
 
-/// Frases REALES de la UI con los caracteres conflictivos (tildes, eñe,
-/// comillas tipográficas y «…»). Los tests comprueban que Inter los resuelve
-/// en los tres pesos sin cajas; son exactamente los textos que se veían rotos.
+/// Frases REALES de la interfaz con los caracteres que dan problemas (tildes,
+/// eñe, comillas y «…»). Los tests comprueban que Inter las resuelve en los
+/// tres pesos sin cajas; son justo los textos que se veían mal.
 pub const UI_ACCENTED_PHRASES: &[&str] = &[
     "Micrófono",
     "Idioma de transcripción",
@@ -151,10 +151,10 @@ mod tests {
     use super::*;
     use cosmic_text::{Attrs, Buffer, Family, FontSystem, Metrics, Shaping, Weight as CosmicWeight};
 
-    /// Da forma al texto con el mismo `FontSystem` que usa Iced (fuentes del
-    /// sistema + cargas explícitas) y devuelve los glifos faltantes: los que
-    /// quedaron en `glyph_id == 0` (`.notdef`), que es exactamente la "caja
-    /// vacía" que reportó el usuario.
+    /// Da forma al texto con el mismo `FontSystem` que usa Iced (las fuentes del
+    /// sistema más las que se cargan a mano) y devuelve los glifos que faltan:
+    /// los que quedan con `glyph_id == 0` (`.notdef`), que es justo la «caja
+    /// vacía» que reportó el usuario.
     fn missing_glyphs(font_system: &mut FontSystem, text: &str, attrs: Attrs) -> Vec<String> {
         let mut buffer = Buffer::new(font_system, Metrics::new(14.0, 18.0));
         buffer.set_size(font_system, Some(600.0), None);
@@ -172,13 +172,13 @@ mod tests {
         missing
     }
 
-    /// El FontSystem con el que arranca Iced en nativo: fuentes del sistema.
+    /// El FontSystem con el que arranca Iced: las fuentes del sistema.
     fn system_fonts() -> FontSystem {
         FontSystem::new()
     }
 
-    /// Simula la carga de arranque de Inter en el FontSystem (mismos bytes que
-    /// embebe el binario por `include_bytes!`).
+    /// Hace como el arranque: carga Inter en el FontSystem (los mismos bytes
+    /// que lleva el binario con `include_bytes!`).
     fn load_inter(font_system: &mut FontSystem) {
         for bytes in [INTER_REGULAR, INTER_MEDIUM, INTER_SEMIBOLD] {
             font_system
@@ -189,7 +189,7 @@ mod tests {
         }
     }
 
-    /// Simula `iced::font::load`: añade la fuente emoji al FontSystem.
+    /// Hace como `iced::font::load`: mete la fuente de emojis en el FontSystem.
     /// Devuelve la ruta usada, o `None` si este equipo no tiene ninguna.
     fn load_emoji(font_system: &mut FontSystem) -> Option<String> {
         for path in emoji_font_candidates() {
@@ -205,7 +205,7 @@ mod tests {
         None
     }
 
-    /// Helper: aserción "sin glifos faltantes" con mensaje útil.
+    /// Ayudante: comprueba «no falta ningún glifo» con un mensaje útil.
     fn assert_shapes(font_system: &mut FontSystem, text: &str, attrs: Attrs) {
         let missing = missing_glyphs(font_system, text, attrs);
         assert!(
@@ -236,8 +236,8 @@ mod tests {
         assert_eq!(semibold().weight, Weight::Semibold);
     }
 
-    /// Las tres variantes se cargan de verdad (bytes no vacíos y con la firma
-    /// TTF/OTF). Sin esto, un `include_bytes!` mal apuntado pasaría inadvertido.
+    /// Las tres variantes se cargan de verdad (bytes con contenido y con la
+    /// firma TTF/OTF). Sin esto, un `include_bytes!` mal apuntado no se notaría.
     #[test]
     fn las_tres_variantes_de_inter_estan_embebidas() {
         for (name, bytes) in [
@@ -246,7 +246,7 @@ mod tests {
             ("SemiBold", INTER_SEMIBOLD),
         ] {
             assert!(bytes.len() > 100_000, "{name}: {} bytes", bytes.len());
-            // Firma sfnt: 0x00010000 (TrueType) o 'OTTO' (CFF).
+            // Firma sfnt: 0x00010000 (TrueType) u 'OTTO' (CFF).
             let sig = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
             assert!(
                 sig == 0x0001_0000 || sig == u32::from_be_bytes(*b"OTTO"),
@@ -256,8 +256,8 @@ mod tests {
         assert_eq!(inter_font_sources().len(), 3);
     }
 
-    /// El FontSystem de Iced expone la familia "Inter" con los tres pesos:
-    /// si fontdb no los agrupa bajo el mismo nombre, el peso pedido no casa.
+    /// El FontSystem de Iced tiene la familia "Inter" con los tres pesos: si
+    /// fontdb no los junta bajo el mismo nombre, el peso pedido no encaja.
     #[test]
     fn fontdb_agrupa_los_tres_pesos_bajo_la_familia_inter() {
         let mut fs = system_fonts();
@@ -276,8 +276,8 @@ mod tests {
         }
     }
 
-    /// Los textos con tildes/eñe del diseño resuelven en Inter (los tres
-    /// pesos) sin cajas: era EL síntoma reportado («Micr□fono»).
+    /// Los textos con tildes y eñe del diseño salen en Inter (los tres pesos)
+    /// sin cajas: era EL síntoma que reportaron («Micr□fono»).
     #[test]
     fn las_frases_con_tildes_resuelven_en_inter_sin_cajas() {
         let mut fs = system_fonts();
@@ -296,9 +296,9 @@ mod tests {
         }
     }
 
-    /// Todos los símbolos del inventario de la UI deben tener glifo una vez
-    /// cargadas las fuentes (Inter + emoji). Con `Shaping::Advanced` el
-    /// fallback por codepoint alcanza Segoe UI Emoji.
+    /// Todos los símbolos de la lista tienen que tener glifo con las fuentes
+    /// cargadas (Inter + emojis). Con `Shaping::Advanced` se busca también en
+    /// Segoe UI Emoji.
     #[test]
     fn inventario_ui_renderiza_con_fuentes_cargadas() {
         let mut fs = system_fonts();
@@ -316,9 +316,9 @@ mod tests {
         }
     }
 
-    /// Las frases reales de la UI (con texto mixto) deben salir completas:
-    /// con el fallback automático y con la fuente emoji explícita. Es lo que
-    /// hace el renderer en cada frame.
+    /// Las frases reales de la interfaz (con texto mezclado) tienen que salir
+    /// completas: con la búsqueda automática y con la fuente de emojis puesta a
+    /// mano. Es lo que hace el renderer en cada vuelta.
     #[test]
     fn frases_reales_de_la_ui_renderizan_sin_glifos_faltantes() {
         let mut fs = system_fonts();
@@ -346,8 +346,8 @@ mod tests {
         }
     }
 
-    /// Diagnóstico: qué fuente resuelve cada glifo del inventario. Ver
-    /// `--nocapture` para el detalle.
+    /// Diagnóstico: qué fuente resuelve cada símbolo de la lista. Con
+    /// `--nocapture` se ve el detalle.
     #[test]
     fn diagnostico_fuente_por_glifo() {
         fn report(fs: &mut FontSystem, label: &str) {
