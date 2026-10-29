@@ -282,7 +282,6 @@ registrado se muestra en la app (Ajustes).
 | `docs/ARQUITECTURA.md` | recorrido del código para alguien que nunca ha tocado Rust |
 | `docs/SETUP.md` | cómo configurar Local / Custom / Cloud |
 | `docs/EMPAQUETADO.md` · [`docs/ROADMAP.md`](docs/ROADMAP.md) · `docs/UI-FUTURA.md` | empaquetado, hoja de ruta y mejoras de UI |
-| `docs/ROADMAP-LEGADO-WEB.md` | hoja de ruta de la versión web (histórico, rama `main`) |
 
 ## Tests
 
@@ -303,7 +302,7 @@ qué rama tocar.
 - 🗺️ Qué queda por hacer: [`docs/ROADMAP.md`](docs/ROADMAP.md) y
   [`docs/UI-FUTURA.md`](docs/UI-FUTURA.md)
 
-Desde la **0.5.0** el port a Linux va dentro de `native-iced`: compila y arranca
+El port a Linux va incluido: compila y arranca
 en Wayland (Hyprland) y en X11. Lo que cambia según el sistema está en
 [`docs/PORT-LINUX/`](docs/PORT-LINUX/) (dependencias, atajo en Hyprland, cómo se
 escribe el texto y límites conocidos). En Linux no hay icono junto al reloj ni
@@ -333,7 +332,7 @@ Más cosas mías en [github.com/JuanFrancisco-Mateo](https://github.com/JuanFran
   icono en varios tamaños (16/24/32/48/64/128/256) metido dentro del `.exe`, y
   la Personalización I+II+III ya en el binario release (Ajustes por secciones,
   colores editables con presets o campo a campo, imágenes y animación por frames
-  en la burbuja). Añade la documentación de cierre (`INFORME-CIERRE.md`).
+  en la burbuja). Añade la documentación de cierre en `docs/`.
 - **0.2.0** (rama `native-iced`): reescritura a escritorio nativo. Adiós web.
   Cierre de la documentación (fase R5) — licencia MIT,
   `docs/ARQUITECTURA.md` para quien llega nuevo, guía de usuario ampliada y

@@ -1,7 +1,7 @@
 //! El marco del rediseño: barra de ventana propia, barra lateral y la zona de
 //! trabajo de «Dictado» (pantalla `3:484` de Figma).
 //!
-//! Medidas y colores salen de `design/openwhispr-figma/raw/
+//! Medidas y colores salen de `design/openwhispr-figma/`
 //! dictado-design-context.txt` (capa a capa) y `metadata-arbol-capas.txt`
 //! (coordenadas). Aquí no hay ni un color ni un tamaño de letra sueltos: los
 //! tonos vienen de [`crate::theme::chrome`] y los tamaños de

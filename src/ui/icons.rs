@@ -1,7 +1,7 @@
 //! Iconos del rediseño (pantalla Dictado de Figma).
 //!
 //! Los 19 SVG del marco se sacaron de Figma
-//! (`design/openwhispr-figma/raw/icons/`) y se copiaron a `assets/icons/`;
+//! (`design/openwhispr-figma/`) y se copiaron a `assets/icons/`;
 //! aquí van dentro del binario con `include_bytes!` (sin abrir ficheros ni
 //! depender de rutas). Son iconos lucide de un color: el color viene DENTRO
 //! del SVG (`stroke="white"` en los que van sobre el acento, `#A9A8B5`/`#7F808D`

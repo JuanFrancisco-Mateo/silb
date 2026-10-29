@@ -325,8 +325,8 @@ powershell -NoProfile -Command "Get-Process silb | Select WorkingSet64,PrivateMe
 
 ### 8.1 Tamaño del binario (release, perfil optimizado)
 
-Medido el 11/09/2026 con `scripts/measure-release-profile.sh` (cada variante
-recompila el binario desde cero e informa de la diferencia frente a la base).
+Medido el 11/09/2026 recompilando el binario con cada variante y comparando el
+tamaño con el de la base.
 
 | Variante | Tamaño | Δ vs base | % |
 |---|---:|---:|---:|
@@ -335,8 +335,7 @@ recompila el binario desde cero e informa de la diferencia frente a la base).
 | + `panic="abort"` | 40.923.648 B (39,03 MiB) | -3.930.624 B | -8,8 % |
 | TODO (`cgu=1` + `opt-level=z` + `panic=abort`) | 36.868.096 B (35,16 MiB) | -7.986.176 B | -17,8 % |
 
-El script `scripts/measure-release-profile.sh` rehace el `.exe` con cada
-variante. El perfil que **se queda en el repo** (`Cargo.toml`) es el base
+El perfil que **se queda en el repo** (`Cargo.toml`) es el base
 (`lto=true, strip=true`): cumple el objetivo de tamaño del instalador (≤25 MiB,
 ver §1.2.1) sin perder velocidad. Cualquiera de las otras variantes se puede
 activar poniendo ajustes de `[profile.release]` en un `~/.cargo/config.toml` o
@@ -383,9 +382,8 @@ Medido con `Get-Process` sobre Windows 11 24H2, modelo `small`
 - Con el modelo `tiny` (≈75 MB en disco) el salto es mucho menor (~80 MB más).
   Con `base` (≈140 MB) el salto es de ~140 MB.
 
-El script `scripts/measure-ram.bat` repite el muestreo: lanza el `.exe`, espera N
-segundos (por defecto 5) y muestrea cada 10 s durante 60 s. Saca WorkingSet,
-Private y Virtual en MB y termina matando el proceso con `taskkill /F`.
+Para repetir el muestreo: lanza el `.exe`, espera unos segundos y mira
+WorkingSet y Private en el Administrador de tareas (o con `tasklist`).
 
 ### 8.4 Decisión sobre prerroll y carga del modelo
 
@@ -416,12 +414,12 @@ CUMPLIDO (1,80 MiB de margen).
 Coherente con la medición de R6 (486 / 1.213 MiB).
 
 **Prueba rápida del exe (`target/release/silb.exe` directo, sin instalar):**
-- El proceso arranca; el registro escribe `Silb 0.3.0 iniciando` en `%APPDATA%\whispr-open\whispr-open.log`.
+- El proceso arranca; el registro escribe `Silb <versión> iniciando` en `%APPDATA%\whispr-open\whispr-open.log`.
 - Whisper queda cargado en ~1 s; la bandeja está lista; la ventana principal registrada (id=2); burbuja aplicada noact+pos+tamaño 72.
 - `taskkill /T /PID <pid>` → 0 instancias de silb.exe y 0 de llama-server.exe.
 
-**Prueba rápida del instalador (`scripts/install-smoke.py`):**
-- install exit=0; ARP con `DisplayName=Silb`, `DisplayVersion=0.3.0`, `Publisher=Whispr Open contributors`, `DisplayIcon=...\silb.exe`.
+**Prueba rápida del instalador:**
+- instalación silenciosa exit=0; ARP con `DisplayName=Silb`, `DisplayVersion=0.3.0`, `Publisher=Whispr Open contributors`, `DisplayIcon=...\silb.exe`.
 - uninstall exit=0; ARP Silb tras desinstalar = `eliminado OK`.
 
 **Guard de instancia única:** comprobado. La segunda ejecución apunta
@@ -429,7 +427,6 @@ Coherente con la medición de R6 (486 / 1.213 MiB).
 muestra un `MessageBoxW` con título «Silb» y **no** registra bandeja, burbuja ni
 atajo global.
 
-Todo el detalle está en `INFORME-CIERRE.md` (raíz del repo).
 
 ---
 
