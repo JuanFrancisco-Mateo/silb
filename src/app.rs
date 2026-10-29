@@ -3112,11 +3112,11 @@ mod tests {
         assert!(ui.label.contains("comprobando"));
     }
 
-    /// Ciclo de vida 10/09/2026: una fase LLM cancelada en caliente (toggle
-    /// off mientras el server se lanza/carga) aborta SIN tocar nada — emite
-    /// un único `LlmDisabled` con razón vacía (desactivada por el usuario,
-    /// sin banner de error). Con el token ya puesto, la fase nunca llega a
-    /// resolver rutas ni a lanzar llama-server.
+    /// Ciclo de vida 10/09/2026: una fase del modelo cancelada en caliente
+    /// (interruptor apagado mientras el servidor se lanza o carga) aborta SIN
+    /// tocar nada — manda un solo `LlmDisabled` con motivo vacío (la apagó el
+    /// usuario, sin banda de error). Con la marca ya puesta, la fase no llega ni
+    /// a resolver rutas ni a lanzar llama-server.
     #[test]
     fn fase_llm_cancelada_no_lanza_server() {
         let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
@@ -3135,9 +3135,9 @@ mod tests {
         );
     }
 
-    /// Proveedor Custom/Cloud remoto caído (requisito 10/09/2026): la
-    /// razón visible del chip nombra el endpoint y deja claro que el
-    /// dictado NUNCA se bloquea (degrada a texto bruto).
+    /// Proveedor Custom/Cloud remoto caído (requisito 10/09/2026): el motivo que
+    /// se ve en el chip nombra la dirección y deja claro que el dictado NUNCA se
+    /// bloquea (se queda en texto bruto).
     #[test]
     fn endpoint_remoto_caido_desactiva_con_aviso_que_no_bloquea() {
         let reason = remote_endpoint_reason("https://api.ejemplo.com/v1");
@@ -3149,9 +3149,9 @@ mod tests {
         assert!(reason.contains("no respondió o rechazó"));
     }
 
-    /// Robustez: los avisos de la línea de feedback (micro desconectado,
-    /// turno vacío, tope de grabación) se pintan ámbar, no verde — un
-    /// «todo bien» verde sobre un micro muerto es mentira visual.
+    /// Robustez: los avisos de la línea de feedback (micro desconectado, turno
+    /// vacío, tope de grabación) se pintan ámbar, no verde — un «todo bien» verde
+    /// sobre un micro muerto es una mentira que se ve.
     #[test]
     fn feedback_de_robustez_se_clasifica_como_aviso() {
         assert!(feedback_is_warning(
@@ -3162,8 +3162,8 @@ mod tests {
             "Dictado larguísimo: parado a las 2 h para no agotar la memoria."
         ));
         assert!(feedback_is_warning("Esperando el resto de la corrección…"));
-        // H6: el aviso de «micro configurado ausente, se usa el por defecto»
-        // también es un aviso ámbar, no una confirmación verde.
+        // H6: el aviso de «el micro configurado no está, se usa el de por
+        // defecto» también es un aviso ámbar, no una confirmación verde.
         assert!(feedback_is_warning(&crate::audio::fallback_notice(
             "Línea (4- AudioBox USB)",
             "Micrófono (Realtek(R) Audio)"
@@ -3173,8 +3173,8 @@ mod tests {
         assert!(!feedback_is_warning("Corrección IA aplicada: «4» → «2»"));
     }
 
-    /// Robustez: el error de descarga de modelo que llega a `Status::Error`
-    /// lleva causa clasificada y accionable, no la cadena cruda de ureq.
+    /// Robustez: el error de descarga de modelo que llega a `Status::Error` lleva
+    /// la causa clasificada y con algo que hacer, no la cadena cruda de ureq.
     #[test]
     fn mensaje_de_fallo_de_descarga_es_accionable_y_sin_jerga() {
         let msg = download_failure_message(
@@ -3190,14 +3190,14 @@ mod tests {
         assert!(msg.contains("Revisa"), "accionable: {msg}");
     }
 
-    /// Robustez del arranque: `preload_with_recovery` con un modelo SIN
-    /// fichero en disco devuelve el error de whisper tal cual (el fallo es
-    /// ambiental, no del fichero: re-descargar no haría nada) y no toca la
-    /// red. Solo se ejecuta si el usuario no tiene el modelo small
-    /// descargado (si lo tiene, cargarlo de verdad es lento y no es cosa
-    /// de un test). La ruta de recuperación completa (fichero corrupto →
-    /// borrar → re-descargar) se prueba por piezas: `model_file_is_valid`,
-    /// `existing_model_plan` y `sweep_part_files` en transcribe.rs.
+    /// Robustez del arranque: `preload_with_recovery` con un modelo SIN fichero
+    /// en disco devuelve el error de whisper tal cual (el fallo es del entorno,
+    /// no del fichero: volver a descargar no haría nada) y no toca la red. Solo
+    /// se ejecuta si el usuario no tiene el modelo small descargado (si lo
+    /// tiene, cargarlo de verdad tarda y no es cosa de una prueba). El camino
+    /// completo de recuperación (fichero corrupto → borrar → descargar otra vez)
+    /// se prueba por piezas: `model_file_is_valid`, `existing_model_plan` y
+    /// `sweep_part_files` en transcribe.rs.
     #[test]
     fn preload_sin_fichero_falla_claro_y_sin_red() {
         if crate::transcribe::model_exists(Model::Small) {
@@ -3211,20 +3211,20 @@ mod tests {
         );
     }
 
-    /// H3 (QA 24/09/2026): con el modelo YA en disco, un fallo de carga NO
+    /// H3 (QA 24/09/2026): con el modelo YA en disco, un fallo al cargar NO
     /// puede borrarlo. Antes `preload_with_recovery` borraba el fichero ante
-    /// cualquier fallo de `preload` y re-descargaba: con la red caída eso es
-    /// un bucle infinito («Dns Failed: resolve failure», 47 veces en el log
-    /// del 24/09) que además destruía el modelo bueno del usuario. Un fichero
-    /// truncado/corrupto SÍ se recicla (única re-descarga legítima).
+    /// cualquier fallo de `preload` y lo descargaba de nuevo: con la red caída
+    /// eso es un bucle sin fin («Dns Failed: resolve failure», 47 veces en el
+    /// log del 24/09) y encima destruía el modelo bueno del usuario. Un fichero
+    /// truncado o corrupto SÍ se recicla (la única descarga de nuevo legítima).
     #[test]
     fn h3_modelo_valido_se_conserva_y_el_truncado_se_recicla() {
         let dir = std::env::temp_dir().join(format!("whispr-h3-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dir temporal del test");
 
-        // GGML válido de mentira: magic de whisper.cpp y tamaño sobre el
-        // mínimo que exige `model_file_is_valid`.
+        // GGML válido de mentira: la marca de whisper.cpp y un tamaño por encima
+        // del mínimo que pide `model_file_is_valid`.
         let valido = dir.join("ggml-valido.bin");
         let mut bytes = vec![0x6c, 0x6d, 0x67, 0x67];
         bytes.resize(1024 * 1024 + 16, 0);
@@ -3240,7 +3240,7 @@ mod tests {
             "el modelo local se conserva (sin re-descarga, sin tocar la red)"
         );
 
-        // Truncado (magic correcto pero tamaño por debajo del mínimo): se
+        // Truncado (la marca está bien pero el tamaño no llega al mínimo): se
         // recicla para que la descarga lo reponga.
         let truncado = dir.join("ggml-truncado.bin");
         std::fs::write(&truncado, [0x6c, 0x6d, 0x67, 0x67, 0x00]).expect("escribir truncado");
@@ -3254,7 +3254,7 @@ mod tests {
             "el fichero inválido se borra para poder re-descargarlo"
         );
 
-        // Sin fichero no hay nada que reciclar: el fallo es ambiental.
+        // Sin fichero no hay nada que reciclar: el fallo es del entorno.
         assert!(!discard_corrupt_model(&dir.join("no-hay.bin")));
 
         let _ = std::fs::remove_dir_all(&dir);
@@ -3262,9 +3262,9 @@ mod tests {
 
     // ── Nota editable (requisito R3) ────────────────────────────────────
 
-    /// Tras una edición manual, «lo último» es la última línea con
-    /// contenido: la corrección cross-turn y «Escribir en app» siguen
-    /// apuntando a lo que el usuario acaba de ver/tocar.
+    /// Tras una edición a mano, «lo último» es la última línea con algo: la
+    /// corrección cross-turn y «Escribir en app» siguen apuntando a lo que el
+    /// usuario acaba de ver o tocar.
     #[test]
     fn last_turn_tras_edicion_manual_es_la_ultima_linea() {
         assert_eq!(last_turn_from_transcript("hola mundo"), "hola mundo");
@@ -3272,7 +3272,7 @@ mod tests {
             last_turn_from_transcript("primera línea\nsegunda línea"),
             "segunda línea"
         );
-        // Líneas vacías al final (saltos del usuario) no cuentan.
+        // Las líneas vacías del final (saltos que dejó el usuario) no cuentan.
         assert_eq!(
             last_turn_from_transcript("turno bueno\n\n   \n"),
             "turno bueno"
@@ -3281,12 +3281,12 @@ mod tests {
         assert_eq!(last_turn_from_transcript("\n \n"), "");
     }
 
-    /// El editor sincronizado con Content::text() recorta el '\n' final de
-    /// cortesía de la API: sin esto, cada edición acumularía saltos falsos.
+    /// El editor sincronizado con Content::text() recorta el '\n' de cortesía
+    /// que añade la API: sin esto, cada edición iría acumulando saltos falsos.
     #[test]
     fn la_edicion_manual_no_acumula_saltos_falsos() {
-        // El propio contrato de Content::text() añade '\n' al final: el
-        // handler de TranscriptEdited recorta ANTES de asignar transcript.
+        // El propio contrato de Content::text() añade '\n' al final: la función
+        // de TranscriptEdited lo recorta ANTES de asignar transcript.
         let content =
             text_editor::Content::<iced::Renderer>::with_text("una línea");
         let raw = content.text();
@@ -3300,11 +3300,11 @@ mod tests {
     fn etiqueta_de_descarga_lleva_mb_y_eta() {
         let total = 466 * 1024 * 1024u64;
         let mitad = total / 2;
-        // Sin velocidad aún: calculando.
+        // Sin velocidad todavía: calculando.
         let sin_rate = download_progress_label("Small", mitad, total, None);
         assert!(sin_rate.contains("233 / 466 MB"), "{sin_rate}");
         assert!(sin_rate.contains("calculando tiempo"), "{sin_rate}");
-        // Con velocidad de ~10 MB/s: ~23 s restantes.
+        // Con una velocidad de ~10 MB/s: quedan ~23 s.
         let con_rate = download_progress_label(
             "Small",
             mitad,
@@ -3313,7 +3313,7 @@ mod tests {
         );
         assert!(con_rate.contains("quedan ~"), "{con_rate}");
         assert!(con_rate.contains("23 s"), "{con_rate}");
-        // Total desconocido: sin inventar MB.
+        // Total desconocido: no se inventan MB.
         let desconocido = download_progress_label("Tiny", 5, 0, None);
         assert!(desconocido.contains("tamaño desconocido"), "{desconocido}");
     }
@@ -3323,24 +3323,24 @@ mod tests {
         let total = 466 * 1024 * 1024u64;
         let d = 0;
         // Velocidad ridícula (~60 KB/s → ~2 h 15 min) → «más de 1 h», sin
-        // minutos falsos.
+        // minutos inventados.
         assert_eq!(
             download_eta_text(d, total, Some(60_000.0)),
             "quedan más de 1 h"
         );
-        // Velocidad incapaz de medirse → calculando.
+        // Velocidad imposible de medir → calculando.
         assert_eq!(download_eta_text(d, total, Some(500.0)), "calculando tiempo…");
         assert_eq!(download_eta_text(d, total, None), "calculando tiempo…");
-        // Minutos normales redondeados.
+        // Minutos normales, redondeados.
         let rate = total as f64 / 180.0; // 3 min exactos
         assert_eq!(download_eta_text(0, total, Some(rate)), "quedan ~3 min");
-        // Ya descargado todo: casi listo.
+        // Ya está todo descargado: casi listo.
         assert_eq!(download_eta_text(total, total, Some(rate)), "casi listo");
     }
 
-    /// El aviso del pie es honesto (R4): con la corrección en la nube activa
-    /// NO promete «nada sale de tu PC» (y el texto local redundante ya no
-    /// existe en la UI: solo queda este aviso).
+    /// El aviso del pie no engaña (R4): con la corrección en la nube encendida
+    /// NO promete «nada sale de tu PC» (y el texto de privacidad local que
+    /// sobraba ya no está en la interfaz: solo queda este aviso).
     #[test]
     fn el_aviso_de_nube_no_miente() {
         let aviso = CLOUD_CORRECTION_NOTICE;
@@ -3348,9 +3348,9 @@ mod tests {
         assert!(!aviso.contains("nada sale"), "{aviso}");
     }
 
-    /// Los nombres del selector de proveedor (sprint final) son
-    /// autoexplicativos: solo dos modos, Local (en este equipo, nada viene
-    /// de serie) o Remoto (con API key). `Default` es el alias de Local.
+    /// Los nombres del selector de proveedor (sprint final) se explican solos:
+    /// solo dos modos, Local (en este equipo, nada viene puesto) o Remoto (con
+    /// clave). `Default` es otro nombre para Local.
     #[test]
     fn etiquetas_de_proveedor_dicen_exactamente_lo_que_hacen() {
         let local = CorrectionProvider::Default.label();
@@ -3375,7 +3375,7 @@ mod tests {
         assert_eq!(WindowSection::ALL[1], WindowSection::Ajustes);
         assert_eq!(WindowSection::Dictado.label(), "Dictado");
         assert_eq!(WindowSection::Ajustes.label(), "Ajustes");
-        // La sección se identifica por texto (accesible sin depender del color).
+        // La sección se reconoce por su texto (accesible sin depender del color).
         assert!(WindowSection::Dictado.to_string().contains("Dictado"));
     }
 
@@ -3397,7 +3397,7 @@ mod tests {
             mic_peak_hint(0, MIC_SILENT_SECS),
             Some(MicPeakHint::Silent)
         );
-        // Los avisos se leen: texto accionable, no solo color.
+        // Los avisos se leen: texto que dice qué hacer, no solo color.
         assert!(MicPeakHint::Silent.label().contains("sin señal"));
         assert!(MicPeakHint::Clipping.label().contains("satur"));
     }
