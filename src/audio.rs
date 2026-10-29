@@ -1,7 +1,6 @@
-//! Captura de micrófono con cpal. Ciclo por turnos: `start()` abre el stream
-//! del dispositivo de entrada y acumula muestras f32; `stop()` detiene la
-//! captura, normaliza la ganancia si el nivel fue bajo y devuelve las muestras
-//! para transcripción.
+//! Captura del micrófono con cpal. Va por turnos: `start()` abre la entrada
+//! del dispositivo y va guardando muestras; `stop()` corta la captura, sube
+//! el volumen si se grabó muy bajo y devuelve las muestras para pasar a texto.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::mpsc;
@@ -9,16 +8,15 @@ use std::sync::{Arc, Mutex};
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 
-/// Tope de duración de un turno de dictado. Motivo (requisito de robustez,
-/// «dictado muy largo sin agotar memoria»): el buffer crece linealmente con
-/// el tiempo (a 48 kHz estéreo→mono son ~230 MB de f32 por hora), así que se
-/// corta por arriba en 2 h — margen sobrado para una nota y memoria acotada
-/// (~460 MB peor caso antes de remuestrear). La app además auto-detiene el
-/// turno al llegar al tope (el Poll lo vigila), de modo que el audio capturado
-/// hasta ese momento NO se pierde: se transcribe igual.
+/// Tope de duración de un turno de dictado. El motivo: el búfer crece con el
+/// tiempo (a 48 kHz, de estéreo a mono, son unos 230 MB por hora), así que se
+/// corta a las 2 h — de sobra para una nota y con la memoria controlada
+/// (~460 MB en el peor caso antes de cambiar la frecuencia). Además la app
+/// corta el turno sola al llegar al tope (lo vigila el `Poll`), de modo que
+/// lo grabado hasta ese momento NO se pierde: se transcribe igual.
 pub const MAX_RECORDING_SECS: u64 = 2 * 60 * 60;
 
-/// Lista los dispositivos de entrada disponibles (para el selector de la UI).
+/// Lista los micrófonos que hay (para el selector de la interfaz).
 pub fn input_devices() -> Vec<String> {
     let host = cpal::default_host();
     match host.input_devices() {
@@ -30,10 +28,10 @@ pub fn input_devices() -> Vec<String> {
     }
 }
 
-/// En Linux el host de cpal es ALSA y `input_devices()` devuelve todo el zoo de
+/// En Linux, cpal usa ALSA y `input_devices()` devuelve todo el catálogo de
 /// plugins (`null`, `lavrate`, `speexrate`, `jack`, `oss`, `upmix`…), que no
 /// son micrófonos y llenaban el selector de ruido. Solo pasan la entrada por
-/// defecto y los PCM de tarjeta.
+/// defecto y las tarjetas de sonido.
 #[cfg(target_os = "linux")]
 fn is_real_capture(name: &str) -> bool {
     matches!(name, "default" | "pipewire" | "pulse")
@@ -47,22 +45,21 @@ fn is_real_capture(_name: &str) -> bool {
     true
 }
 
-/// Decisión (pura, sin cpal) sobre qué dispositivo de entrada abrir según la
-/// config y los dispositivos que el sistema ofrece. Separarla del hardware
-/// permite fijar la regla «el configurado desapareció → se cae al por
-/// defecto» con un test.
+/// Decisión (sin tocar hardware) sobre qué micrófono abrir según el config y
+/// los que ofrece el sistema. Tenerla aparte permite fijar con un test la
+/// regla «el configurado ya no está → se usa el de por defecto».
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeviceSelection {
     /// El dispositivo configurado está entre los disponibles: se usa ese.
     Configured,
     /// El configurado NO está (USB desenchufado, driver recargado, nombre
-    /// cambiado…): se usa el dispositivo por defecto del sistema.
+    /// cambiado…): se usa el micrófono por defecto del sistema.
     Fallback { configured: String },
-    /// No hay dispositivo configurado: se usa el por defecto, sin aviso.
+    /// No hay nada configurado: se usa el de por defecto, sin avisar.
     Default,
 }
 
-/// Decide qué dispositivo abrir. `available` son los nombres que devuelve
+/// Decide qué micrófono abrir. `available` son los nombres que devuelve
 /// `host.input_devices()`.
 pub fn select_device(configured: Option<&str>, available: &[String]) -> DeviceSelection {
     match configured {
@@ -74,9 +71,9 @@ pub fn select_device(configured: Option<&str>, available: &[String]) -> DeviceSe
     }
 }
 
-/// Aviso en español para la UI cuando hubo que dictar con el dispositivo por
-/// defecto porque el configurado no estaba (H6). Nombra ambos para que el
-/// usuario sepa qué se usó de verdad y cómo arreglarlo; nunca un error seco.
+/// Aviso en español para la interfaz cuando hubo que dictar con el micrófono
+/// por defecto porque el configurado no estaba (H6). Nombra los dos para que
+/// el usuario sepa qué se usó de verdad y cómo arreglarlo; nunca un error seco.
 pub fn fallback_notice(configured: &str, used: &str) -> String {
     format!(
         "El micrófono configurado («{configured}») no está disponible; se usa «{used}». \
@@ -84,14 +81,13 @@ pub fn fallback_notice(configured: &str, used: &str) -> String {
     )
 }
 
-/// Abre el dispositivo pedido por nombre. Si ya no está entre los
-/// disponibles, cae al dispositivo por defecto del sistema y devuelve el
-/// aviso para la UI: sin este fallback el dictado quedaba muerto hasta que
-/// el usuario entrara a Ajustes (H6). Si tampoco hay default, error en
-/// español.
+/// Abre el micrófono pedido por nombre. Si ya no está entre los disponibles,
+/// tira del que haya por defecto y devuelve el aviso para la interfaz: sin
+/// esto, el dictado se quedaba muerto hasta que el usuario entraba en Ajustes
+/// (H6). Si tampoco hay uno por defecto, error explicado en español.
 ///
-/// Una sola enumeración: se resuelve el dispositivo y, a la vez, se recogen
-/// los nombres para la decisión pura (`select_device`).
+/// Se pregunta una sola vez: se elige el dispositivo y, a la vez, se guardan
+/// los nombres para la decisión sin hardware (`select_device`).
 fn open_configured_device(
     host: &cpal::Host,
     name: &str,
@@ -133,36 +129,36 @@ fn open_configured_device(
     }
 }
 
-/// Captura de micrófono por turnos: el callback de CPAL (en sus propios
-/// hilos) acumula muestras f32 mono; aquí se expone el nivel reciente y los
-/// errores del stream a la UI.
+/// Captura por turnos: el aviso de cpal (en sus propios hilos) va guardando
+/// muestras mono; aquí se da a la interfaz el nivel reciente y los errores
+/// del stream.
 pub struct AudioCapture {
     samples: Arc<Mutex<Vec<f32>>>,
     level: Arc<AtomicU32>, // pico reciente en 0..=1000, para el medidor de la UI
     rate: u32,             // sample rate nativo del dispositivo (p. ej. 48 kHz)
-    // CPAL ejecuta el callback en sus propios hilos. El Stream debe permanecer
-    // en el hilo que lo creó en este target; por eso no se mueve a std::thread.
+    // cpal ejecuta su aviso en sus propios hilos. El `Stream` tiene que
+    // quedarse en el hilo que lo creó; por eso no se mueve a otro hilo.
     stream: Option<cpal::Stream>,
-    /// Errores del stream avisados por cpal (dispositivo desconectado a
-    /// mitad de grabación, driver caído…). La UI lo drena en su Poll: sin
-    /// esto, un micro que muere dejaba la app «Grabando» para siempre con
-    /// un stream muerto que no acumulaba nada.
+    /// Errores del stream que avisa cpal (micro desconectado a mitad de
+    /// grabación, driver caído…). La interfaz los recoge en su `Poll`: sin
+    /// esto, un micro que se muere dejaba la app «Grabando» para siempre, con
+    /// un stream muerto que no guardaba nada.
     errors: mpsc::Receiver<String>,
-    /// Aviso para la UI cuando el micrófono configurado ya no estaba y se
-    /// dictó con el dispositivo por defecto (H6). `None` = se usó el
-    /// configurado (o el por defecto sin incidencias).
+    /// Aviso para la interfaz cuando el micrófono configurado ya no estaba y
+    /// se dictó con el de por defecto (H6). `None` = se usó el configurado (o
+    /// el de por defecto sin incidencias).
     fallback_notice: Option<String>,
 }
 
 impl AudioCapture {
-    /// Abre el dispositivo por nombre (si `device_name` es Some y existe);
-    /// si no, usa el dispositivo de entrada por defecto. Un nombre
-    /// configurado que ya no existe NO mata el dictado: se cae al
-    /// dispositivo por defecto avisando en la UI (H6).
+    /// Abre el micrófono por nombre (si `device_name` tiene algo y existe);
+    /// si no, usa la entrada por defecto. Un nombre configurado que ya no
+    /// existe NO deja el dictado muerto: se usa el de por defecto y se avisa
+    /// en la interfaz (H6).
     ///
-    /// El stream se crea y se reproduce antes de devolver `Ok`, de modo que
-    /// cualquier fallo real llega al estado de error de la UI. CPAL mantiene
-    /// el callback activo mientras `stream` siga vivo.
+    /// El stream se crea antes de devolver `Ok`, así que cualquier fallo real
+    /// llega a la pantalla de error de la interfaz. cpal mantiene el aviso
+    /// activo mientras el `stream` siga vivo.
     pub fn start(device_name: Option<&str>) -> Result<Self, String> {
         let host = cpal::default_host();
         let (device, fallback) = match device_name {
@@ -199,8 +195,8 @@ impl AudioCapture {
         );
         let samples = Arc::new(Mutex::new(Vec::new()));
         let level = Arc::new(AtomicU32::new(0));
-        // Canal de errores: el callback de cpal corre en su propio hilo y no
-        // puede tocar la UI; el mensaje viaja hasta el Poll de la app.
+        // Canal de errores: el aviso de cpal corre en su propio hilo y no
+        // puede tocar la interfaz; el mensaje viaja hasta el `Poll` de la app.
         let (err_tx, err_rx) = mpsc::channel();
         let stream = build_stream(
             &device,
@@ -224,17 +220,17 @@ impl AudioCapture {
         })
     }
 
-    /// Se lleva el aviso de fallback (una sola vez) para que la UI lo muestre
-    /// en su línea de feedback: el usuario ve que el micrófono configurado no
-    /// estaba y cuál se está usando de verdad (H6).
+    /// Se lleva el aviso de cambio de micro (una sola vez) para que la
+    /// interfaz lo enseñe en su línea de avisos: el usuario ve que el
+    /// configurado no estaba y cuál se está usando de verdad (H6).
     pub fn take_fallback_notice(&mut self) -> Option<String> {
         self.fallback_notice.take()
     }
 
-    /// Detiene la captura y devuelve muestras f32 mono a 16 kHz.
+    /// Corta la captura y devuelve muestras mono a 16 kHz.
     pub fn stop(&mut self) -> Vec<f32> {
-        // Drop explícito antes de leer el buffer: no pueden entrar callbacks
-        // nuevos mientras se prepara el turno para Whisper.
+        // Se tira el stream a propósito antes de leer el búfer: así no
+        // entran muestras nuevas mientras se prepara el turno para Whisper.
         self.stream.take();
         let mut samples = std::mem::take(
             &mut *self
@@ -250,7 +246,7 @@ impl AudioCapture {
         samples
     }
 
-    /// Nivel del micrófono en 0..=1 (pico reciente), para el medidor.
+    /// Nivel del micrófono entre 0 y 1 (el pico reciente), para el medidor.
     pub fn level(&self) -> f32 {
         self.level.load(Ordering::Relaxed) as f32 / 1000.0
     }
@@ -263,8 +259,8 @@ impl AudioCapture {
     }
 }
 
-/// Amplifica si el audio quedó casi mudo (pico < 5%): un micrófono a volumen
-/// bajo hace que whisper «oiga» ruido y alucine (p. ej. «Música»).
+/// Sube el volumen si el audio quedó casi mudo (pico < 5%): con un micro
+/// bajo, whisper «oye» ruido y se inventa cosas (por ejemplo «Música»).
 fn normalize_gain(samples: &mut [f32]) {
     let peak = samples
         .iter()
@@ -277,8 +273,8 @@ fn normalize_gain(samples: &mut [f32]) {
     }
 }
 
-/// Remuestrea a 16 kHz por interpolación lineal. Es suficiente para dictado;
-/// si la calidad auditiva lo exige, cambiar a un remuestreador sinc.
+/// Pasa a 16 kHz interpolando. Con eso basta para dictado; si algún día
+/// la calidad se queda corta, habría que usar un conversor de más nivel.
 pub(crate) fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
     if samples.is_empty() || from_rate == 16_000 {
         return samples.to_vec();
@@ -296,50 +292,49 @@ pub(crate) fn resample_to_16k(samples: &[f32], from_rate: u32) -> Vec<f32> {
     output
 }
 
-/// Mensaje accionable (español, sin jerga de driver) para un error del
-/// stream a mitad de grabación. El detalle técnico queda en el log; el
+/// Mensaje claro (en español, sin hablar de drivers) para un error del
+/// stream a mitad de grabación. El detalle técnico se queda en el log; el
 /// usuario solo necesita saber QUÉ pasó y que lo grabado no se pierde.
 pub fn friendly_stream_error(_raw: &str) -> String {
     "el micrófono se desconectó o dejó de responder a mitad de la grabación".to_string()
 }
 
-/// Notas del port Linux (t_7ac526a3) — cpal 0.15 en este entorno:
+/// Notas del port a Linux (t_7ac526a3) — con cpal 0.15 en este equipo:
 ///
-/// 1. HOST: cpal 0.15 en Linux habla ALSA por defecto (crates.io cpal
-///    0.15.3: hosts Linux = ALSA/JACK; PipeWire se consume vía su plugin
-///    `pipewire-alsa`, no por un host dedicado — el feature `pipewire` es
-///    opcional y NO se activa en el port para no añadir libpipewire-dev
-///    como requisito de build). En Omarchy (PipeWire) el flujo real es
-///    app → cpal/ALSA → plugin pipewire-alsa → PipeWire. Es el mismo
-///    camino que usan la mayoría de apps GUI y soporta el micrófono
-///    normal y la elección de dispositivo (los nombres llegan como ids
-///    ALSA tipo «hw:0,0» o nombres de perfil de pipewire-alsa).
-/// 2. BUFFER: cpal usa `BufferSize::Default` al pedir el config default.
-///    Para CAPTURA (input) el buffer de entrada NO introduce retardo
-///    audible en dictado (consumimos lo que el driver acumula); no aplica
-///    el bug de alta latencia de salida reportado en cpal issue #1029
-///    (playback pipewire-alsa con BufferSize::Default → buffers de
-///    ~21 s). Si el usuario reporta captura entrecortada con buffer
-///    gigante (misma familia de bug en capture), el fix sería pedir
-///    `SupportedStreamConfig` con `BufferSize::Fixed(1024)`; se deja
-///    documentado, NO se hace (no medido, y toca el camino común Win/Linux
-///    sin necesidad).
-/// 3. SAMPLE RATE ALTO: el claimed «bug conocido de cpal 0.15 en Wayland
-///    con sample rates altos» NO existe como bug de cpal en Wayland:
-///    Wayland no participa en el audio (los hosts son ALSA/PipeWire, no
-///    Wayland). Lo que sí existe: (a) issue #1029 (buffer gigante con
-///    pipewire-alsa y BufferSize::Default, ver nota 2 — playback) y
-///    (b) enumeración de dispositivos que devuelve ids ALSA no legibles
-///    para la UI. Ninguno bloquea: para captura a 44.1/48 kHz con
-///    default config el camino funciona, y el bug de síntomas de alta
-///    latencia no aplica a la ruta de dictado (buffer por turnos, no
-///    streaming). SE QUEDA documentado, sin parche especulativo.
-/// 4. Micro no conectado / sin devices: `default_input_device()` da None
-///    → ya hay mensaje español en `AudioCapture::start()` («no hay
+/// 1. SALIDA DE AUDIO: cpal 0.15 en Linux habla con ALSA por defecto (en
+///    crates.io, versión 0.15.3, los hosts de Linux son ALSA y JACK;
+///    PipeWire se usa a través de su plugin `pipewire-alsa`, no con un host
+///    propio — la opción `pipewire` existe pero NO se activa aquí, para no
+///    pedir libpipewire-dev al compilar). En Omarchy (con PipeWire) el
+///    camino real es app → cpal/ALSA → plugin pipewire-alsa → PipeWire. Es
+///    el mismo que usan casi todas las apps con ventana, y sirve tanto para
+///    el micrófono normal como para elegir dispositivo (los nombres llegan
+///    como ids de ALSA del tipo «hw:0,0» o como perfiles de pipewire-alsa).
+/// 2. BÚFER: cpal usa `BufferSize::Default` al pedir la configuración por
+///    defecto. Al grabar, el búfer de entrada no mete un retardo que se note
+///    en dictado (se consume lo que el driver va juntando); no aplica el
+///    fallo de latencia alta de salida que cuenta el issue #1029 de cpal
+///    (reproducir con pipewire-alsa y `BufferSize::Default` → búferes de
+///    ~21 s). Si alguien reporta grabación entrecortada con búfer gigante
+///    (el mismo tipo de fallo, pero grabando), el arreglo sería pedir
+///    `SupportedStreamConfig` con `BufferSize::Fixed(1024)`; queda apuntado,
+///    NO se hace (no está medido y tocaría el camino común de Windows y
+///    Linux sin necesidad).
+/// 3. FRECUENCIAS ALTAS: el «fallo conocido de cpal 0.15 en Wayland con
+///    frecuencias altas» NO existe: Wayland no tiene nada que ver con el
+///    audio (los hosts son ALSA y PipeWire). Lo que sí hay: (a) el issue
+///    #1029 (búfer gigante con pipewire-alsa y `BufferSize::Default`, ver
+///    nota 2, al reproducir) y (b) que la lista de dispositivos devuelve ids
+///    de ALSA poco legibles para la interfaz. Ninguno bloquea: grabar a
+///    44,1 o 48 kHz con la configuración por defecto funciona, y el fallo de
+///    latencia alta no afecta al dictado (se graba por turnos, no en
+///    continuo). SE QUEDA apuntado, sin parche a ciegas.
+/// 4. Micro sin conectar o sin dispositivos: `default_input_device()` da
+///    `None` → ya hay mensaje en español en `AudioCapture::start()` («no hay
 ///    dispositivo de entrada»).
-/// 5. TODO lo anterior es A VALIDAR con el build real por el usuario
-///    (regla de la task: sin cargo build; la doc honesta va en
-///    docs/PORT-LINUX/AUDIO-RUNTIME.md).
+/// 5. TODO lo de arriba está A VALIDAR con la compilación real por parte del
+///    usuario (la task pedía no lanzar cargo build; lo contado con honestidad
+///    queda en docs/PORT-LINUX/AUDIO-RUNTIME.md).
 
 fn build_stream(
     device: &cpal::Device,
@@ -348,13 +343,13 @@ fn build_stream(
     level: Arc<AtomicU32>,
     err_tx: mpsc::Sender<String>,
 ) -> Result<cpal::Stream, String> {
-    // Tope duro de muestras acumuladas (memoria acotada pase lo que pase,
-    // incluso si el hilo de la UI se atasca y no llega a auto-detener el
-    // turno por tiempo). Calculado con el sample rate NATIVO: el buffer
-    // guarda muestras a ese rate y solo se remuestrea al parar.
+    // Tope duro de muestras guardadas (la memoria no se dispara pase lo que
+    // pase, aunque el hilo de la interfaz se atasque y no llegue a cortar el
+    // turno por tiempo). Se calcula con la frecuencia NATIVA: el búfer guarda
+    // a esa frecuencia y solo se cambia al parar.
     let max_samples = (config.sample_rate().0 as usize) * MAX_RECORDING_SECS as usize;
-    // El callback de error corre en un hilo de cpal: log + aviso por canal
-    // (quien decida qué hacer con el turno es la UI en su Poll).
+    // El aviso de error corre en un hilo de cpal: log y aviso por canal
+    // (quien decide qué hacer con el turno es la interfaz, en su `Poll`).
     let error_callback = move |error: cpal::StreamError| {
         crate::log!("audio", "error en el stream: {error}");
         let _ = err_tx.send(friendly_stream_error(&error.to_string()));
@@ -402,10 +397,10 @@ fn build_stream(
     }
 }
 
-/// Convierte a mono promediando canales, acumula en el buffer y actualiza el
-/// pico reciente del medidor. El buffer nunca supera `max_samples`: llegado
-/// el tope se deja de acumular (la app corta el turno por tiempo y transcribe
-/// lo que haya).
+/// Pasa a mono promediando canales, lo acumula en el búfer y actualiza el
+/// pico del medidor. El búfer nunca pasa de `max_samples`: al llegar al tope
+/// deja de acumular (la app corta el turno por tiempo y transcribe lo que
+/// haya).
 fn push_f32(
     data: &[f32],
     channels: usize,
@@ -430,8 +425,8 @@ fn push_f32(
         return;
     }
     if channels <= 1 {
-        // Tope EXACTO: se añade solo lo que cabe (el chunk de cpal puede
-        // sobrepasar el tope por menos de un chunk — aquí se recorta).
+        // Tope EXACTO: solo entra lo que cabe (el trozo de cpal puede
+        // pasarse del tope por menos de un trozo; aquí se recorta).
         let room = max_samples - guard.len();
         guard.extend_from_slice(&data[..room.min(data.len())]);
         return;
@@ -489,13 +484,13 @@ mod tests {
 
     #[test]
     fn push_f32_acota_el_buffer_al_tope_de_memoria() {
-        // Requisito: un dictado larguísimo no puede agotar la memoria. El
-        // buffer se corta en `max_samples` aunque sigan llegando callbacks.
+        // Un dictado larguísimo no puede agotar la memoria: el búfer se corta
+        // en `max_samples` aunque sigan llegando avisos.
         let samples = Arc::new(Mutex::new(Vec::new()));
         let level = Arc::new(AtomicU32::new(0));
         let chunk = vec![0.3f32; 1000];
-        // Tope simulado de 2500 muestras: dos pushes llenan, el tercero no
-        // puede crecer más allá del tope.
+        // Tope simulado de 2500 muestras: dos tandas lo llenan y la tercera
+        // ya no puede pasar del tope.
         let cap = 2500usize;
         for _ in 0..5 {
             push_f32(&chunk, 1, &samples, &level, cap);
@@ -506,8 +501,8 @@ mod tests {
             cap,
             "el buffer se detiene exactamente en el tope"
         );
-        // El medidor sigue vivo tras el tope (el usuario ve que el micro
-        // sigue sonando aunque el turno ya esté cortado).
+        // El medidor sigue funcionando pasado el tope (el usuario ve que el
+        // micro sigue sonando aunque el turno ya esté cortado).
         assert!(level.load(Ordering::Relaxed) > 0);
     }
 
@@ -523,15 +518,15 @@ mod tests {
 
     #[test]
     fn tope_de_grabacion_es_holgado_y_acotado() {
-        // 2 h: margen de sobra para una nota hablada y memoria acotada
-        // (~460 MB peor caso a 16 kHz f32; a 48 kHz nativos se remuestrea al
-        // parar, así que el tope nativo equivale a 2 h de audio real).
+        // 2 h: de sobra para una nota hablada y memoria controlada
+        // (~460 MB en el peor caso a 16 kHz; a 48 kHz se cambia la frecuencia
+        // al parar, así que el tope nativo equivale a 2 h de audio real).
         assert_eq!(MAX_RECORDING_SECS, 2 * 60 * 60);
     }
 
     /// H6 (QA 24/09/2026): si el micrófono configurado desaparece (el USB de
     /// `input_device: "Línea (4- AudioBox USB)"` desenchufado), el dictado NO
-    /// puede quedarse muerto con un error seco: se cae al dispositivo por
+    /// puede quedarse muerto con un error seco: se usa el micrófono por
     /// defecto. El audio real lo prueba el usuario; aquí se fija la decisión.
     #[test]
     fn h6_dispositivo_configurado_ausente_cae_al_por_defecto() {
@@ -539,14 +534,14 @@ mod tests {
             "Micrófono (Realtek(R) Audio)".to_string(),
             "Línea (4- AudioBox USB)".to_string(),
         ];
-        // Está → se usa el configurado, sin aviso de fallback.
+        // Está → se usa el configurado, sin aviso.
         assert_eq!(
             select_device(Some("Línea (4- AudioBox USB)"), &disponibles),
             DeviceSelection::Configured
         );
-        // Sin configurar → se usa el por defecto, sin aviso.
+        // Sin configurar → se usa el de por defecto, sin aviso.
         assert_eq!(select_device(None, &disponibles), DeviceSelection::Default);
-        // Ausente → marca de fallback al dispositivo por defecto.
+        // No está → hay que usar el de por defecto y avisar.
         assert_eq!(
             select_device(
                 Some("Línea (4- AudioBox USB)"),
@@ -558,9 +553,9 @@ mod tests {
         );
     }
 
-    /// H6: el fallback no es silencioso. El aviso nombra el dispositivo
-    /// configurado, el que se usa de verdad y cómo arreglarlo (el usuario lo
-    /// ve en la UI, que lo pinta como aviso ámbar).
+    /// H6: el cambio de micro no es silencioso. El aviso nombra el dispositivo
+    /// configurado, el que se usa de verdad y cómo arreglarlo (el usuario lo ve
+    /// en la interfaz, que lo pinta como aviso ámbar).
     #[test]
     fn h6_el_aviso_de_fallback_nombra_los_dos_dispositivos() {
         let aviso = fallback_notice("Línea (4- AudioBox USB)", "Micrófono (Realtek(R) Audio)");
@@ -570,8 +565,8 @@ mod tests {
         assert!(aviso.contains("Ajustes"), "dice cómo arreglarlo: {aviso}");
     }
 
-    /// En Linux el host de cpal lista todo el zoo de plugins de ALSA como si
-    /// fueran entradas: el selector enseñaba «null», «jack», «speexrate»…
+    /// En Linux, el host de cpal lista todo el catálogo de plugins de ALSA como
+    /// si fueran entradas: el selector enseñaba «null», «jack», «speexrate»…
     /// junto a los micrófonos de verdad.
     #[test]
     #[cfg(target_os = "linux")]
