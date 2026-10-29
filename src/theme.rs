@@ -42,7 +42,7 @@ macro_rules! rgb {
 // al contraste AA.
 //
 // Los valores de la paleta OSCURA son los medidos en Figma
-// (`design/openwhispr-figma/raw/TOKENS.md`): tarjeta #1D1E24, campo #191A20,
+// (`design/openwhispr-figma/`): tarjeta #1D1E24, campo #191A20,
 // texto #F1F0F5, secundario #A9A8B5, borde #303139 y acento activo #8D7AFF.
 pub const BG: Color = rgb!(0x17, 0x18, 0x1C); // grafito fondo
 pub const SURFACE: Color = rgb!(0x1D, 0x1E, 0x24); // tarjetas (diseño)
@@ -712,7 +712,7 @@ pub const WINDOW_BAR_HEIGHT: f32 = 40.0;
 // fuente de medidas de las cinco pestañas (General, Apariencia, Dictado,
 // Corrección IA, Avanzado). Cero medidas sueltas en la interfaz.
 // Todas salen del diseño de la pantalla Ajustes
-// (`design/openwhispr-figma/raw/metadata-arbol-capas.txt`):
+// (medidas del diseño de Figma):
 //
 //   nodo            medida
 //   3:638 / 3:639   contenido 916 px (márgenes de página de 40, en shell.rs)

@@ -34,8 +34,7 @@ Versión actual del paquete: **0.5.0** (`Cargo.toml`). Rama activa: `native-iced
 > septiembre y sus referencias de versión (0.2.0) están viejas. Lo que ha
 > entrado desde entonces: instalador Inno Setup con .ico y CUDA opcional,
 > rediseño de la interfaz salido de Figma, servidor de IA metido en el paquete, y
-> el **port a Linux integrado** (ver `docs/PORT-LINUX/` y
-> `docs/VERIFICACION-2026-10-26.txt`). Lo único que sigue abierto de este
+> el **port a Linux integrado** (ver `docs/PORT-LINUX/`). Lo único que sigue abierto de este
 > documento es la lista de pendientes P3 (transcripción casi en tiempo real,
 > notetaker) y los puntos de `UI-FUTURA.md`.
 

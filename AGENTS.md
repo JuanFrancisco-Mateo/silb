@@ -91,7 +91,5 @@ Leer este archivo ANTES de tocar nada.
 - No meter frontend web ni Tauri de vuelta: eso era la versión vieja.
 - No lanzar el servidor de IA por WSL/`wsl.exe`.
 - No tocar hardware ni tareas programadas del sistema.
-- No ejecutar `scripts\install-smoke.py`: desinstala la instalación real del
-  usuario.
 - El micrófono y la interfaz los prueba el usuario; aquí la verificación es
   tests + build (y el informe de `linux-check.sh` para el port).

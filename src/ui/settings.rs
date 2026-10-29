@@ -1,6 +1,6 @@
 //! Espacio de trabajo de Ajustes: la pantalla `3:604` de Figma.
 //!
-//! Medidas y colores salen de `design/openwhispr-figma/raw/
+//! Medidas y colores salen de `design/openwhispr-figma/`
 //! ajustes-design-context.txt` (capa a capa), `metadata-arbol-capas.txt`
 //! (coordenadas) y `raw/ajustes.png` (el dibujo). Todo el color sale de
 //! [`crate::theme`]: aquí no hay colores sueltos.

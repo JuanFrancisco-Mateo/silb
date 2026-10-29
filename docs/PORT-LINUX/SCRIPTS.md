@@ -4,13 +4,8 @@
 
 | Script | Funcion |
 |---|---|
-| scripts/check-arp.bat | Inspector de entradas ARP/registro de la instalacion Windows. |
-| scripts/dumpbin-headers.bat | Inspeccion MSVC dumpbin del .exe. |
-| scripts/extract-icon.bat | Extrae icono .ico del binario (requiere Windows). |
-| scripts/install-test.bat | Ejecuta el instalador en modo silencioso (Windows). |
-| scripts/measure-ram.bat | RAM del proceso .exe (Windows). |
-| scripts/measure-release-profile.sh | Medidor del impacto de flags de release; usa cargo de WSL (ruta /mnt/c). Intocable: utilitat Windows-specific, no bloquea el port. |
-| scripts/audit-doc-comments.py, install-smoke.py, verify-ico.py | Python, agnósticos de SO (verify-ico valida .ico: solo relevante en Windows). |
+| scripts/audit-doc-comments.py | Revisa los comentarios de `src/` y señala los que siguen en jerga. |
+| scripts/verify-ico.py | Comprueba que el icono `.ico` trae los tamaños esperados. |
 
 ## Scripts nuevos Linux (Parte 4)
 

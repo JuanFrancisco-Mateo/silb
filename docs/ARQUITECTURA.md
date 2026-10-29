@@ -191,7 +191,7 @@ es una prueba con un servidor real, no un fallo.
 
 Lo que los tests **no** pueden cubrir y se prueba a mano: el micrófono físico, el
 foco real entre ventanas y la escritura en apps que van como administrador. La
-lista de comprobaciones está en `INFORME-CIERRE.md`.
+lista de comprobaciones está en `docs/ROADMAP.md`.
 
 ## 6. Cosas que NO hace esta app (a propósito)
 

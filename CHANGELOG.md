@@ -30,8 +30,8 @@ config: actualizar por encima de una 0.5.0 no pide reconfigurar nada.
   tests, build release, tamaño y dependencias del binario) que deja informe en
   `docs/VERIFICACION-LINUX-<fecha>.txt`. Si no hay binario, ahora cuenta como
   fallo en vez de cerrar en verde.
-- `docs/PORT-LINUX/TESTEO-0.6.md`: guía de prueba del port con lo que hay que
-  comprobar y qué se considera correcto.
+- Guía de prueba del port en `docs/PORT-LINUX/`: qué hay que comprobar en cada
+  apartado y qué se considera correcto.
 
 ### Corregido
 
@@ -186,10 +186,9 @@ Reescritura a **escritorio nativo** (Rust + Iced + whisper.cpp). Adiós web.
 ## [0.1.0] — 2026-09-02 (rama `main`)
 
 Prototipo web (React + Tauri v2 + Whisper WASM): 40 tests. Queda archivado en
-la rama `main` como referencia; su hoja de ruta está en
-[`docs/ROADMAP-LEGADO-WEB.md`](docs/ROADMAP-LEGADO-WEB.md).
+el repo privado `whispr-open`, fuera de este.
 
-[0.4.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/compare/v0.3.0...v0.4.0
-[0.3.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/releases/tag/v0.3.0
-[0.2.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/compare/v0.1.0...v0.3.0
-[0.1.0]: https://github.com/JuanFrancisco-Mateo/whispr-open/releases/tag/v0.1.0
+[0.4.0]: https://github.com/JuanFrancisco-Mateo/silb/compare/v0.3.0...v0.4.0
+[0.3.0]: https://github.com/JuanFrancisco-Mateo/silb/releases/tag/v0.3.0
+[0.2.0]: https://github.com/JuanFrancisco-Mateo/silb/compare/v0.1.0...v0.3.0
+[0.1.0]: https://github.com/JuanFrancisco-Mateo/silb/releases/tag/v0.1.0
