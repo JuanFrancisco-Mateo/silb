@@ -14,10 +14,47 @@ use crate::app::{
     LlmStatus, Message, SettingsSection, Status, WhisprApp, WindowSection,
     last_turn_from_transcript,
 };
-use crate::config::dictionary_path;
+use crate::config::{dictionary_path, AiMode};
 use crate::domain::dictionary::{DictionaryEntry, export_dictionary_to, import_dictionary_from};
 
 impl WhisprApp {
+    /// Aplica un modo de IA (0.7.1): guarda el ajuste y deja el servidor en el
+    /// estado que toca. Apagado descarga el modelo; con cualquier otro modo el
+    /// servidor tiene que estar vivo (también en Reescritura).
+    pub(crate) fn apply_ai_mode(&mut self, mode: AiMode) -> Task<Message> {
+        self.config.set_ai_mode(mode);
+        self.save_config();
+        if mode == AiMode::Off {
+            // Apagar con la app abierta (10/09/2026): la corrección pendiente se
+            // queda en texto tal cual y el modelo se descarga de la memoria — solo
+            // el servidor que lanzó esta app; uno de otro sitio no se toca.
+            self.disable_ai_correction_now();
+            return Task::none();
+        }
+        // Encender (o pasar de un modo a otro) con la app abierta tras un arranque
+        // sin servidor: se vuelve a lanzar la fase (comprobar/arrancar
+        // llama-server y esperar a que /v1/models conteste) para que el ajuste
+        // prometa algo que funciona. Si el servidor no levanta, LlmDisabled enseña
+        // el motivo.
+        //
+        // No se duplica una fase que ya va bien (startup_rx Some); si la que hay
+        // está cancelada (se acaba de apagar), se cambia por una nueva sin esperar
+        // a que muera el hilo viejo (su marca la corta en el siguiente punto de
+        // control).
+        let in_flight_cancelled = self
+            .llm_phase_cancel
+            .as_ref()
+            .map(|c| c.load(Ordering::SeqCst))
+            .unwrap_or(false);
+        if !matches!(self.llm_status, LlmStatus::Ready { .. })
+            && !self.is_starting()
+            && (self.startup_rx.is_none() || in_flight_cancelled)
+        {
+            return self.spawn_llm_startup();
+        }
+        Task::none()
+    }
+
     /// Ajustes de la corrección IA: proveedor, dirección, modelo, clave,
     /// espera, servidor local, umbral del clasificador, confirmación y el
     /// resultado del corrector (cambio o reescritura) con su deshacer.
@@ -48,40 +85,17 @@ impl WhisprApp {
                 return self.spawn_llm_startup();
             }
             Message::ToggleAiCorrection(on) => {
-                self.config.ai_correction_enabled = Some(on);
-                self.save_config();
-                if !on {
-                    // Apagar con la app abierta (10/09/2026): la corrección
-                    // pendiente se queda en texto tal cual y el modelo se descarga
-                    // de la memoria — solo el servidor que lanzó esta app; uno de
-                    // otro sitio no se toca.
-                    self.disable_ai_correction_now();
-                    return Task::none();
-                }
-                // Encender la corrección con la app abierta tras un arranque sin
-                // servidor: se vuelve a lanzar la fase (comprobar/arrancar
-                // llama-server y esperar a que /v1/models conteste) para que el
-                // interruptor prometa algo que funciona. Si el servidor no
-                // levanta, LlmDisabled enseña el motivo.
-                //
-                // No se duplica una fase que ya va bien (startup_rx Some); si la
-                // que hay está cancelada (se acaba de apagar), se cambia por una
-                // nueva sin esperar a que muera el hilo viejo (su marca la corta
-                // en el siguiente punto de control).
-                let in_flight_cancelled = self
-                    .llm_phase_cancel
-                    .as_ref()
-                    .map(|c| c.load(Ordering::SeqCst))
-                    .unwrap_or(false);
-                if on
-                    && !matches!(self.llm_status, LlmStatus::Ready { .. })
-                    && !self.is_starting()
-                    && (self.startup_rx.is_none() || in_flight_cancelled)
-                {
-                    return self.spawn_llm_startup();
-                }
-                Task::none()
+                // El interruptor de la cabecera y del pie de dictado es un atajo:
+                // encendido deja el modo «Corrección», apagado deja «Desactivada».
+                // El selector de tres modos entra por `AiModeChanged`.
+                let mode = if on {
+                    AiMode::Correccion
+                } else {
+                    AiMode::Off
+                };
+                self.apply_ai_mode(mode)
             }
+            Message::AiModeChanged(mode) => self.apply_ai_mode(mode),
             Message::LlmEndpointChanged(s) => {
                 // Vacío en la interfaz → el getter usa el de por defecto. No se
                 // guarda una cadena vacía, para distinguir «no escrito» de

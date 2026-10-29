@@ -8,7 +8,7 @@
 [![Rust](https://img.shields.io/badge/Rust-2021-7C6CFF?style=flat-square)](https://www.rust-lang.org/)
 [![Windows 10/11](https://img.shields.io/badge/plataforma-Windows%2010%2F11%20%C2%B7%20Linux-7C6CFF?style=flat-square)](#compilar-desde-el-código)
 [![whisper.cpp](https://img.shields.io/badge/whisper.cpp-local-7C6CFF?style=flat-square)](https://github.com/ggerganov/whisper.cpp)
-[![Tests](https://img.shields.io/badge/tests-345%20passed-3fb950?style=flat-square)](#tests)
+[![Tests](https://img.shields.io/badge/tests-352%20passed-3fb950?style=flat-square)](#tests)
 
 [Instalar](#instalar) · [Compilar](#compilar-desde-el-código) · [Uso](#uso) · [Configuración](#configuración-avanzada-configjson) · [Contribuir](#contribuir)
 
@@ -43,12 +43,16 @@ corrección con IA, y solo si eliges un proveedor en la nube.
   escribir el texto. Qué muletillas se quitan (las que no dejan duda, las que
   solo salen antes de una pausa, las del principio) se elige en Ajustes →
   Muletillas, y se pueden desactivar del todo.
-- **Corrección con IA** (opcional, sin arrancar nada a mano): una IA repasa tu
-  dictado y arregla las correcciones que dices en voz alta («que calor en murcia
-  **digo cartagena**» → «que calor en cartagena») y las que se refieren al turno
-  anterior («no no lo último está mal, es 2 en vez de 4»). Por defecto funciona
-  en tu equipo (llama.cpp, sin internet), y también puedes usar un proveedor
-  propio Custom (cualquier servidor compatible con OpenAI) o la nube (OpenAI).
+- **Corrección con IA** (opcional, sin arrancar nada a mano), con tres modos:
+  *Desactivada* (el dictado se escribe tal cual), *Corrección* (la IA arregla
+  las correcciones que dices en voz alta — «que calor en murcia **digo
+  cartagena**» → «que calor en cartagena» — y las que se refieren al turno
+  anterior — «no no lo último está mal, es 2 en vez de 4») y *Reescritura* (la IA
+  reescribe el turno entero: limpio, puntuado y sin muletillas ni
+  auto-correcciones; para este modo se recomienda el modelo
+  **Qwen3-4B-Instruct-2507**, ~2,4 GB). Por defecto funciona en tu equipo
+  (llama.cpp, sin internet), y también puedes usar un proveedor propio Custom
+  (cualquier servidor compatible con OpenAI) o la nube (OpenAI).
   Está explicado en [`docs/CORRECCION-VOZ.md`](docs/CORRECCION-VOZ.md) (cómo
   está diseñado) y [`docs/SETUP.md`](docs/SETUP.md) (cómo se configura).
 - **Diccionario personal** (jerga, siglas, nombres propios) que se guarda entre
@@ -81,10 +85,12 @@ fondo y animar la burbuja por frames.
 flowchart LR
     MIC["Micrófono<br/>cpal · 16 kHz"] --> W["Whisper<br/>whisper.cpp (local)"]
     W --> CLEAN["Limpieza<br/>muletillas · repeticiones"]
-    CLEAN --> LLM{"Corrección IA<br/>(opcional)"}
+    CLEAN --> LLM{"IA: Desactivada /<br/>Corrección / Reescritura"}
     LLM -->|"corrige «digo X», «no, era Y»"| FIX["Texto corregido"]
+    LLM -->|"reescribe el turno entero"| RW["Texto reescrito"]
     LLM -->|"sin server disponible"| RAW["Texto tal cual"]
     FIX --> INJ["Inyección<br/>portapapeles + Ctrl+V"]
+    RW --> INJ
     RAW --> INJ
     INJ --> APP["App con foco"]
 ```
@@ -170,7 +176,8 @@ funcionar**.
 
 La **corrección con IA local es opcional**: el servidor (`llama-server.exe`)
 viaja con la app y el **modelo se elige y se descarga desde Ajustes** (lista de
-tres modelos pequeños, o un repo/URL de Hugging Face en «Otro»; ver
+modelos probados, con Qwen3-4B para el modo Reescritura, o un repo/URL de
+Hugging Face en «Otro»; ver
 [`docs/SETUP.md`](docs/SETUP.md)). Si no hay modelo, la corrección se desactiva
 con un aviso y el dictado sigue funcionando.
 
@@ -196,18 +203,23 @@ La guía sin palabras técnicas está en
 
 **Corrección IA** (primer nivel de Ajustes):
 
-- *Corrección IA*: «Una IA revisa y corrige lo que dictas» — «Al terminar un
-  turno, la IA lo revisa y corrige («digo X», «no, era Y»…). Si el servidor de
-  IA no está disponible, el dictado se inserta entero, sin corregir.»
+- *Modo de IA*: selector de tres — **Desactivada** («El dictado se escribe tal
+  cual»), **Corrección** («La IA arregla las auto-correcciones («digo X»). Solo
+  actúa cuando las detecta») y **Reescritura** («La IA reescribe el turno entero,
+  limpio y puntuado. Tarda algo más en cada dictado»). Con Desactivada o
+  Corrección no se llama al modelo si no hay nada que corregir; con Reescritura
+  se llama en cada turno. Si el servidor de IA no está disponible, el dictado se
+  inserta entero, sin corregir.
 - *Proveedor*: «Quién corrige lo que dictas: Local — llama.cpp, el que viene
   con la app (sin internet, recomendado) · Custom LLM — tu propio endpoint
   OpenAI-compatible · Cloud — OpenAI. Por defecto: Local.»
 - *Endpoint LLM*: «Dirección del servidor de IA (API compatible con OpenAI).
   Local: http://127.0.0.1:8081/v1.»
-- *Modelo IA local* (proveedor Local): desplegable con tres modelos pequeños
-  (Qwen2.5-0.5B ~491 MB, el recomendado · Llama 3.2 1B ~808 MB · Qwen2.5-1.5B
-  ~1,1 GB) y «Otro (repo o URL de Hugging Face)…» para pegar `owner/repo` o la
-  dirección de un `.gguf`. Si el fichero no está en el disco, el bloque enseña
+- *Modelo IA local* (proveedor Local): desplegable con los modelos probados
+  (Qwen2.5-0.5B ~491 MB, el recomendado para corregir · Llama 3.2 1B ~808 MB ·
+  Qwen2.5-1.5B ~1,1 GB · **Qwen3-4B-Instruct-2507 ~2,4 GB, el mejor para
+  reescribir**) y «Otro (repo o URL de Hugging Face)…» para pegar `owner/repo` o
+  la dirección de un `.gguf`. Si el fichero no está en el disco, el bloque enseña
   **Descargar** y lo baja a `models-llm/` con progreso.
 - *Modelo IA* (solo Custom/Cloud): «El modelo que corrige en la nube.»
 - *API key* (solo Custom/Cloud): «Clave del endpoint si la exige (Custom:
@@ -290,7 +302,7 @@ registrado se muestra en la app (Ajustes).
 ## Tests
 
 ```powershell
-cargo test   # 345 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo test   # 352 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 cargo check  # sin errores
 ```
 

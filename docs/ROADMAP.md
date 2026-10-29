@@ -27,8 +27,8 @@ riesgo. Los documentos hermanos (`CORRECCION-VOZ.md`, `EMPAQUETADO.md`,
 | Build release | `target/release/silb.exe` | Presente (~43 MB), sin consola (`windows_subsystem`), log a archivo. |
 | Licencia y documentación | `LICENSE`, `README.md`, `docs/` | MIT (10/09/2026); `docs/ARQUITECTURA.md` (recorrido del código para quien no ha tocado Rust), `docs/GUIA-USUARIO.md` y doc-comments públicos en español (11/09/2026). |
 
-Versión actual del paquete: **0.7.0** (`Cargo.toml`). Rama de la release:
-`release/0.7.0` (la rama `main` es la versión web antigua y desde aquí no se
+Versión actual del paquete: **0.7.1** (`Cargo.toml`). Rama de la release:
+`release/0.7.1` (la rama `main` es la versión web antigua y desde aquí no se
 toca).
 
 > **Actualización 26/10/2026 (0.5.0)**: el roadmap de abajo se escribió en
@@ -67,6 +67,7 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 | 5 | P3 (backlog) | Transcripción casi-tiempo-real | — | Ventanas solapadas + re-decodificación parcial. Riesgo alto, toca el núcleo de grabación; requiere prueba manual de micrófono. |
 | 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |
 | 7 | **Hecho** | Elegir el modelo de IA desde Ajustes, descargándolo de Hugging Face | [`UI-FUTURA.md`](UI-FUTURA.md) §8 | Implementado en la 0.7: desplegable con lista curada + «Otro» (repo o URL), botón «Descargar» con progreso y descarga a `models-llm/` (commits `1c0e7c9`, `7981f3c`, `f7ec5f0`). |
+| 8 | **Hecho** | Reescritura por IA: el modelo reescribe el turno entero | [`CORRECCION-VOZ.md`](CORRECCION-VOZ.md) §6.7 | Implementado en la 0.7.1: tres modos (Desactivada / Corrección / Reescritura), prompt de editor, guard numérico delante del modelo, listón del 50 % y Qwen3-4B-Instruct-2507 recomendado (commits `421160a`, `1678412`, `a86e12b`, `b6302fb`). |
 
 ### Orden recomendado de trabajo
 

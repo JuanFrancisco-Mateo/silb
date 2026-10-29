@@ -39,7 +39,7 @@ use iced::{window, Background, Color, Element, Length, Padding, Point, Subscript
 
 use crate::audio::AudioCapture;
 use crate::config::{
-    BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, Config, CorrectionProvider,
+    AiMode, BubbleCorner, BubbleHideTimeout, BubbleSize, BubbleStyle, Config, CorrectionProvider,
     FontSize, ThemeMode,
 };
 use crate::domain::cleanup::{clean_transcript_with, FillerWords};
@@ -230,6 +230,9 @@ pub enum Message {
     ToggleAutoInject(bool),
 /// Corrección IA (con otro modelo) encendida o apagada — Ajustes.
     ToggleAiCorrection(bool),
+/// Modo de la IA elegido en Ajustes (0.7.1): desactivada, corrección de las
+/// auto-correcciones o reescritura del turno entero.
+    AiModeChanged(AiMode),
 /// Con qué se corrige: local por defecto, en la nube o un servidor propio.
     CorrectionProviderChanged(CorrectionProvider),
 /// Dirección del corrector (base_url de un servicio OpenAI-compatible).
@@ -1244,10 +1247,15 @@ impl WhisprApp {
         };
         let input = p.target.clone(); // el turno completo enviado al LLM
         let force_inject = p.force_inject;
+        // (0.7.1) El modo con el que se pidió: cambia el listón anti-truncación
+        // y el nombre que sale en el log (el usuario diagnostica leyendo el
+        // archivo de log, así que se dice tal cual).
+        let modo = self.config.ai_mode();
 
         crate::log!(
             "llm",
-            "corrector (in-turn) devolvió: input={:?} output={:?}",
+            "corrector (in-turn) devolvió: modo={} input={:?} output={:?}",
+            modo.id(),
             input,
             redacted
         );
@@ -1308,11 +1316,22 @@ impl WhisprApp {
         // autocorrección clara que lo explique, se tira y se escribe el texto
         // ORIGINAL — el dictado no se pierde ni se recorta (ver
         // `guard_anti_truncacion`). Se mira el texto que de verdad se va a
-        // escribir (reconstrucción incluida): los umbrales y la lógica no cambian.
-        if crate::llm::guard_anti_truncacion(&input, &effective_clean_text) != effective_clean_text {
+        // escribir (reconstrucción incluida).
+        //
+        // (0.7.1) El listón depende del modo: en Reescritura baja al 50 % porque
+        // quitar muletillas recorta de verdad («la verdad es que», «bueno», «o
+        // sea»…). En Corrección se queda como estaba (60 %). El «texto original»
+        // al que se vuelve es `input`, que en Reescritura ya viene pasado por el
+        // guard numérico: así no se pierde un dato arreglado por volver al bruto.
+        let min_ratio = crate::llm::min_words_ratio(modo);
+        if crate::llm::guard_anti_truncacion_con(&input, &effective_clean_text, min_ratio)
+            != effective_clean_text
+        {
             crate::log!(
                 "llm",
-                "in-turn: respuesta recortada respecto al input (guard anti-truncación), fallback al input bruto: input={:?} output={:?}",
+                "in-turn: respuesta recortada respecto al input (guard anti-truncación, modo={} listón={}%), fallback al input: input={:?} output={:?}",
+                modo.id(),
+                (min_ratio * 100.0).round() as u32,
                 input,
                 effective_clean_text
             );
@@ -1329,7 +1348,8 @@ impl WhisprApp {
         if still_has_meta {
             crate::log!(
                 "llm",
-                "in-turn: la respuesta todavía contiene meta-lengua correctiva ({:?}), fallback al input bruto",
+                "in-turn: la respuesta todavía contiene meta-lengua correctiva (modo={}, {:?}), fallback al input",
+                modo.id(),
                 effective_clean_text
             );
             self.last_correction = Some(
@@ -1357,6 +1377,9 @@ impl WhisprApp {
         let removed = self.removed_fillers_summary();
         let summary = if input == clean {
             format!("Turno confirmado por IA (sin cambios): «{}»", clean)
+        } else if modo == crate::config::AiMode::Reescritura {
+            // Reescritura: el turno entero se ha reescrito, no solo un dato.
+            format!("Reescrito IA: «{}» → «{}»", input.trim(), clean)
         } else {
             // Se enseña la corrección aplicada: «antes → después», con la parte que
             // el modelo añadió de su cosecha resaltada.
@@ -1370,7 +1393,8 @@ impl WhisprApp {
         self.last_correction = Some(summary);
         crate::log!(
             "llm",
-            "in-turn aplicado: «{}» → «{}»",
+            "in-turn aplicado (modo={}): «{}» → «{}»",
+            modo.id(),
             input,
             clean
         );
@@ -1955,6 +1979,7 @@ impl WhisprApp {
                 | Message::ToggleAutoInject(..)) => self.handle_dictation_settings(m),
             m @ (Message::CorrectionProviderChanged(..)
                 | Message::ToggleAiCorrection(..)
+                | Message::AiModeChanged(..)
                 | Message::LlmEndpointChanged(..)
                 | Message::LlmModelChanged(..)
                 | Message::LlmModelPicked(..)
@@ -2731,25 +2756,31 @@ pub(crate) struct LlmStatusUi {
     pub(crate) label: String,
 }
 
-pub(crate) fn llm_status_ui(enabled: bool, status: &LlmStatus, model: &str) -> LlmStatusUi {
-    if !enabled {
+pub(crate) fn llm_status_ui(mode: AiMode, status: &LlmStatus, model: &str) -> LlmStatusUi {
+    if mode == AiMode::Off {
         return LlmStatusUi {
             kind: "dim",
             label: "○ Corrección IA: apagada — actívala en Ajustes".to_string(),
         };
     }
+    // El nombre dice el modo que hay puesto de verdad: en Reescritura se llama
+    // al modelo en CADA turno, y el usuario tiene que poder verlo de un vistazo.
+    let nombre = match mode {
+        AiMode::Reescritura => "Reescritura IA",
+        _ => "Corrección IA",
+    };
     match status {
         LlmStatus::Ready { .. } => LlmStatusUi {
             kind: "ok",
-            label: format!("● Corrección IA: activa · {model}"),
+            label: format!("● {nombre}: activa · {model}"),
         },
         LlmStatus::Disabled(reason) if !reason.is_empty() => LlmStatusUi {
             kind: "warn",
-            label: format!("○ Corrección IA: inactiva — {reason}"),
+            label: format!("○ {nombre}: inactiva — {reason}"),
         },
         _ => LlmStatusUi {
             kind: "dim",
-            label: "○ Corrección IA: comprobando…".to_string(),
+            label: format!("○ {nombre}: comprobando…"),
         },
     }
 }
@@ -3264,15 +3295,36 @@ mod tests {
     /// del server) y nombrar el modelo solo cuando la corrección puede actuar.
     #[test]
     fn chip_muestra_modelo_solo_cuando_la_correccion_esta_activa() {
-        let ui = llm_status_ui(true, &LlmStatus::Ready { launched: false }, "ornith-1.0-9b");
+        let ui = llm_status_ui(
+            AiMode::Correccion,
+            &LlmStatus::Ready { launched: false },
+            "ornith-1.0-9b",
+        );
         assert_eq!(ui.kind, "ok");
         assert!(ui.label.contains("activa"));
         assert!(ui.label.contains("ornith-1.0-9b"));
     }
 
+    /// (0.7.1) En Reescritura la fila de estado dice el modo de verdad.
+    #[test]
+    fn chip_nombra_la_reescritura_cuando_ese_es_el_modo() {
+        let ui = llm_status_ui(
+            AiMode::Reescritura,
+            &LlmStatus::Ready { launched: false },
+            "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+        );
+        assert_eq!(ui.kind, "ok");
+        assert!(ui.label.contains("Reescritura IA"));
+        assert!(ui.label.contains("Qwen3-4B"));
+    }
+
     #[test]
     fn chip_dice_apagada_con_toggle_off_y_no_promete_modelo() {
-        let ui = llm_status_ui(false, &LlmStatus::Ready { launched: true }, "gpt-4o-mini");
+        let ui = llm_status_ui(
+            AiMode::Off,
+            &LlmStatus::Ready { launched: true },
+            "gpt-4o-mini",
+        );
         assert_eq!(ui.kind, "dim");
         assert!(ui.label.contains("apagada"));
         assert!(!ui.label.contains("gpt-4o-mini"));
@@ -3280,15 +3332,18 @@ mod tests {
 
     #[test]
     fn chip_no_esconde_el_motivo_de_estar_inactiva() {
-        let ui =
-            llm_status_ui(true, &LlmStatus::Disabled("servidor no encontrado".into()), "");
+        let ui = llm_status_ui(
+            AiMode::Correccion,
+            &LlmStatus::Disabled("servidor no encontrado".into()),
+            "",
+        );
         assert_eq!(ui.kind, "warn");
         assert!(ui.label.contains("servidor no encontrado"));
     }
 
     #[test]
     fn chip_avisa_mientras_comprueba_el_server() {
-        let ui = llm_status_ui(true, &LlmStatus::Unknown, "");
+        let ui = llm_status_ui(AiMode::Correccion, &LlmStatus::Unknown, "");
         assert_eq!(ui.kind, "dim");
         assert!(ui.label.contains("comprobando"));
     }

@@ -5,10 +5,11 @@ nativo y ruta configurable), t_6b9348de (protección contra respuestas
 recortadas), t_301476a8 (liberar la memoria), t_e25f8ab7 (opciones claras y
 transparencia), t_c2b0a22f (proveedores Local/Custom/Cloud), t_1fc864ef
 (protección numérica por código) y t_d64797c2 (esa protección ampliada a frases
-naturales + la reconstrucción como texto realmente escrito en la app). Este
-documento es la referencia de **cómo funciona hoy** el corrector con IA; los
-nombres de archivos y funciones que se citan están comprobados contra el código
-(rama `native-iced`).
+naturales + la reconstrucción como texto realmente escrito en la app). La 0.7.1
+(t_0f10c745) añade el modo Reescritura y mueve el guard numérico delante del
+modelo (§6.7). Este documento es la referencia de **cómo funciona hoy** el
+corrector con IA; los nombres de archivos y funciones que se citan están
+comprobados contra el código (rama `release/0.7.1`).
 
 Objetivo: que quien dicta pueda corregir lo que acaba de decir **hablando**, con
 frases como el ejemplo de siempre:
@@ -363,6 +364,9 @@ las palabras de corrección que hay entre los dos).
   `handle_llm_redaction` (app.rs) la reconstrucción es `effective_clean_text`, se
   pasa por la protección contra respuestas recortadas (§6.4) y es lo que se
   escribe.
+- Desde la 0.7.1 el mismo guard se aplica **antes** del modelo
+  (`precondition_numeric`, §6.7): en Reescritura el turno viaja ya reconstruido
+  y el modelo solo tiene que limpiarlo.
 
 Casos cubiertos por tests (los casos reales del registro, §H1 de
 `QA-REPORT-DEPURACION.md`):
@@ -382,6 +386,89 @@ Casos cubiertos por tests (los casos reales del registro, §H1 de
 | LLM output | «que calor que hace en cartagena» |
 | Guard | ratio 4/7 ≥ 0.6 → acepta |
 | Inyectado en app activa | «que calor que hace en cartagena» |
+
+### 6.7 Modo REESCRITURA (0.7.1, t_0f10c745)
+
+El modo IN‑TURN de arriba solo entra cuando el clasificador **ve** una
+corrección. La 0.7.1 añade un tercer modo en el que la IA trabaja **en cada
+turno**: recibe el dictado entero y devuelve ese mismo texto bien escrito.
+
+Tres modos, un solo ajuste (`src/config.rs`, `AiMode::ALL`):
+
+| Modo | `ai_mode` en config.json | Qué hace |
+|---|---|---|
+| Desactivada | `off` | Nada: el texto se escribe tal cual. |
+| Corrección | `correccion` | Como en la 0.7.0: solo con auto-corrección. |
+| Reescritura | `reescritura` | El modelo reescribe el turno entero, cada turno. |
+
+Compatibilidad: el campo viejo `ai_correction_enabled` sigue leyéndose
+(`true` → `correccion`, `false` → `off`), y `ai_correction_enabled()` ahora
+significa «modo distinto de `off`».
+
+**Prompt** (`SYSTEM_PROMPT_REWRITE`, `src/llm.rs`). Es un prompt de editor, no de
+corrector. Cinco reglas, en este orden:
+
+1. Si el hablante se corrigió («digo X», «quiero decir X», «mejor dicho X», «no X
+   sino Y», «en vez de»), se queda la versión corregida y se borra la
+   rectificación.
+2. Quita muletillas y repeticiones («bueno», «o sea», «la verdad que», «es que»)
+   sin cargarse el contenido.
+3. **Conserva TODOS los datos** (cifras, nombres, fechas, lugares), no añade
+   información y **no resume**.
+4. Mantiene el registro y el tono de quien habla: no lo convierte en un
+   comunicado.
+5. Devuelve SOLO el texto final, sin comillas ni explicaciones.
+
+La llamada es `rewrite(turn, cfg) -> Result<String, String>`, que comparte
+`ask_text` con `redact`: mismo `temperature: 0.0`, mismo `max_tokens: 1024`,
+mismo `chat_template_kwargs.enable_thinking = false`, misma limpieza de la
+respuesta (`clean_redact_output`) y mismo extractor (`content`, y si viene vacío
+`reasoning_content`). Lo único que cambia entre los dos modos es el `system`.
+
+**Orden: guards → LLM** (esto es lo importante de la 0.7.1). Antes de mandar
+nada al modelo, el turno pasa por el guard numérico determinista:
+
+```text
+turno de whisper
+  → precondition_numeric(&processed)      // «83 digo 84» → «84»
+  → rewrite(&target) / redact(&target)     // el modelo recibe el texto YA arreglado
+  → guard_numeric_substitution(input, salida)
+  → guard_anti_truncacion_con(input, texto, min_words_ratio(modo))
+  → se escribe el mejor texto disponible
+```
+
+`precondition_numeric` (`src/llm.rs`) es el guard de §6.5 aplicado al dictado con
+`output` vacío: así no puede dar por buena ninguna respuesta del modelo
+(todavía no hay) y reconstruye él. Devuelve `None` si no hay nada que arreglar.
+Motivo medido: con el turno crudo, Qwen3‑4B contesta «allá por el **83 o el
+84**» (se inventa la disyuntiva) y se pierde una corrección que el código hacía
+bien; con el guard delante, escribe «allá por el 84» y tarda menos (0,43 s →
+0,37 s). El turno reconstruido es el que viaja **y** el que se recupera en los
+fallbacks, así que un fallo posterior no devuelve el «digo» a la pantalla.
+
+**Umbral de recorte: 50 %.** `min_words_ratio(AiMode::Reescritura)` baja el
+listón de §6.4 del 60 % al 50 %, porque quitar muletillas recorta de verdad
+(medido: 30–45 % de palabras en turnos largos con «la verdad que», «bueno», «o
+sea»). Por debajo del 50 % sigue oliendo a resumen y se descarta: se escribe el
+turno tal cual. Con marca inequívoca de autocorrección el listón se parte por la
+mitad (30 %), igual que en Corrección.
+
+**Modelo recomendado: Qwen3‑4B‑Instruct‑2507** (`Qwen3-4B-Instruct-2507-Q4_K_M`,
+~2,4 GB), añadido a la lista de descargables en `SMALL_LLM_MODELS`. Los tres
+pequeños (Qwen2.5‑0.5B, Llama 3.2 1B, Qwen2.5‑1.5B) siguen valiendo para
+Corrección, pero en Reescritura devuelven el texto sin tocar o una lista de
+reglas: si se elige Reescritura con uno de ellos, Ajustes avisa con
+`is_small_llm` (no cambia el modelo por su cuenta).
+
+**Límites, dichos claros:**
+
+- **No resumir**: lo pide el prompt y lo vigila el listón del 50 %; aun así un
+  modelo pequeño puede resumir, y eso se descarta (se escribe el dictado).
+- **Disyuntivas inventadas con números que no vienen del guard**: el guard
+  numérico solo entiende dígitos y la lista corta de `NUM_WORDS`; con «tres mil»
+  o «cuarenta y ocho» no interviene y el modelo puede escribir «X o Y».
+- **Tarda algo más por turno**: en Reescritura el modelo se llama siempre, no
+  solo cuando hay corrección (ver §10).
 
 ---
 
@@ -488,10 +575,12 @@ OpenAI-compatible…», etc.
 ### 9.2 Ajustes → Corrección IA (primer nivel)
 
 - Línea de estado en vivo (la misma lógica que el aviso).
-- Casilla «Corrección IA: una IA revisa y corrige lo que dictas» + explicación:
-  «Al terminar un turno, la IA lo revisa y corrige («digo X», «no, era Y»…). Si
-  el servidor de IA no está disponible, el dictado se inserta entero, sin
-  corregir.»
+- **Modo de IA** (pick_list de tres, desde la 0.7.1; antes era una casilla):
+  `Desactivada` · `Corrección` · `Reescritura`, cada uno con su explicación de
+  una línea (`AiMode::description`). Desactivada: «El dictado se escribe tal
+  cual.» Corrección: «La IA arregla las auto-correcciones («digo X»). Solo actúa
+  cuando las detecta.» Reescritura: «La IA reescribe el turno entero, limpio y
+  puntuado. Tarda algo más en cada dictado.» (§6.7).
 - **Proveedor** (pick_list con las etiquetas de §2) + explicación: «Quién corrige
   lo que dictas: Local — llama.cpp, el que viene con la app (sin internet,
   recomendado) · Custom LLM — tu propio endpoint OpenAI-compatible · Cloud —
@@ -545,10 +634,13 @@ botones «Aplicar / Descartar».
 | Whisper Small (RTX 4070, CUDA) | tiempo real / ligeramente inferior (RTF ~0.2–0.5) |
 | Clasificadores (regex) | < 1 ms |
 | LLM 9B local, prompt ~250–400 tok, ~75 tok/s | ~4–6 s |
+| Qwen3‑4B‑Instruct‑2507 (RTX 4070, CUDA), por turno | **0,37–0,53 s** medidos |
 | Guard + aplicación + re-render | < 1 ms |
 
 La corrección con IA añade **~4–6 s solo cuando se detecta que quieres
-corregir** (in-turn o cross-turn); el dictado normal no lo paga. La espera por
+corregir** (in-turn o cross-turn); el dictado normal no lo paga. En **Reescritura
+sí se paga en cada turno**, pero con Qwen3‑4B son 0,37–0,53 s por turno medidos
+en una RTX 4070 (el «83 digo 84» con el guard delante: 166 ms). La espera por
 defecto (25 s) cubre ese margen de sobra, también con endpoints remotos.
 
 ---

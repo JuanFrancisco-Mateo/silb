@@ -113,9 +113,10 @@ texto y había que ir a la web a bajar el GGUF y dejarlo en la carpeta
 Qué se eligió:
 
 - **Desplegable con lista curada**, la opción barata de las dos: Qwen2.5-0.5B
-  (~491 MB, recomendado), Llama 3.2 1B (~808 MB) y Qwen2.5-1.5B (~1,1 GB). Son
-  los tres pequeños que ya recomendaba la pantalla, con su nombre de fichero y
-  su dirección reales en `src/llm.rs` (`SMALL_LLM_MODELS`).
+  (~491 MB, recomendado), Llama 3.2 1B (~808 MB), Qwen2.5-1.5B (~1,1 GB) y, desde
+  la 0.7.1, **Qwen3-4B-Instruct-2507** (~2,4 GB, el mejor para reescribir). Son
+  los modelos probados, con su nombre de fichero y su dirección reales en
+  `src/llm.rs` (`SMALL_LLM_MODELS`).
 - **«Otro (repo o URL de Hugging Face)…»** para lo que no esté en la lista: abre
   un campo donde se pega `owner/repo` (se leen los ficheros del repo por la API
   y se escoge el GGUF, prefiriendo `q4_k_m`) o la dirección directa del `.gguf`.
@@ -138,7 +139,37 @@ Límites, dichos claros en la propia pantalla:
 - La descarga **no toca el dictado**: si falla, queda un aviso en el bloque y se
   sigue dictando (sin corrección si no había modelo).
 
-## 9. Criterios de aceptación
+## 9. Tres modos de IA: Desactivada / Corrección / Reescritura (0.7.1) — implementado
+
+**Ya está hecho** (commits `421160a`, `1678412`, `a86e12b`, `b6302fb`). Antes,
+Ajustes → Corrección IA tenía **una sola casilla**: IA sí o no. Ahora es un
+selector de tres, porque hay dos maneras distintas de usar el modelo y la casilla
+no las distinguía:
+
+| Modo | Qué hace | Cuándo se llama al modelo |
+|---|---|---|
+| Desactivada | El dictado se escribe tal cual. | Nunca. |
+| Corrección | Arregla las auto-correcciones («digo X»). | Solo cuando el clasificador ve una. |
+| Reescritura | Reescribe el turno entero, limpio y puntuado. | En cada turno. |
+
+- **La casilla se va, la compatibilidad se queda**: `ai_mode` se deriva del
+  antiguo `ai_correction_enabled` y `ai_correction_enabled()` pasa a significar
+  «modo distinto de Off». Nadie tiene que tocar su `config.json`.
+- **La nota del selector** enseña una línea por modo (`AiMode::description`), y
+  la de Reescritura avisa de que **tarda algo más en cada dictado**: es la única
+  diferencia de coste que el usuario nota.
+- **Aviso del modelo pequeño**: con Reescritura puesta y Qwen2.5-0.5B, Llama 3.2
+  1B o Qwen2.5-1.5B elegidos, sale una nota ámbar («Para reescribir se recomienda
+  Qwen3-4B: los pequeños devuelven el texto sin tocar o una lista de reglas»).
+  No se cambia el modelo por su cuenta: manda el usuario.
+- **El panel de respuesta dice qué pasó**: «Reescrito IA: «antes» → «después»» en
+  Reescritura, «Auto-corregido IA: …» en Corrección, y la fila de estado nombra
+  el modo activo (`Reescritura IA`).
+
+Detalle técnico del prompt, del orden guards → modelo y del umbral del 50 %:
+`CORRECCION-VOZ.md` §6.7.
+
+## 10. Criterios de aceptación
 
 - Todo color, espacio y radio sale de `src/theme.rs`; un valor nuevo se añade
   ahí, nunca suelto en `app.rs`.

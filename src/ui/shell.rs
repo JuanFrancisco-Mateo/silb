@@ -741,7 +741,15 @@ impl WhisprApp {
     /// `Dictation footer`: interruptor de corrección IA + promesa de
     /// privacidad (honesta: si el corrector sale a la nube, lo dice).
     fn dictation_footer(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
-        let enabled = self.config.ai_correction_enabled();
+        // (0.7.1) El pie dice el modo real: en Reescritura se llama al modelo en
+        // cada turno y eso no es «corrección».
+        let modo = self.config.ai_mode();
+        let enabled = modo != crate::config::AiMode::Off;
+        let nombre = if modo == crate::config::AiMode::Reescritura {
+            "Reescritura IA"
+        } else {
+            "Corrección IA"
+        };
         let ai_state = if !enabled {
             "Desactivada".to_string()
         } else {
@@ -767,7 +775,7 @@ impl WhisprApp {
         let mut footer = row![
             row![
                 icons::icon(icons::SPARKLES, 15.0),
-                text("Corrección IA").size(ty.body).color(c.secondary),
+                text(nombre).size(ty.body).color(c.secondary),
                 toggler(enabled)
                     .on_toggle(Message::ToggleAiCorrection)
                     .size(22.0)
