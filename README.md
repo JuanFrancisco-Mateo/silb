@@ -287,7 +287,7 @@ registrado se muestra en la app (Ajustes).
 ## Tests
 
 ```powershell
-cargo test   # 336 passed, 0 failed, 3 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo test   # 341 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 cargo check  # sin errores
 ```
 
