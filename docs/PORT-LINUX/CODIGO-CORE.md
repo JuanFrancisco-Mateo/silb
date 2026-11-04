@@ -1,6 +1,6 @@
-# CODIGO-CORE.md — Port whispr-open a Linux (Parte 2: código platform-specific)
+# CODIGO-CORE.md - Port whispr-open a Linux (Parte 2: código platform-specific)
 
-Rama: `feature/port-linux-codigo-core` · Autor: dev-02 · Fecha: 03/10/2026
+Rama: `feature/port-linux-codigo-core` - Autor: dev-02 - Fecha: 03/10/2026
 
 Qué es: el registro de los cambios de los 5 ficheros de este reparto (inject,
 single_instance, theme, config, bubble) para que la app compile en Windows Y en
@@ -22,7 +22,7 @@ leer el código, y la compilación de verdad queda en los pendientes de aquí ab
   (`inject_backend`):
   - `wl-clipboard` (por defecto): `wl-copy` (el texto por stdin) + `wtype` para
     la pulsación del pegado (el byte `\x16` por stdin; A VALIDAR en el binario).
-  - `ydotool`: `ydotool type -- <texto>` (uinput, funciona en todas partes —
+  - `ydotool`: `ydotool type -- <texto>` (uinput, funciona en todas partes  - 
     Xwayland incluido). Sin `ydotoold` corriendo NO teclea: el turno se queda en
     el portapapeles y se avisa (se degrada, pero nunca se pierde texto).
   - `wtype`: tecleo directo por teclado virtual; SE ATASCA con las apps que
@@ -58,8 +58,8 @@ leer el código, y la compilación de verdad queda en los pendientes de aquí ab
   eso ya funciona sin cambios (la función se sigue llamando `system_dark_mode()`
   desde app.rs y ui/poll.rs).
 - Por qué gsettings y no D-Bus a pelo: es el mismo dato, sin rehacer el protocolo
-  de D-Bus a mano — eso es trabajo de una librería, no de este port (regla «no
-  fabriques APIs»).
+  de D-Bus a mano - eso es trabajo de una librería, no de este port (regla "no
+  fabriques APIs").
 
 ### src/config.rs
 - Campo nuevo `inject_backend: Option<String>` (con comentario de documentación de
@@ -76,12 +76,12 @@ leer el código, y la compilación de verdad queda en los pendientes de aquí ab
 - Windows: TODO el winapi intacto (arrastre con SetCapture, noactivate,
   colocación por monitor).
 - Linux: la burbuja nace SIN poder robar el foco (en iced/winit sobre Wayland
-  `window::gain_focus` es Unsupported, y xdg_activation_v1 hace el resto) — por eso
+  `window::gain_focus` es Unsupported, y xdg_activation_v1 hace el resto) - por eso
   que no exista WS_EX_NOACTIVATE es solo estético: no hay nada que desactivar.
 - Los APAÑOS del ratón (left_button_down, right_button_down,
   capture_left_mouse, release_mouse_capture, BubbleDrag) mantienen contratos con
   sentido (no disparan el vigilante del Poll: valores neutros) y dejan en el
-  registro las limitaciones «arrastre corto» / «soltar fuera».
+  registro las limitaciones "arrastre corto" / "soltar fuera".
 - `apply_bubble_extras` / `move_to_corner` solo apuntan en el registro: lo de estar
   siempre encima y el fijado se resuelven con windowrulev2 de Hyprland
   (ver [apartado 2](PORT-LINUX/CODIGO-CORE.html#2-cómo-se-ve-en-linux-lo-que-hace-falta-a-mano)), no hablando con el compositor desde la app (fuera de alcance, ver la
@@ -104,7 +104,7 @@ pacman -S wl-clipboard wtype
 ```
 (gsettings ya está en cualquier sesión de Omarchy.)
 
-### hyprland.conf recomendado (windowrulev2 por título) — recomendación, no código
+### hyprland.conf recomendado (windowrulev2 por título) - recomendación, no código
 ```
 windowrulev2 = float, title:^(WhisprOpen-Bubble)$
 windowrulev2 = pin, title:^(WhisprOpen-Bubble)$
@@ -122,7 +122,7 @@ como ajuste del hyprland.conf del usuario.
    traduce; si no, el texto puede llegar pegado por otro camino. A validar en la
    Parte 3 del port.
 2. **ydotool sin servicio**: se degrada bien, pero el mensaje al usuario
-   («quedó copiado en el portapapeles») no dice que el culpable es el servicio —
+   ("quedó copiado en el portapapeles") no dice que el culpable es el servicio  - 
    queda documentado aquí y en el registro.
 3. **Arrastrar la burbuja con el botón derecho**: solo DENTRO de la burbuja
    (Wayland no expone el estado físico del botón fuera de ella). Si el usuario
@@ -190,4 +190,4 @@ Comprobado EN ESTA TAREA (leyendo y razonando, sin compilar):
   `#[cfg(unix)]`: Windows no la ve y sigue compilando igual.
 - El dato de gsettings/portal es documentación estándar de freedesktop
   (org.freedesktop.appearance color-scheme).
-- «A validar» en el binario está marcado en cada suposición con riesgo.
+- "A validar" en el binario está marcado en cada suposición con riesgo.

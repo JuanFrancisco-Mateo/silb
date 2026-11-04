@@ -1,4 +1,4 @@
-# EMPAQUETADO Y DISTRIBUCIÓN — especificación
+# EMPAQUETADO Y DISTRIBUCIÓN - especificación
 
 > **Rebautizado como Silb (v0.3.0)**: el binario pasa a llamarse `silb.exe` y el
 > instalador `silb-X.Y.Z-setup.exe` (AppName `Silb`, mismo `AppId`, así una
@@ -43,8 +43,8 @@ Un único ejecutable que lleva todo dentro, sin instalación.
   `small`, y 1.213 MB de memoria privada (ver [apartado 8](EMPAQUETADO.html#8-medidas-de-ligereza-reales-r6-11092026)). El `.exe` lleva el icono
   `.ico` dentro y arranca sin pedir permisos de administrador ni nada más allá
   del runtime de MSVC.
-- Ventajas: sin pedir permisos elevados, ideal para probar y para «probar a
-  mano». Desventajas: sin asociación de archivos, sin integración con el menú
+- Ventajas: sin pedir permisos elevados, ideal para probar y para "probar a
+  mano". Desventajas: sin asociación de archivos, sin integración con el menú
   Inicio, sin actualizarse sola.
 
 ### 1.2 Instalador (Inno Setup)
@@ -61,7 +61,7 @@ Qué lleva el instalador:
 - Icono `.ico` (se usa también para el acceso directo; el `.exe` ya lo lleva
   dentro, así que para `IconFilename` es redundante).
 - Licencia (`LICENSE`, MIT) en la pantalla de bienvenida (`InfoBeforeFile`).
-- Entrada en «Agregar o quitar programas» (nombre, versión, editor, icono).
+- Entrada en "Agregar o quitar programas" (nombre, versión, editor, icono).
 
 #### 1.2.1 Medidas reales del instalador (R6, 11/09/2026)
 
@@ -94,8 +94,8 @@ caja aislada). Exige **firma de código** obligatoria y un manifiesto
 
 ## 2. Firma de código
 
-Hace falta para que Windows SmartScreen no enseñe el aviso de «editor
-desconocido» y para MSIX.
+Hace falta para que Windows SmartScreen no enseñe el aviso de "editor
+desconocido" y para MSIX.
 
 - **Certificado**: uno de firma de código (OV u EV) de una autoridad (DigiCert,
   Sectigo, SSL.com), o uno autofirmado para pruebas internas.
@@ -108,13 +108,13 @@ desconocido» y para MSIX.
   instalador** (Inno permite firmar el `Setup.exe` al final con la directiva
   `SignTool` en la sección `[Setup]`, por ejemplo:
   `SignTool=ByParam /f $qcertfile /p $qcertpass /fd SHA256 /tr http://timestamp.digicert.com $f`).
-- **Windows te va a frenar**: sin firma, SmartScreen saca «Windows protected your
-  PC» y hay que pulsar «Más información → Ejecutar de todos modos». Con OV/EV
+- **Windows te va a frenar**: sin firma, SmartScreen saca "Windows protected your
+  PC" y hay que pulsar "Más información → Ejecutar de todos modos". Con OV/EV
   firmado, el aviso desaparece a medida que se gana reputación.
 
 ### Estado R6
 
-**Sin firma** en el proceso actual — se activará cuando haya un certificado
+**Sin firma** en el proceso actual - se activará cuando haya un certificado
 OV/EV. El `.iss` está listo para añadir la directiva `SignTool` en cuanto llegue
 el `.pfx`. NO se ha simulado ni inventado ningún certificado.
 
@@ -126,7 +126,7 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
   dependencias externas (solo `struct` y `zlib` de la biblioteca estándar de
   Python).
 - Formato: BMP DIB dentro de `.ico` (la máxima compatibilidad con el cargador de
-  recursos de Windows — el formato PNG-in-ICO lo rechazan algunas versiones de
+  recursos de Windows - el formato PNG-in-ICO lo rechazan algunas versiones de
   `rc.exe`).
 - Tamaños: **16, 24, 32, 48, 64, 128, 256 px** (el de 256 es obligatorio para
   Windows 11). Color del acento `#7C6CFF` (el mismo del icono de la bandeja
@@ -144,7 +144,7 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
   compilador de MSVC genera solo el manifiesto SxS del CRT
   (`vcruntime140_app.dll`, etc.). Si lo sobreescribes, la app no arranca con el
   error SxS 14001 (comprobado el 11/09/2026). El escalado de pantalla se queda en
-  «DPI Unaware» por ahora (se respeta el escalado de Windows; si algún día se
+  "DPI Unaware" por ahora (se respeta el escalado de Windows; si algún día se
   quiere Per-Monitor V2, se añadirá un `.rc` aparte con un recurso neutral (24),
   no un manifiesto).
 
@@ -176,8 +176,8 @@ Opciones, de menos a más trabajo:
 1. **Nada automático (v1)**: el usuario se baja el instalador nuevo a mano.
    Suficiente mientras haya pocos usuarios.
 2. **Comprobación de versión** (barato): al arrancar, preguntar a una dirección
-   fija (por ejemplo, la release más reciente de GitHub) y avisar «hay versión
-   nueva» con un enlace. Sin descarga automática.
+   fija (por ejemplo, la release más reciente de GitHub) y avisar "hay versión
+   nueva" con un enlace. Sin descarga automática.
 3. **Actualización automática completa**: 
    - Portable: algo tipo `self_update`/`sparkle` (reemplazar el binario y volver
      a lanzarlo). `self_replace` + un descargador.
@@ -193,12 +193,12 @@ instalador) son el canal natural para la v1.
 ## 6. Paquetes / ediciones futuras
 
 - **Edición única (v1)**: una sola distribución local completa. La app es privada
-  por diseño («nada sale de tu PC»); una única edición refuerza el mensaje.
+  por diseño ("nada sale de tu PC"); una única edición refuerza el mensaje.
 - **Ediciones opcionales futuras** (solo si hay demanda):
   - *Lite*: sin la IA correctora dentro (usa la corrección por reglas), binario
     más pequeño para equipos sin GPU.
   - *Pro*: notetaker de reuniones, identificación de hablantes, nube opcional.
-  - *Portable* vs *Instalada* no son «ediciones»: son dos formas de repartir la
+  - *Portable* vs *Instalada* no son "ediciones": son dos formas de repartir la
     misma edición.
 - Cualquier edición de pago obligaría a cambiar de licencia; hoy la app es MIT.
 
@@ -264,21 +264,21 @@ Lo decide la **presencia de un define** (ISPP no compara bien texto con número)
 Los tres se encadenan con `bash packaging/build-installers.sh [version]`: pack →
 `.sha256` → instalador online con `/DPACKURL` y `/DPACKSHA256` ya puestos. **Si
 se reconstruye el pack, hay que recompilar el online**: la URL y el hash van
-dentro y un hash viejo da «El hash del archivo es incorrecto» y cae a CPU.
+dentro y un hash viejo da "El hash del archivo es incorrecto" y cae a CPU.
 
 **Qué hace el online con la GPU** (`UseCuda`, en `[Code]`):
 
 1. `nvidia-smi.exe --query-gpu=name --format=csv,noheader` con código de salida
    0 (se invoca con `{sysnative}`: `{sys}` es SysWOW64 y ahí no está). Si no,
-   WMI `Win32_VideoController` con «NVIDIA» en el nombre. **No se exige VRAM ni
+   WMI `Win32_VideoController` con "NVIDIA" en el nombre. **No se exige VRAM ni
    runtime CUDA instalado**: el runtime viaja en el pack.
 2. Con GPU pide confirmación y baja `silb-cuda-pack-<v>.exe` del release con
    `TDownloadWizardPage`; el SHA-256 es **obligatorio**.
 3. Aplica el pack en silencio por encima de `{app}`: `silb.exe` CUDA + las tres
    DLL del runtime al lado, que es de donde Windows las resuelve.
 4. **Nunca aborta.** Sin red, 404, hash que no cuadra o el usuario dice que no →
-   instala en CPU, escribe `backend.txt` con `backend=cpu` y avisa «Sin
-   aceleración por GPU: se puede añadir después.» (en instalación silenciosa
+   instala en CPU, escribe `backend.txt` con `backend=cpu` y avisa "Sin
+   aceleración por GPU: se puede añadir después." (en instalación silenciosa
    eso es lo único que se ve, junto con `gpu=` y `aviso=`).
 
 El desinstalador limpia las tres DLL del pack con `[UninstallDelete]`: sin eso
@@ -288,18 +288,18 @@ quedaban 772 MB en `{app}` (el instalador online no las conoce como suyas).
 DLL (`cudart64_12.dll` 583.680 B y `cublas64_12.dll` 102.518.272 B), pero
 `cublas64_12.dll` importa **estáticamente** `cublasLt64_12.dll` (668.669.952 B):
 sin esa tercera el proceso no llega a arrancar en un equipo sin el kit CUDA en
-el PATH. La cuenta que daba «~100 MB» contaba dos DLL; con las tres el pack son
+el PATH. La cuenta que daba "~100 MB" contaba dos DLL; con las tres el pack son
 465 MB sin comprimir y **442,71 MiB** comprimido. Las tres las copia
 `bash packaging/build-cuda-runtime.sh` a `packaging\build\cuda12\` (idempotente,
 verifica tamaño y sha256; no va a git).
 
 **Licencia del runtime.** Las tres DLL son redistribuibles: el *CUDA Toolkit
 Supplement to Software License Agreement for NVIDIA Software Development Kits*
-lo dice en el apartado 2.2 «Distribution» («The portions of the SDK that are distributable
-under the Agreement are listed in Attachment A») y en el apartado 2.6 «Attachment A», que
-incluye `cudart.dll` y `cublas.dll` / `cublasLt.dll` «including certain
+lo dice en el apartado 2.2 "Distribution" ("The portions of the SDK that are distributable
+under the Agreement are listed in Attachment A") y en el apartado 2.6 "Attachment A", que
+incluye `cudart.dll` y `cublas.dll` / `cublasLt.dll` "including certain
 variations of these files that have version number or architecture specific
-information embedded in the file name» — o sea `cudart64_12.dll`,
+information embedded in the file name" - o sea `cudart64_12.dll`,
 `cublas64_12.dll` y `cublasLt64_12.dll`. Texto en `docs.nvidia.com/cuda/eula/`
 (`index.html`, apartados 2.2 y 2.6); se cita tal cual, sin copiar la URL del PDF.
 
@@ -325,7 +325,7 @@ desinstalar.
 
 **Actualizar con Silb abierto.** Inno usa `CloseApplications` (por defecto
 `yes`) y el Restart Manager de Windows: en modo interactivo se para en
-«Preparando la instalación», lista `silb.exe` y pide cerrarla; en silencioso la
+"Preparando la instalación", lista `silb.exe` y pide cerrarla; en silencioso la
 cierra solo (`/CLOSEAPPLICATIONS`). Si te niegas, el instalador no puede
 reemplazar `silb.exe` y termina con error. Silb no llama a
 `RegisterApplicationRestart`, así que el Restart Manager no la vuelve a abrir: lo
@@ -365,7 +365,7 @@ tamaño con el de la base.
 
 | Variante | Tamaño | Δ vs base | % |
 |---|---:|---:|---:|
-| Base (`lto=true, strip=true`) | 44.854.272 B (42,77 MiB) | — | — |
+| Base (`lto=true, strip=true`) | 44.854.272 B (42,77 MiB) | - | - |
 | + `opt-level="z"` | 39.932.928 B (38,08 MiB) | -4.921.344 B | -11,0 % |
 | + `panic="abort"` | 40.923.648 B (39,03 MiB) | -3.930.624 B | -8,8 % |
 | TODO (`cgu=1` + `opt-level=z` + `panic=abort`) | 36.868.096 B (35,16 MiB) | -7.986.176 B | -17,8 % |
@@ -383,15 +383,15 @@ Motivos (medidos el 11/09/2026):
 1. **El binario ya cumple el objetivo de tamaño** (44,99 MiB con la función
    `image` activa tras la Personalización III; instalador 23,21 MiB tras LZMA,
    ver [apartado 1.2.1](EMPAQUETADO.html#121-medidas-reales-del-instalador-r6-11092026)).
-2. **`opt-level="z"` ahorra 4,92 MiB (-11,0 %)** — pero penaliza la velocidad: la
+2. **`opt-level="z"` ahorra 4,92 MiB (-11,0 %)** - pero penaliza la velocidad: la
    app va sobrada de GPU al transcribir (whisper.cpp + CUDA) y justa de CPU al
    dibujar (Iced 0.13); perder un 11 % de velocidad por 4 MiB no compensa.
-3. **`panic="abort"` ahorra 3,93 MiB (-8,8 %)** — pero rompe el
+3. **`panic="abort"` ahorra 3,93 MiB (-8,8 %)** - pero rompe el
    `catch_unwind` que Iced/winit pueden usar para sobrevivir a un fallo interno
    (la app actual no lo hace a propósito, pero lo normal en Rust es mantener
    `unwind` para no cambiar cómo se comportan los fallos de la biblioteca
    estándar).
-4. **TODO (`cgu=1 + z + abort`) ahorraría 7,99 MiB (-17,8 %)** — solo útil si
+4. **TODO (`cgu=1 + z + abort`) ahorraría 7,99 MiB (-17,8 %)** - solo útil si
    algún día el binario pasa de ~50 MiB (por ejemplo, si CUDA se enlaza de
    verdad dentro). Hoy no compensa.
 
@@ -423,7 +423,7 @@ WorkingSet y Private en el Administrador de tareas (o con `tasklist`).
 ### 8.4 Decisión sobre prerroll y carga del modelo
 
 Dejar el modelo cargado al arrancar (en un hilo de fondo) **se mantiene**: el
-coste de 1–2 s en la primera pulsación del atajo se paga al empezar la sesión, no
+coste de 1-2 s en la primera pulsación del atajo se paga al empezar la sesión, no
 a mitad del dictado. Si no quieres ese gasto de RAM, basta cambiar el modelo a
 `tiny` en Ajustes → Modelo (~75 MB en disco, +80 MB en RAM).
 
@@ -459,7 +459,7 @@ Coherente con la medición de R6 (486 / 1.213 MiB).
 
 **Guard de instancia única:** comprobado. La segunda ejecución apunta
 `[main] ya hay otra instancia corriendo: salgo sin tocar atajo ni bandeja`,
-muestra un `MessageBoxW` con título «Silb» y **no** registra bandeja, burbuja ni
+muestra un `MessageBoxW` con título "Silb" y **no** registra bandeja, burbuja ni
 atajo global.
 
 
@@ -481,7 +481,7 @@ atajo global.
 
 ---
 
-## VISIÓN DE Juanfri 29/10/2026 — el instalador se adapta al equipo — **CERRADA en la 0.8.0**
+## VISIÓN DE Juanfri 29/10/2026 - el instalador se adapta al equipo - **CERRADA en la 0.8.0**
 
 Guía de diseño para la **release final**, en sus palabras, y en qué quedó cada
 punto:
@@ -515,15 +515,15 @@ la (c) (meter el runtime dentro del instalador base).
   visión quería evitar.
 - **La (b) llega tarde.** El usuario tendría que ir a Ajustes a buscar la
   aceleración de algo que ya ha instalado; y como el fallo de una GPU sin
-  runtime es «no arranca», el sitio natural para resolverlo es el instalador,
+  runtime es "no arranca", el sitio natural para resolverlo es el instalador,
   que es el único que puede verificar el fichero antes de aplicarlo.
 - **Coste asumido:** el instalador online lleva la URL y el SHA-256 del pack
   incrustados, así que si el pack se reconstruye hay que recompilar el online
   (`build-installers.sh` lo hace en cadena). Un hash que no cuadra no rompe la
   instalación: cae a CPU y avisa.
 
-**¿Qué es «tiene CUDA»? → basta con el driver NVIDIA** (`nvidia-smi` con código
-de salida 0 → WMI `Win32_VideoController` con «NVIDIA»). **No** se comprueba que
+**¿Qué es "tiene CUDA"? → basta con el driver NVIDIA** (`nvidia-smi` con código
+de salida 0 → WMI `Win32_VideoController` con "NVIDIA"). **No** se comprueba que
 el runtime 12 esté instalado (viaja en el pack) ni que haya VRAM:
 
 - **El runtime no hace falta comprobarlo**: las DLL van junto al `.exe` y

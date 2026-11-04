@@ -1,4 +1,4 @@
-# Guía de usuario — Silb
+# Guía de usuario - Silb
 
 
 Silb es un dictado por voz local: hablas, la app transcribe y escribe el texto
@@ -28,15 +28,15 @@ equivocas, lo arreglas hablando. Y si prefieres tocar el texto con el teclado,
 
 ## 2. Dictar
 
-1. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar). Suena un «clic».
+1. Pulsa **Ctrl+Shift+D** (o el botón ● Grabar). Suena un "clic".
 2. Habla con naturalidad. La barra del micrófono dibuja el **pico** del turno
-   (`pico N%`) y te avisa ahí mismo si algo va mal: «pico al máximo: el micrófono
-   puede estar saturando» o «sin señal del micrófono: ¿está silenciado?».
+   (`pico N%`) y te avisa ahí mismo si algo va mal: "pico al máximo: el micrófono
+   puede estar saturando" o "sin señal del micrófono: ¿está silenciado?".
 3. Vuelve a pulsar **Ctrl+Shift+D** (o suelta). La app transcribe y escribe el
-   texto en la app que tenga el foco (Slack, Notion, VS Code…).
+   texto en la app que tenga el foco (Slack, Notion, VS Code...).
 
-Si «Autoinyectar» está desactivado, el texto se queda en la ventana de Silb y
-puedes usar «Escribir en app» o «Copiar».
+Si "Autoinyectar" está desactivado, el texto se queda en la ventana de Silb y
+puedes usar "Escribir en app" o "Copiar".
 
 ## 3. Corregir hablando (lo importante)
 
@@ -45,17 +45,17 @@ más: sigues dictando y te corriges en voz alta.
 
 ### 3.1 Corregirte sobre la marcha (mismo chorro de voz)
 
-Dices algo y te arreglas en la misma frase — lo que sobra es el error:
+Dices algo y te arreglas en la misma frase - lo que sobra es el error:
 
-> «que calor que hace en murcia **digo cartagena**»
+> "que calor que hace en murcia **digo cartagena**"
 > → escribe: *que calor que hace en cartagena*
 
 Frases que reconoce:
-- **digo X / diga X / dime X**: «el cliente es Acme **quiero decir** Microsoft»
-- **quiero decir X / quise decir X / mejor dicho X**: «quedamos a las tres,
-  **mejor dicho** a las cuatro»
-- **en vez de / en lugar de**: «voy a las tres **en vez de** las cuatro»
-- **mejor X que Y / no X sino Y**: «no el martes **sino** el jueves»
+- **digo X / diga X / dime X**: "el cliente es Acme **quiero decir** Microsoft"
+- **quiero decir X / quise decir X / mejor dicho X**: "quedamos a las tres,
+  **mejor dicho** a las cuatro"
+- **en vez de / en lugar de**: "voy a las tres **en vez de** las cuatro"
+- **mejor X que Y / no X sino Y**: "no el martes **sino** el jueves"
 
 Regla mental: di la versión mala, di la palabra con la que te corriges, di la
 versión buena. La app quita esa palabra y lo que la rodea.
@@ -64,15 +64,15 @@ versión buena. La app quita esa palabra y lo que la rodea.
 
 Te refieres a lo que acabas de dictar:
 
-> «la reunión es a las **4** en punto» → al siguiente turno: «**no no lo
-> último está mal, es 2 en vez de 4**»
+> "la reunión es a las **4** en punto" → al siguiente turno: "**no no lo
+> último está mal, es 2 en vez de 4**"
 > → el texto queda: *la reunión es a las 2 en punto*
 
 Frases que reconoce:
-- **no / mal / me equivoqué** + referencia al texto: «no, eso no, era 5»
-- **referencias** a lo anterior: «lo último», «ese número», «la última frase»
-- **verbos de corrección**: «corrige», «cambia», «pon», «quita», «borra»
-- **número + en vez de**: «es 2 en vez de 4»
+- **no / mal / me equivoqué** + referencia al texto: "no, eso no, era 5"
+- **referencias** a lo anterior: "lo último", "ese número", "la última frase"
+- **verbos de corrección**: "corrige", "cambia", "pon", "quita", "borra"
+- **número + en vez de**: "es 2 en vez de 4"
 
 ### 3.3 Si la corrección no se aplica
 
@@ -82,14 +82,14 @@ habituales:
 
 | Síntoma | Causa probable | Qué hacer |
 |---|---|---|
-| Inserta «digo X» literalmente | El clasificador no vio señal clara, o el LLM no llegó a tiempo | Repite la corrección más explícita («no, quería decir X») o revisa el chip de estado |
-| El chip dice «inactiva — …» | Server LLM no disponible | Ajustes → Corrección IA → Server LLM (o activa la corrección) |
+| Inserta "digo X" literalmente | El clasificador no vio señal clara, o el LLM no llegó a tiempo | Repite la corrección más explícita ("no, quería decir X") o revisa el chip de estado |
+| El chip dice "inactiva - ..." | Server LLM no disponible | Ajustes → Corrección IA → Server LLM (o activa la corrección) |
 | Corrige a veces, otras no | Sensibilidad del clasificador (default 50) | Sube **Sensibilidad** en Ajustes avanzados para que enrute más casos al LLM |
 | Se inserta sin corregir tras esperar | Se agotó el tiempo de espera (25 s por defecto) | Sube **Espera máx. (s)** en Ajustes avanzados |
 | El modelo devolvió un resumen | La protección contra respuestas recortadas lo descartó | Nada: se mantiene tu texto original (nunca se pierde) |
 
 Si prefieres decidir tú antes de aplicar nada: Ajustes → Corrección IA →
-«Confirmar antes de aplicar» (enseña «Aplicar / Descartar»). Hay «Deshacer ↩» de
+"Confirmar antes de aplicar" (enseña "Aplicar / Descartar"). Hay "Deshacer ↩" de
 1 nivel por si una corrección se aplicó mal.
 
 ### 3.4 Modo Reescritura: la IA escribe el turno entero
@@ -100,14 +100,14 @@ hay **tres modos** en Ajustes → Corrección IA:
 | Modo | Qué hace |
 |---|---|
 | **Desactivada** | El dictado se escribe tal cual. |
-| **Corrección** | Solo arregla las auto-correcciones («digo X»). Es lo de los apartados [3.1](GUIA-USUARIO.html#31-corregirte-sobre-la-marcha-mismo-chorro-de-voz) y [3.2](GUIA-USUARIO.html#32-corregir-el-turno-anterior-cross-turn). |
+| **Corrección** | Solo arregla las auto-correcciones ("digo X"). Es lo de los apartados [3.1](GUIA-USUARIO.html#31-corregirte-sobre-la-marcha-mismo-chorro-de-voz) y [3.2](GUIA-USUARIO.html#32-corregir-el-turno-anterior-cross-turn). |
 | **Reescritura** | Reescribe el turno entero: limpio, puntuado, sin muletillas ni auto-correcciones. |
 
 Con **Reescritura** puedes hablar de corrido y sin cuidado:
 
-> «La verdad es que me duele mucho la cabeza y bueno el otro día allá por el 84
+> "La verdad es que me duele mucho la cabeza y bueno el otro día allá por el 84
 > me comí una pizza y la verdad que fue una experiencia totalmente increíble
-> digo una experiencia totalmente asombrosa»
+> digo una experiencia totalmente asombrosa"
 > → escribe: *Me duele mucho la cabeza. El otro día, allá por el 84, me comí una
 > pizza y fue una experiencia totalmente increíble, una experiencia totalmente
 > asombrosa.*
@@ -119,14 +119,14 @@ Lo que necesitas saber:
   modelos pequeños (Qwen2.5-0.5B, Llama 3.2 1B, Qwen2.5-1.5B) valen para
   Corregir, pero al reescribir devuelven el texto sin tocar o una lista de
   reglas: si pones Reescritura con uno de ellos, Ajustes te lo avisa.
-- **Tarda un poco en cada turno** (0,37–0,53 s medidos con Qwen3-4B en una RTX
+- **Tarda un poco en cada turno** (0,37-0,53 s medidos con Qwen3-4B en una RTX
   4070). Es el precio de que el modelo lea siempre el turno entero.
 - **No resume**: si la respuesta se queda a menos de la mitad de las palabras del
   dictado, se descarta y se escribe lo que dijiste. El panel dirá que se mantuvo
   el texto original.
-- **Los números dichos con palabras** («tres mil», «cuarenta y ocho») no los
-  vigila la protección numérica: ahí el modelo puede escribir «X o Y» con una
-  disyuntiva que no dijiste. Con cifras en dígitos («83 digo 84») la protección
+- **Los números dichos con palabras** ("tres mil", "cuarenta y ocho") no los
+  vigila la protección numérica: ahí el modelo puede escribir "X o Y" con una
+  disyuntiva que no dijiste. Con cifras en dígitos ("83 digo 84") la protección
   se aplica antes del modelo y el resultado es el bueno.
 - El cambio de modo **no rompe tu configuración**: quien venía con la corrección
   encendida se queda en *Corrección*, y quien la tenía apagada, en *Desactivada*.
@@ -138,19 +138,19 @@ que quieras con el teclado, como en cualquier nota.
 
 - **Editar y seguir dictando no se pisan**: cada turno nuevo se añade al final de
   lo que ya hayas corregido a mano.
-- **Copiar** confirma con un «✓ Copiado» breve en el propio botón. Si el
+- **Copiar** confirma con un "✓ Copiado" breve en el propio botón. Si el
   portapapeles falla, verás el error en el panel superior.
-- **Limpiar** pide confirmación («¿Borrar la nota? Sí / No») y el borrado se
-  puede deshacer con «↩ Deshacer borrado» durante el turno siguiente.
-- La corrección por voz («no, era X») sigue funcionando sobre lo último de la
+- **Limpiar** pide confirmación ("¿Borrar la nota? Sí / No") y el borrado se
+  puede deshacer con "↩ Deshacer borrado" durante el turno siguiente.
+- La corrección por voz ("no, era X") sigue funcionando sobre lo último de la
   nota, incluido lo que hayas editado a mano.
 
-Si «Autoinyectar» está desactivado, el texto se queda en la ventana de Silb y
-puedes usar «Escribir en app» o «Copiar».
+Si "Autoinyectar" está desactivado, el texto se queda en la ventana de Silb y
+puedes usar "Escribir en app" o "Copiar".
 
 ## 5. Diccionario personal
 
-Para jerga, siglas y nombres propios (nombres de la empresa, palabras en inglés…):
+Para jerga, siglas y nombres propios (nombres de la empresa, palabras en inglés...):
 Ajustes → Diccionario. Cada entrada es una palabra que Whisper no transcribe bien
 y que la app intenta respetar al dictar.
 
@@ -179,7 +179,7 @@ preset se mantiene.
 ### 6.2 Campos editables (12)
 
 Cada fila tiene un campo hex (`#RRGGBB` o `#RGB`, en mayúsculas o minúsculas, con
-o sin `#`), una muestra del color actual y un botón «Restaurar» que devuelve ese
+o sin `#`), una muestra del color actual y un botón "Restaurar" que devuelve ese
 campo al valor por defecto del modo activo. Los 12 campos:
 
 | Etiqueta              | Qué controla                                            |
@@ -198,23 +198,23 @@ campo al valor por defecto del modo activo. Los 12 campos:
 | Bordes                | Bordes sutiles de tarjetas y separadores.               |
 
 Si el hex que escribes no vale, la app **lo ignora y usa el valor por defecto**
-(no rompe la interfaz, no saca una ventana de error). Al pulsar «Aplicar» el
+(no rompe la interfaz, no saca una ventana de error). Al pulsar "Aplicar" el
 valor se guarda en `config.json`.
 
 ### 6.3 Aviso de contraste
 
 Al editar Texto principal o Texto atenuado, la fila enseña en ámbar la relación
 de contraste WCAG medida contra el fondo activo. Si baja de 3:1, sale un aviso
-«⚠ Contraste X.XX:1 (texto sobre fondo, mínimo WCAG 3:1). Se aplica
-igualmente; ajusta hex o restaura el campo». **No te bloquea**: solo avisa,
+"⚠ Contraste X.XX:1 (texto sobre fondo, mínimo WCAG 3:1). Se aplica
+igualmente; ajusta hex o restaura el campo". **No te bloquea**: solo avisa,
 porque hay casos legítimos (modo claro experimental, demostraciones).
 
 ### 6.4 Importar / Exportar JSON
 
-- **Exportar JSON…**: escribe un fichero `.json` con los colores actuales ya
+- **Exportar JSON...**: escribe un fichero `.json` con los colores actuales ya
   resueltos (los 12 campos con su valor por defecto aplicado si los habías dejado
   en blanco). Pensado para compartir.
-- **Importar JSON…**: lee un fichero y **mezcla** sus campos con tus colores
+- **Importar JSON...**: lee un fichero y **mezcla** sus campos con tus colores
   actuales: un campo que venga en el JSON pisa el tuyo, uno que no venga se
   mantiene. Así puedes compartir una paleta parcial (por ejemplo, solo el acento)
   sin perder tus ajustes.
@@ -248,21 +248,21 @@ controles, todos opcionales e independientes:
   app vuelve al fondo del tema (no se queda en negro).
 - **Sprite de la burbuja**: una imagen fija que sustituye el círculo violeta de la
   burbuja flotante. La grabación (punto blanco) y la corrección con IA (etiqueta
-  «IA») se siguen viendo encima del sprite.
+  "IA") se siguen viendo encima del sprite.
 - **Frames de animación**: una carpeta con PNGs (u otro formato admitido) que se
   van cambiando como animación de la burbuja. Orden alfabético; al llegar a la
   última vuelve a la primera. La velocidad (FPS) la eliges tú con un control
-  (1–30, por defecto 12). Si la carpeta está vacía, la animación pasa al sprite
+  (1-30, por defecto 12). Si la carpeta está vacía, la animación pasa al sprite
   fijo o al dibujo normal.
 
-**Cómo se eligen**: «Elegir…» abre el diálogo nativo de Windows. Al elegir, la
+**Cómo se eligen**: "Elegir..." abre el diálogo nativo de Windows. Al elegir, la
 app **copia** tu material a su carpeta de datos
 (`%APPDATA%\whispr-open\assets\`) y guarda ESA copia en `config.json`: puedes
 vaciar Descargas sin perder la personalización (antes se guardaba la ruta al
 fichero original y la personalización desaparecía sin avisar). Se aplica al
-momento. «Quitar» limpia la ruta y vuelve al aspecto original. Si la ruta
+momento. "Quitar" limpia la ruta y vuelve al aspecto original. Si la ruta
 guardada ya no existe (por ejemplo, porque borraste la copia a mano), la app lo
-apunta en el registro («asset desaparecido, cayendo al tema»), vuelve al aspecto
+apunta en el registro ("asset desaparecido, cayendo al tema"), vuelve al aspecto
 del tema sin romperse y no deja la ruta muerta en la configuración.
 
 **GIF/WebP animado nativo**: iced 0.13 no lo admite (comprobado en la [página de ideas de interfaz](UI-FUTURA.html#7-registro-con-rotación)). Por eso la animación aquí se hace cambiando frames PNG:
@@ -272,7 +272,7 @@ por el del propio framework.
 
 ## 7. Si algo va mal
 
-- **El texto no se escribe en la otra app**: comprueba que «Autoinyectar» está
+- **El texto no se escribe en la otra app**: comprueba que "Autoinyectar" está
   activo y que la app de destino tiene el foco. Si tienes un filtro por título de
   ventana (`inject_window_filter`), el título debe contenerlo. Si no había
   NINGUNA ventana con el foco, el texto se queda copiado en el portapapeles con
@@ -283,22 +283,22 @@ por el del propio framework.
 - **Quieres ver qué ha decidido la app**: el registro está en
   `%APPDATA%\whispr-open\whispr-open.log` (apunta cómo se clasificó y por dónde
   fue cada turno) y **Ajustes → Avanzado** te enseña su ruta exacta con un botón
-  «Abrir carpeta del registro». El fichero **va rotando solo**: al pasar de 1 MB
+  "Abrir carpeta del registro". El fichero **va rotando solo**: al pasar de 1 MB
   pasa a `.1` y el `.1` a `.2`, así que nunca crece sin freno. Los detalles muy
   finos (cada movimiento al arrastrar la burbuja) solo se escriben si arrancas la
   app con la variable de entorno `WHISPR_DEBUG=1`.
 - **La corrección consume memoria**: si apagas la corrección con IA, el modelo se
   descarga de la RAM/VRAM. Al salir de la app, el servidor de IA se cierra solo
   (no queda ningún `llama-server.exe` suelto).
-- **Doble clic en el exe con la app ya abierta**: sale un aviso («Ya hay otra
-  instancia…») y la segunda copia se cierra sola: el atajo global no se duplica
+- **Doble clic en el exe con la app ya abierta**: sale un aviso ("Ya hay otra
+  instancia...") y la segunda copia se cierra sola: el atajo global no se duplica
   ni se roba.
 - **Informes de fallo útiles**: versión del binario, aviso de estado y el trozo
   del registro del turno que falló.
 
-El pie de la ventana recuerda siempre dónde está tu voz: «Transcripción
-local · nada sale de tu PC». Si activas la corrección en la nube, el pie lo dice
-(«la corrección IA usa la nube») — nunca te promete una privacidad que no estás
+El pie de la ventana recuerda siempre dónde está tu voz: "Transcripción
+local - nada sale de tu PC". Si activas la corrección en la nube, el pie lo dice
+("la corrección IA usa la nube") - nunca te promete una privacidad que no estás
 usando.
 
 ## 8. Referencias

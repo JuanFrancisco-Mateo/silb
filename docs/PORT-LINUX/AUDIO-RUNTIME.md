@@ -1,7 +1,7 @@
 # Runtime de audio/transcripción/tray/LLM en Linux
 
 Estado de cada módulo (CON HONESTIDAD: nada de esto se ha compilado ni medido en
-esta máquina — la tarea prohíbe `cargo build`; la prueba real de compilación,
+esta máquina - la tarea prohíbe `cargo build`; la prueba real de compilación,
 micrófono y teclado la hace el usuario):
 
 | Módulo      | Estado                        | Qué falta para "listo"                    |
@@ -13,7 +13,7 @@ micrófono y teclado la hace el usuario):
 | llm.rs      | listo a validar (build)       | build + probar arranque de llama-server   |
 | main.rs / build.rs | listo (trivial)        | build                                     |
 
-## 1. audio.rs — captura con cpal 0.15
+## 1. audio.rs - captura con cpal 0.15
 
 - En Linux cpal 0.15 habla ALSA (los sistemas que soporta son ALSA/JACK; cpal
   0.15.3). En Omarchy el audio del sistema lo lleva PipeWire y la app llega a él
@@ -24,7 +24,7 @@ micrófono y teclado la hace el usuario):
   (`default_input_config()`), es decir `BufferSize::Default`. Para GRABAR dictado
   (por turnos, no en directo) el tamaño del buffer de entrada no añade retraso que
   se note: se consume todo al parar el turno.
-- «Fallo conocido de cpal 0.15 en Wayland con frecuencias de muestreo altas»: NO
+- "Fallo conocido de cpal 0.15 en Wayland con frecuencias de muestreo altas": NO
   se ha encontrado tal fallo (Wayland no tiene nada que ver con el audio; los
   sistemas que usa son ALSA/PipeWire). Lo que SÍ existe y está documentado:
   - cpal issue #1029 (y de la familia #1033/#1036): con pipewire-alsa y
@@ -34,7 +34,7 @@ micrófono y teclado la hace el usuario):
     `BufferSize::Fixed(1024)` al crear el stream (una línea en `build_stream`),
     decisión que depende de que aparezcan síntomas reales, NO aplicada por
     adelantado.
-  - La lista de dispositivos por ALSA puede dar nombres técnicos («hw:0,0»,
+  - La lista de dispositivos por ALSA puede dar nombres técnicos ("hw:0,0",
     perfiles de pipewire-alsa) en vez de nombres bonitos como en Windows. La
     interfaz ya lista `input_devices()` tal cual; el selector funciona, solo
     cambia el formato de los nombres.
@@ -48,10 +48,10 @@ micrófono y teclado la hace el usuario):
   2. Ajustes → selector de micrófono: deben aparecer los perfiles ALSA.
   3. Grabar un turno corto y comprobar que el medidor de nivel se mueve y que
      llega la transcripción (ver [apartado 2](PORT-LINUX/AUDIO-RUNTIME.html#2-transcribers--whisper-rs-016-cuda-opcional)).
-  4. Si el micro dice «dispositivo ocupado»: probar `pw-cli` (¿está PipeWire
+  4. Si el micro dice "dispositivo ocupado": probar `pw-cli` (¿está PipeWire
      vivo?) y cerrar las apps que retengan el micro (el navegador con la webcam).
 
-## 2. transcribe.rs — whisper-rs 0.16, CUDA opcional
+## 2. transcribe.rs - whisper-rs 0.16, CUDA opcional
 
 - La opción `cuda` de whisper-rs (docs.rs/lib.rs whisper-rs: "cuda: enable CUDA
   support. Implicitly enables hidden GPU flag at runtime") ya NO va fijada en el
@@ -67,7 +67,7 @@ micrófono y teclado la hace el usuario):
 - No hay código que dé por hechas rutas de GPU ni nada de cuda de usar y tirar en
   el módulo (búsqueda hecha: `cuda|GPU|gpu` solo aparece en comentarios de
   documentación). No había nada que envolver en cfg(feature="cuda") en el
-  código — la opción vive en el Cargo.toml.
+  código - la opción vive en el Cargo.toml.
 - Velocidad solo con CPU en el portátil (Ryzen 5 PRO 5650U, 6C/12T, 14 GiB):
   ESTIMACIÓN HONESTA, NO MEDIDA (la tarea lo prohíbe y no hay cifras inventadas).
   Referencias públicas para hacerse una idea:
@@ -79,20 +79,20 @@ micrófono y teclado la hace el usuario):
     más.
   - La medición REAL en este portátil la hace el usuario (lo pide la tarea):
     transcribir un turno de duración conocida con `small` y mirar el factor de
-    escala en el registro (whisper.cpp imprime «whisper_full: ... time = ...»).
+    escala en el registro (whisper.cpp imprime "whisper_full: ... time = ...").
   - Si small con CPU no diera la talla, tiny/base están en el selector de la
     interfaz sin cambiar código.
 - Modelos: los mismos GGML de HuggingFace (repo ggerganov/whisper.cpp). La carpeta
   de destino pasa de `%APPDATA%\whispr-open\models` (Windows) a
-  `~/.local/share/whispr-open/models` (Linux) vía `dirs::data_dir()` — la
+  `~/.local/share/whispr-open/models` (Linux) vía `dirs::data_dir()` - la
   traducción XDG estándar, sin cfg en el código. El VAD (`ggml-vad-q8.bin`) vive
   en la misma carpeta y sigue siendo opcional.
 
-## 3. tray.rs — BANDEJA PENDIENTE en Linux (decisión honesta)
+## 3. tray.rs - BANDEJA PENDIENTE en Linux (decisión honesta)
 
 - tray-icon 0.24 en Linux SOLO tiene la parte AppIndicator (docs.rs/tray-icon
-  0.24.2: «Linux (gtk Only)»; dependencias en Linux: gtk3 +
-  libappindicator/libayatana-appindicator + libxdo — en pacman:
+  0.24.2: "Linux (gtk Only)"; dependencias en Linux: gtk3 +
+  libappindicator/libayatana-appindicator + libxdo - en pacman:
   `gtk3 libappindicator-gtk3 libxdo`).
 - Doble fragilidad: (1) compilar exige esas librerías GTK3; (2) al ejecutar hace
   falta un HOST de StatusNotifierItem (una barra que pinte iconos SNI). Hyprland
@@ -109,7 +109,7 @@ micrófono y teclado la hace el usuario):
   ventana principal (dictado, ajustes) + atajo ([apartado 4](PORT-LINUX/AUDIO-RUNTIME.html#4-hotkeyrs--backend-hyprland-socket-unix)) + botón de salir de la
   propia interfaz. La ventana se puede ocultar; para recuperarla, relanzar la app
   NO abre una segunda instancia cuando exista el guard de instancia única de Linux
-  (single_instance.rs — módulo de OTRO agente, su apaño actual devuelve true
+  (single_instance.rs - módulo de OTRO agente, su apaño actual devuelve true
   siempre).
 - Volver a activar la bandeja en el futuro (lista):
   1. `sudo pacman -S gtk3 libappindicator-gtk3 libxdo`
@@ -119,7 +119,7 @@ micrófono y teclado la hace el usuario):
      real conviven documentados; el real reutiliza `circle_rgba`).
   4. Confirmar que el host de bandeja (waybar + SNI) está corriendo.
 
-## 4. hotkey.rs — backend "hyprland" (socket UNIX)
+## 4. hotkey.rs - backend "hyprland" (socket UNIX)
 
 Está explicado en su documento: docs/PORT-LINUX/HOTKEY-HYPR.md (fragmento exacto
 de hyprland.conf, lista de pruebas, permisos). Resumen:
@@ -130,7 +130,7 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
       bind = $mainMod SHIFT, D, exec, echo toggle > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 
 - El evento viaja por el mismo tipo de canal que en Windows
-  (`GlobalHotKeyEvent` con campos públicos id/state — comprobado en
+  (`GlobalHotKeyEvent` con campos públicos id/state - comprobado en
   docs.rs/global-hotkey 0.6): app.rs/ui/poll.rs no distinguen un sistema de otro.
 - La dependencia `global-hotkey` NO se limita a Windows: app.rs y
   ui/poll.rs (ficheros de otros agentes) importan `GlobalHotKeyEvent`
@@ -139,13 +139,13 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
   funcionaría sin tocar nada (HotkeyManager::register usa el mismo
   camino del crate).
 
-## 5. llm.rs — server LLM en Linux
+## 5. llm.rs - server LLM en Linux
 
 - SERVER_EXE_NAME pasa a cfg: `llama-server.exe` (Windows) /
   `llama-server` (Linux). is_server_exe/sanitize_server_exe usan la
   constante (tests duplicados por sistema).
-- launch_server: implementación real para Linux (antes devolvía «solo
-  Windows»): Command::new(exe) con cwd = carpeta del exe, stdout/stderr →
+- launch_server: implementación real para Linux (antes devolvía "solo
+  Windows"): Command::new(exe) con cwd = carpeta del exe, stdout/stderr →
   `llama-server.log` junto a la configuración (la misma mecánica que en Windows,
   sin CREATE_NO_WINDOW), proceso apuntado en LAUNCHED_SERVER_PID.
 - terminate_server_pid en Linux: comprueba de qué programa es el proceso leyendo
@@ -170,9 +170,9 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
 - Qué tiene que probar el usuario:
   1. Instalar o colocar `llama-server` (compilación de llama.cpp) en una de las
      rutas que se buscan sola o poner la ruta en Ajustes.
-  2. Arrancar la app y mirar el registro: «server LLM lanzado (pid N)» +
-     «/v1/models respondiendo».
-  3. Probar una corrección hablada («digo X») y el cierre limpio de la
+  2. Arrancar la app y mirar el registro: "server LLM lanzado (pid N)" +
+     "/v1/models respondiendo".
+  3. Probar una corrección hablada ("digo X") y el cierre limpio de la
      app (el servidor propio debe morir: comprobar con `pgrep llama-server`).
 
 ## 6. main.rs y build.rs
@@ -211,7 +211,7 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
 ## 8. Correcciones del run 6 (revisión del run anterior)
 
 - src/tray.rs (apaño de Linux): `crossbeam_channel::never().1` → `never()`
-  (la función devuelve un `Receiver<T>` directamente, no una pareja — comprobado
+  (la función devuelve un `Receiver<T>` directamente, no una pareja - comprobado
   en docs.rs/crossbeam-channel; el `.1` NO compila).
 - Las llaves y paréntesis de los ficheros del reparto comprobados con un lector
   básico (sin compilar, la tarea lo prohíbe): cuadran todos en 0.
@@ -227,8 +227,8 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
 - Probar el micrófono de verdad ([apartado 1](PORT-LINUX/AUDIO-RUNTIME.html#1-audiors--captura-con-cpal-015)), transcribir de verdad ([apartado 2](PORT-LINUX/AUDIO-RUNTIME.html#2-transcribers--whisper-rs-016-cuda-opcional)), el bind de
   Hyprland de verdad (el apartado de Hyprland tiene su propia página) y arrancar el servidor de IA de verdad
   ([apartado 5](PORT-LINUX/AUDIO-RUNTIME.html#5-llmrs--server-llm-en-linux)).
-- Bandeja: parte pendiente ([apartado 3](PORT-LINUX/AUDIO-RUNTIME.html#3-trayrs--bandeja-pendiente-en-linux-decisión-honesta)) — hacen falta las librerías GTK y un host SNI;
+- Bandeja: parte pendiente ([apartado 3](PORT-LINUX/AUDIO-RUNTIME.html#3-trayrs--bandeja-pendiente-en-linux-decisión-honesta)) - hacen falta las librerías GTK y un host SNI;
   decisión de producto pendiente (¿vale la pena para Hyprland?).
-- La tarea hermana «Parte 1» (inventario) no estaba subida a origin al hacer este
+- La tarea hermana "Parte 1" (inventario) no estaba subida a origin al hacer este
   trabajo (fetch origin no mostró feature/port-linux-inventario); la fusión final
   la coordina Port/qa-01.

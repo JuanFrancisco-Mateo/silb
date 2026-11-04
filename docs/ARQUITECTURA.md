@@ -1,9 +1,9 @@
-# ARQUITECTURA — recorrido del código para quien nunca ha tocado Rust
+# ARQUITECTURA - recorrido del código para quien nunca ha tocado Rust
 
 Este documento explica **qué hace cada fichero** de Silb y **cómo viaja una
 frase** desde que hablas hasta que aparece escrita en Slack. No hace falta saber
-Rust para leerlo: solo entender qué es un «fichero de código» y qué es una
-«función» (una pieza con nombre que recibe datos y devuelve datos).
+Rust para leerlo: solo entender qué es un "fichero de código" y qué es una
+"función" (una pieza con nombre que recibe datos y devuelve datos).
 
 Si quieres cambiar algo de la app, la última sección dice exactamente qué
 fichero tocar.
@@ -66,9 +66,9 @@ lo arranca y lo apaga la propia app.
 
 | Fichero | Qué hace | Por qué es así |
 |---|---|---|
-| `src/main.rs` | El «arranque»: crea la ventana principal y enciende el bucle de la UI. También comprueba que no haya otra instancia abierta. | En Rust todo programa empieza en `main`. El guard de instancia única va aquí para cortar ANTES de registrar atajos ni bandejas duplicadas. |
-| `src/config.rs` | Lee y escribe `%APPDATA%\whispr-open\config.json` (modelo elegido, tema, muletillas, proveedor de corrección…). Guarda la API key en el **Administrador de credenciales de Windows**, nunca en el JSON. | La config nunca puede romper el arranque: un fichero corrupto o de una versión vieja cae a valores por defecto, campo por campo. |
-| `src/single_instance.rs` | Impide dos copias de la app a la vez con un «mutex» de Windows (un candado con nombre). | Sin esto, la segunda copia intentaría registrar el mismo atajo global y fallaría a ciegas. |
+| `src/main.rs` | El "arranque": crea la ventana principal y enciende el bucle de la UI. También comprueba que no haya otra instancia abierta. | En Rust todo programa empieza en `main`. El guard de instancia única va aquí para cortar ANTES de registrar atajos ni bandejas duplicadas. |
+| `src/config.rs` | Lee y escribe `%APPDATA%\whispr-open\config.json` (modelo elegido, tema, muletillas, proveedor de corrección...). Guarda la API key en el **Administrador de credenciales de Windows**, nunca en el JSON. | La config nunca puede romper el arranque: un fichero corrupto o de una versión vieja cae a valores por defecto, campo por campo. |
+| `src/single_instance.rs` | Impide dos copias de la app a la vez con un "mutex" de Windows (un candado con nombre). | Sin esto, la segunda copia intentaría registrar el mismo atajo global y fallaría a ciegas. |
 | `src/log.rs` | Escribe el log en `%APPDATA%\whispr-open\whispr-open.log`. | La app no tiene consola (es GUI pura): sin log a archivo, cualquier fallo sería invisible. |
 
 ### Entrada del usuario (voz, teclado, ratón)
@@ -76,19 +76,19 @@ lo arranca y lo apaga la propia app.
 | Fichero | Qué hace | Por qué es así |
 |---|---|---|
 | `src/audio.rs` | Abre el micrófono y acumula el sonido (números decimales `f32`, la forma en que el PC guarda el audio) hasta 16 000 muestras por segundo. | El micrófono puede morir a mitad de nota: el módulo avisa por un canal y la app corta el turno con lo grabado. Tope de 2 h para acotar la memoria. |
-| `src/hotkey.rs` | El atajo global (por defecto Ctrl+Shift+D): funciona estés en la app que estés. | Un atajo «global» lo registra el sistema operativo; si otra app ya lo usa, la app degrada a modo «solo botones» en vez de romperse. |
+| `src/hotkey.rs` | El atajo global (por defecto Ctrl+Shift+D): funciona estés en la app que estés. | Un atajo "global" lo registra el sistema operativo; si otra app ya lo usa, la app degrada a modo "solo botones" en vez de romperse. |
 | `src/tray.rs` | El icono junto al reloj con su menú (Mostrar/Ocultar, Salir). | Cerrar la ventana no debe cerrar la app: dictado y burbuja siguen vivos en la bandeja. |
-| `src/bubble.rs` | La burbuja flotante (círculo violeta que se arrastra con el botón derecho y graba con el izquierdo). Es una **segunda ventana** del mismo proceso. | Dictar sin mirar la ventana principal. No roba el foco (estilo de Windows «no activar») para no molestar a la app donde escribes. |
+| `src/bubble.rs` | La burbuja flotante (círculo violeta que se arrastra con el botón derecho y graba con el izquierdo). Es una **segunda ventana** del mismo proceso. | Dictar sin mirar la ventana principal. No roba el foco (estilo de Windows "no activar") para no molestar a la app donde escribes. |
 
 ### El cerebro (todo local)
 
 | Fichero | Qué hace | Por qué es así |
 |---|---|---|
 | `src/transcribe.rs` | Descarga el modelo de voz (si falta) y transcribe: audio → texto. Usa whisper.cpp con CUDA (GPU). | La descarga se hace a un fichero temporal `.part` y solo al terminar se renombra: un corte de luz jamás deja un modelo a medias. Un modelo truncado se detecta (magic bytes) y se re-descarga solo. |
-| `src/domain/cleanup.rs` | Quita muletillas («eh», «o sea»…) y repeticiones («el el» → «el»). | Lógica pura sin I/O: se prueba con tests sin micrófono ni red. |
-| `src/domain/dictionary.rs` | Reemplaza jerga: «whatsapp» → «WhatsApp» según tu diccionario. | Igual: pura y testeada. |
-| `src/domain/correction.rs` | Correcciones deterministas («no, quería decir X»). | Las reglas son gratis (no gastan IA): se aplican antes de considerar al LLM. |
-| `src/domain/corrective.rs` | **Decide** si una frase lleva intención correctiva que las reglas no cubren (y aplica los cambios del LLM). | Un «clasificador» barato evita llamar a la IA en cada turno: solo se paga cuando hace falta. |
+| `src/domain/cleanup.rs` | Quita muletillas ("eh", "o sea"...) y repeticiones ("el el" → "el"). | Lógica pura sin I/O: se prueba con tests sin micrófono ni red. |
+| `src/domain/dictionary.rs` | Reemplaza jerga: "whatsapp" → "WhatsApp" según tu diccionario. | Igual: pura y testeada. |
+| `src/domain/correction.rs` | Correcciones deterministas ("no, quería decir X"). | Las reglas son gratis (no gastan IA): se aplican antes de considerar al LLM. |
+| `src/domain/corrective.rs` | **Decide** si una frase lleva intención correctiva que las reglas no cubren (y aplica los cambios del LLM). | Un "clasificador" barato evita llamar a la IA en cada turno: solo se paga cuando hace falta. |
 | `src/llm.rs` | Habla con el corrector IA: un servidor local llama.cpp que la app lanza y apaga, o un endpoint externo (OpenAI-compatible). | El servidor es un proceso de Windows nativo que la app arranca sola y cierra al salir: nunca queda huérfano en memoria. |
 
 ### La salida
@@ -96,13 +96,13 @@ lo arranca y lo apaga la propia app.
 | Fichero | Qué hace | Por qué es así |
 |---|---|---|
 | `src/inject.rs` | Escribe el texto en la app que tiene el foco: lo copia al portapapeles y simula Ctrl+V (o teclea directo, si lo configuras). | Pegar es lo más compatible. Si no hay ninguna ventana con foco, el texto queda en el portapapeles con aviso: nunca se pierde. |
-| `src/app.rs` | La ventana principal: la nota **editable**, los botones y el «director de orquesta» que conecta todos los módulos anteriores. Se queda con el estado (struct `WhisprApp`), `new`, el despachador `update`, `subscription`, `theme`, `view` y los helpers pequeños de estado. | Antes era un monolito de 6.000 líneas; ahora cada mensaje se despacha a un manejador de `src/ui/` y el fichero se lee de arriba abajo sin perderse en 1.500 líneas de `match`. |
-| `src/ui/settings.rs` | Las **vistas** del espacio de trabajo de Ajustes (frame `3:604` de Figma): `settings_view`, `settings_nav`, las `settings_section_*` y los helpers de paleta. | Es la parte más «de pintar» de la UI: aislada para retocarla sin acercarse a la lógica. |
+| `src/app.rs` | La ventana principal: la nota **editable**, los botones y el "director de orquesta" que conecta todos los módulos anteriores. Se queda con el estado (struct `WhisprApp`), `new`, el despachador `update`, `subscription`, `theme`, `view` y los helpers pequeños de estado. | Antes era un monolito de 6.000 líneas; ahora cada mensaje se despacha a un manejador de `src/ui/` y el fichero se lee de arriba abajo sin perderse en 1.500 líneas de `match`. |
+| `src/ui/settings.rs` | Las **vistas** del espacio de trabajo de Ajustes (frame `3:604` de Figma): `settings_view`, `settings_nav`, las `settings_section_*` y los helpers de paleta. | Es la parte más "de pintar" de la UI: aislada para retocarla sin acercarse a la lógica. |
 | `src/ui/settings_handlers.rs` | Los **manejadores** de los mensajes de Ajustes: `handle_note`, `handle_lists`, `handle_dictation_engine`, `handle_appearance_settings`, `handle_palette_settings`, `handle_corrector_settings`. | Un sitio por familia de mensajes: cada bloque del `match` pasa a ser una función con nombre. |
 | `src/ui/recording.rs` | Grabación y transcripción: `handle_recording_control`, `handle_transcription_done`, `handle_dictation_settings`. | El ciclo del dictado (empezar, parar, transcribir, limpiar) junto, sin mezclarse con la UI. |
 | `src/ui/poll.rs` | El tick periódico (`handle_poll`): drena los canales de audio, transcripción y LLM, y refresca el progreso de descarga. | Era el bloque más grande de `update()` (248 líneas); el latido de la app merecía su fichero. |
 | `src/ui/bubble.rs` | Los eventos de la **burbuja flotante** (`handle_bubble_events`): abrir, pulsar, arrastrar, soltar. | El arrastre tiene reglas propias (captura del ratón, anclaje) y estaban ahogadas en el `match`. |
-| `src/ui/window_tray.rs` | Ventana principal, **bandeja** del sistema y arranque (`handle_window_and_tray`). | Ciclo de vida de las ventanas aparte: es lo primero que se revisa cuando algo «no aparece». |
+| `src/ui/window_tray.rs` | Ventana principal, **bandeja** del sistema y arranque (`handle_window_and_tray`). | Ciclo de vida de las ventanas aparte: es lo primero que se revisa cuando algo "no aparece". |
 | `src/ui/shell.rs` | El **marco** del rediseño (frame *Dictado* de Figma): barra de ventana propia, barra lateral y el espacio de trabajo (`frame_window_bar`, `frame_sidebar`, `dictado_workspace`). | El marco lo dibuja la app (ventana sin decoración nativa): medidas y colores salen de `theme::chrome`/`theme::design_type`, no de literales en la vista. |
 | `src/ui/icons.rs` | Los 20 iconos vectoriales (lucide) del diseño, incrustados con `include_bytes!` desde `assets/icons/`. | Vectoriales nítidos a 12, 15, 18 o 30 px sin depender de rutas en disco ni de glifos del sistema. |
 | `src/theme.rs` | Los colores, tamaños y radios de toda la interfaz, con el contraste **medido** (fórmulas WCAG) en tests. | Un solo sitio donde cambiar el aspecto; los tests impiden que un cambio rompa la legibilidad. |
@@ -112,8 +112,8 @@ lo arranca y lo apaga la propia app.
 
 ## 3. Viaje de una frase: del micrófono a Slack
 
-Pasos exactos que ocurren cuando dices **«la reunión es a las cuatro digo
-las cinco»** con Slack enfocado:
+Pasos exactos que ocurren cuando dices **"la reunión es a las cuatro digo
+las cinco"** con Slack enfocado:
 
 ```
  1. PULSAS Ctrl+Shift+D ──── Windows avisa a hotkey.rs (canal de eventos)
@@ -143,7 +143,7 @@ Detalles que no se ven en el dibujo pero importan:
 
 - **Hilos**: la transcripción (4-5) y la corrección con IA (8) ocurren en hilos
   aparte para que la ventana nunca se congele. Se comunican con la interfaz por
-  «canales» (colas de mensajes) que la app vacía 10 veces por segundo.
+  "canales" (colas de mensajes) que la app vacía 10 veces por segundo.
 - **Nunca se pierde texto**: si la IA falla, se le acaba el tiempo o su respuesta
   no pasa los filtros de seguridad, se escribe EXACTAMENTE lo que dijiste, sin
   corrección.
@@ -155,7 +155,7 @@ Detalles que no se ven en el dibujo pero importan:
 
 ## 4. Qué tocar para cambiar cada cosa
 
-| Quiero cambiar… | Fichero | Dónde exactamente |
+| Quiero cambiar... | Fichero | Dónde exactamente |
 |---|---|---|
 | El atajo por defecto | `src/hotkey.rs` | `DEFAULT_SHORTCUT` (y su test) |
 | Las muletillas que se limpian | `src/domain/cleanup.rs` | `default_unambiguous` / `default_ambiguous` / `default_start_of_turn` (o desde Ajustes, sin tocar código) |
@@ -178,7 +178,7 @@ añades algo nuevo, primero la función pura con sus tests, luego el cableado en
 
 ## 5. Cómo se prueba todo esto sin micrófono
 
-Cada módulo trae sus tests («unit tests»: funciones que comprueban otras
+Cada módulo trae sus tests ("unit tests": funciones que comprueban otras
 funciones con ejemplos conocidos):
 
 ```powershell
@@ -186,7 +186,7 @@ cd whispr-open
 cargo test    # 336 pasan, 3 se saltan
 ```
 
-El que se salta («ignored») necesita un servidor llama.cpp de verdad encendido:
+El que se salta ("ignored") necesita un servidor llama.cpp de verdad encendido:
 es una prueba con un servidor real, no un fallo.
 
 Lo que los tests **no** pueden cubrir y se prueba a mano: el micrófono físico, el

@@ -1,4 +1,4 @@
-# CORRECCIÓN / FORMATEO POR VOZ — especificación y diseño final
+# CORRECCIÓN / FORMATEO POR VOZ - especificación y diseño final
 
 Este documento es la referencia de **cómo funciona hoy** el corrector con IA;
 los nombres de archivos y funciones que se citan están comprobados contra el
@@ -9,14 +9,14 @@ delante del modelo) están contados en el
 Objetivo: que quien dicta pueda corregir lo que acaba de decir **hablando**, con
 frases como el ejemplo de siempre:
 
-> «no no lo último está mal, es 2 en vez de 4»
+> "no no lo último está mal, es 2 en vez de 4"
 
 y que la app entienda que quieres corregir, encuentre el trozo que hay que
 cambiar y lo arregle en el texto final.
 
 Esto es **trabajo sobre el texto ya transcrito**: no toca la grabación del audio
 (cpal) ni la decodificación de Whisper. Si el corrector falla, siempre queda el
-texto tal cual — **el dictado nunca se bloquea ni pierde texto**.
+texto tal cual - **el dictado nunca se bloquea ni pierde texto**.
 
 ---
 
@@ -27,13 +27,13 @@ transcrito (`processed`) por orden, de lo más prioritario a lo menos:
 
 1. **Reglas** (`src/domain/correction.rs`, `apply_correction` +
    `CorrectionSession`): si el turno encaja en un patrón fijo
-   («no, quería decir X», «mejor dicho X», numeral + «en vez de»…), se aplica sin
+   ("no, quería decir X", "mejor dicho X", numeral + "en vez de"...), se aplica sin
    IA y el flujo termina aquí (coste ~0).
 2. **IN-TURN** (modo principal): si `classify_in_turn(processed)` → la IA recibe
    el **turno completo** y devuelve el **texto final corregido** (sin las
    palabras que usaste para corregirte). No hace falta un turno anterior: la
-   corrección va dentro del mismo chorro de voz («que calor en murcia **digo
-   cartagena**»).
+   corrección va dentro del mismo chorro de voz ("que calor en murcia **digo
+   cartagena**").
 3. **CROSS-TURN** (modo antiguo, si lo anterior no vale): si
    `corrective::classify_with(processed, threshold) == NeedsLlm` y existe un
    `last_turn` anterior → la IA recibe `(last_turn, instruction)` (el texto a
@@ -50,13 +50,13 @@ let can_route_common = !rule_corrected && enabled && !llm_busy && llm_ready;
 // llm_busy = self.llm_rx.is_some() || self.llm_pending.is_some()
 ```
 
-Si un turno activa AMBOS clasificadores (caso mixto, por ejemplo «no no lo
-último está mal es 2 en vez de 4», que tiene referencia a lo anterior Y «en vez
-de»), gana el **in-turn** por prioridad.
+Si un turno activa AMBOS clasificadores (caso mixto, por ejemplo "no no lo
+último está mal es 2 en vez de 4", que tiene referencia a lo anterior Y "en vez
+de"), gana el **in-turn** por prioridad.
 
 El registro de `%APPDATA%\whispr-open\whispr-open.log` apunta el resultado de
 cada clasificador, qué condiciones cortaron y la decisión que se tomó (sin
-consola, el `println!` de antes no se veía en ningún sitio — fallo del
+consola, el `println!` de antes no se veía en ningún sitio - fallo del
 09/09/2026).
 
 ---
@@ -90,14 +90,14 @@ cambiar campo a campo:
 
 | Proveedor | `base_url` default | `model` default | key |
 |---|---|---|---|
-| Default (Local) | `http://127.0.0.1:8081/v1` | `ornith-1.0-9b` | — |
+| Default (Local) | `http://127.0.0.1:8081/v1` | `ornith-1.0-9b` | - |
 | Cloud | `https://api.openai.com/v1` | `gpt-4o-mini` | sí |
 | Custom | `http://127.0.0.1:8081/v1` | `ornith-1.0-9b` | si el server la pide |
 
 Los campos `llm_base_url` y `llm_model` se comparten entre proveedores: si pones
 un endpoint propio, Custom (o Cloud) lo usa tal cual; si están vacíos, se usa el
 valor por defecto del proveedor activo. Los valores se limpian de espacios y un
-campo vacío cuenta como «no escrito» (None → valor por defecto), nunca como un
+campo vacío cuenta como "no escrito" (None → valor por defecto), nunca como un
 valor inválido.
 
 ### Comprobación del endpoint en arranque / cambio de proveedor
@@ -118,7 +118,7 @@ proveedor):
 
 `server_alive*` usa `/v1/models` y no `/health`: llama.cpp responde 503 en
 `/health` mientras carga el GGUF, pero `/models` solo contesta cuando el modelo
-está listo — es la señal fiable de «servidor vivo y modelo cargado».
+está listo - es la señal fiable de "servidor vivo y modelo cargado".
 
 Al cambiar de proveedor (`CorrectionProviderChanged`), la fase que estuviera en
 marcha con la configuración vieja se cancela (con un token) y se relanza
@@ -148,8 +148,8 @@ WhisprOpen/llm-api-key
 - Migración: cualquier valor antiguo que estuviera en el config.json de versiones
   previas se conserva para volver a guardarlo en el Administrador de credenciales
   la primera vez que se guarde.
-- La pista que hay bajo el campo API key en la app lo dice claro: «Se guarda en
-  el Administrador de credenciales de Windows, nunca en la config».
+- La pista que hay bajo el campo API key en la app lo dice claro: "Se guarda en
+  el Administrador de credenciales de Windows, nunca en la config".
 
 El campo solo aparece en los proveedores que pueden pedirla (Custom y Cloud); con
 Local no se muestra (el servidor local no usa ese encabezado: llama.cpp lo
@@ -160,7 +160,7 @@ ignora).
 ## 4. Ciclo de vida del corrector (memoria RAM/VRAM)
 
 Requisito: **si la corrección con IA está apagada, el servidor y el
-modelo no ocupan memoria; si está encendida, se cargan**. El «modelo» es el
+modelo no ocupan memoria; si está encendida, se cargan**. El "modelo" es el
 proceso `llama-server.exe` que sirve la IA: descargarlo es terminar ese proceso.
 
 ### Arranque (`app.rs::run_startup_thread` → `run_llm_phase`)
@@ -189,8 +189,8 @@ Orden exacto, dejando el estado coherente:
 4. **Descargar el modelo**: `llm::kill_launched_server()` termina **solo el
    proceso que registró esta app**. Un servidor ajeno (que ya corría antes de
    abrir la app) NO se toca.
-5. Aviso a la vista: «Corrección IA desactivada — modelo LLM descargado de
-   memoria ✓» si se cerró el proceso propio.
+5. Aviso a la vista: "Corrección IA desactivada - modelo LLM descargado de
+   memoria ✓" si se cerró el proceso propio.
 
 ### Encender en caliente (`ToggleAiCorrection(true)`)
 
@@ -220,13 +220,13 @@ La app arranca `llama-server.exe` como **proceso nativo de Windows** (se
 descartó intentarlo con WSL: un servidor de Linux lanzado desde la app se quedaba
 suelto al salir, un fallo que ya está corregido). Detalles comprobados con el binario real:
 
-- **Dónde está el ejecutable** — `llm::resolve_server_path(cfg)`:
+- **Dónde está el ejecutable** - `llm::resolve_server_path(cfg)`:
   1. La ruta escrita a mano en el campo **Server LLM** de Ajustes (clave
      `llama_server_path` en config.json), si existe en disco;
   2. si no, búsqueda automática en este orden: `D:\LlamaCPP\llama-server.exe` /
      `C:\LlamaCPP\llama-server.exe` → junto al exe de la app (distribución
      portable) → `%LOCALAPPDATA%\LlamaCPP\llama-server.exe` → PATH de Windows.
-- **Dónde está el modelo** — `llm::resolve_model_path(model)` (`ornith-1.0-9b`
+- **Dónde está el modelo** - `llm::resolve_model_path(model)` (`ornith-1.0-9b`
   por defecto): si el nombre es una ruta que existe se usa tal cual; si no, se
   busca por nombre base en LM Studio (`~/.lmstudio/models`, incluida
   `lmstudio-community`), `D:/LlamaCPP/models`, `C:/LlamaCPP/models` y
@@ -240,16 +240,16 @@ suelto al salir, un fallo que ya está corregido). Detalles comprobados con el b
     falló un arranque);
   - argumentos: `-m <modelo> --port <puerto>` (el puerto sale de
     `port_from_base_url`, por defecto 8081).
-- **Espera de carga** — `llm::wait_for_server(base_url, 60 s)`: pregunta cada
+- **Espera de carga** - `llm::wait_for_server(base_url, 60 s)`: pregunta cada
   400 ms a `/v1/models`. Un 0.8B Q8 carga en ~2-5 s en GPU; 60 s dan margen para
   modelos grandes. Si se agota, `LlmDisabled(razón)` y el dictado sigue.
 
 El campo **Server LLM** de Ajustes (`Message::LlmServerPathChanged`) tiene un
 texto de ejemplo informativo (`auto_server_placeholder`: la ruta que se
-resolvería en ese momento, o «auto: no encontrado — usa Examinar… o un
-endpoint») y botones «Examinar…» / «✕» (volver a la búsqueda automática). La
-pista de la app: «Vacío = autodetección (D:\LlamaCPP, junto a la app…). Solo
-indícalo aquí si la app no lo encuentra sola.»
+resolvería en ese momento, o "auto: no encontrado - usa Examinar... o un
+endpoint") y botones "Examinar..." / "✕" (volver a la búsqueda automática). La
+pista de la app: "Vacío = autodetección (D:\LlamaCPP, junto a la app...). Solo
+indícalo aquí si la app no lo encuentra sola."
 
 Sin ejecutable y sin otro endpoint configurado, la corrección se desactiva con un
 aviso y el dictado sigue funcionando (configúralo en Ajustes o usa un proveedor
@@ -264,10 +264,10 @@ Custom/Cloud).
 Lo más natural al dictar seguido es **corregirte sobre la marcha**, en el mismo
 chorro de voz:
 
-> «que calor que hace en murcia **digo cartagena**»
+> "que calor que hace en murcia **digo cartagena**"
 
-Sin el modo in-turn, la app escribiría tal cual «que calor que hace en murcia
-digo cartagena», con las palabras que usaste para corregirte dentro, y esas NO
+Sin el modo in-turn, la app escribiría tal cual "que calor que hace en murcia
+digo cartagena", con las palabras que usaste para corregirte dentro, y esas NO
 deben aparecer en el texto final.
 
 ### 6.2 Detección
@@ -282,9 +282,9 @@ Reconoce las señales típicas de auto-corrección:
 - `mejor X que Y` / `no X sino Y`
 
 A diferencia de `classify` ([apartado 7](CORRECCION-VOZ.html#7-modo-cross-turn-histórico-fallback)), **no exige un numeral ni una referencia a lo
-anterior**: el «antes» y el «después» están en el mismo turno. Filtros de
+anterior**: el "antes" y el "después" están en el mismo turno. Filtros de
 seguridad: turno de 6 caracteres o más, 3 o más antes de la señal y 1 o más
-después (así se evitan cosas como «digo sí», «digo»…).
+después (así se evitan cosas como "digo sí", "digo"...).
 
 ### 6.3 Redacción: el LLM devuelve el texto final, no un diff
 
@@ -296,7 +296,7 @@ texto tal cual si no hay corrección. Devuelve SOLO texto, sin JSON ni bloques d
 código.
 
 `clean_redact_output` (limpia la respuesta): quita bloques markdown, prefijos
-tipo «Output:»/«Resultado:», comillas de alrededor (rectas, tipográficas, «»…) y
+tipo "Output:"/"Resultado:", comillas de alrededor (rectas, tipográficas, ""...) y
 quita espacios sobrantes.
 
 ### 6.4 Guard anti-truncación (obligatorio)
@@ -305,8 +305,8 @@ Problema real: el modelo local pequeño (Qwen3.5-0.8B) contestaba a turnos largo
 **sin** corrección con un RESUMEN (registro 01:34:54: entrada de 73 palabras →
 salida de 13). Se probaron 9 variantes de prompt contra el servidor real con la
 petición exacta y ninguna consigue a la vez respetar los turnos largos y mantener
-las correcciones de siempre (reforzar «no resumas» rompía auto-correcciones: «el
-cliente es Acme quiero decir Microsoft» devolvía «el cliente es Acme»). Por eso el
+las correcciones de siempre (reforzar "no resumas" rompía auto-correcciones: "el
+cliente es Acme quiero decir Microsoft" devolvía "el cliente es Acme"). Por eso el
 prompt se queda como está y la protección es responsabilidad OBLIGATORIA del
 código:
 
@@ -315,28 +315,28 @@ código:
 - ratio = palabras(output) / palabras(input) (`word_count` por espacios).
 - Si `ratio >= 0.6` → se acepta la salida.
 - Si hay una **señal inequívoca** de auto-corrección
-  (`has_unambiguous_in_turn_marker`: frases como «quiero decir», «mejor dicho»,
-  «en vez de», «en lugar de», «rectifico», «corrijo», o las palabras sueltas
-  «digo»/«sino» como palabra completa) y `ratio >= 0.3` → se acepta (una
-  corrección de verdad quita un trozo + las palabras de la corrección: «no voy a
-  las tres sino a las cuatro» → «voy a las cuatro» recorta más de un 40 % con
+  (`has_unambiguous_in_turn_marker`: frases como "quiero decir", "mejor dicho",
+  "en vez de", "en lugar de", "rectifico", "corrijo", o las palabras sueltas
+  "digo"/"sino" como palabra completa) y `ratio >= 0.3` → se acepta (una
+  corrección de verdad quita un trozo + las palabras de la corrección: "no voy a
+  las tres sino a las cuatro" → "voy a las cuatro" recorta más de un 40 % con
   razón).
 - En cualquier otro caso → **se descarta la salida y se devuelve la entrada
   original** (se escribe lo que dijiste, con tus palabras de corrección si las
   había: nunca se pierde texto).
 
 En `app.rs`, después de `redact`: respuesta vacía → texto tal cual; si `guard`
-devuelve la entrada → aviso «La corrección IA devolvió un resumen del turno; se
-mantiene el texto original» y se escribe la entrada; si aún quedan palabras de
+devuelve la entrada → aviso "La corrección IA devolvió un resumen del turno; se
+mantiene el texto original" y se escribe la entrada; si aún quedan palabras de
 corrección (`contains_in_turn_marker`) → texto tal cual.
 
 ### 6.5 Guard numérico determinista (ampliado)
 
 `src/llm.rs::guard_numeric_substitution(input, output) -> Result<String, ()>` es
-la red de seguridad del CÓDIGO para las auto-correcciones con **números** («3
-digo 4», «tres, digo, cuatro»), donde el modelo local pequeño (Qwen3.5-0.8B-Q8)
-no es fiable. En la ENTRADA se busca el patrón inequívoco «NUM_A [texto]
-[señal] NUM_B» y, si la salida de la IA no lo resolvió, se rehace el cambio a
+la red de seguridad del CÓDIGO para las auto-correcciones con **números** ("3
+digo 4", "tres, digo, cuatro"), donde el modelo local pequeño (Qwen3.5-0.8B-Q8)
+no es fiable. En la ENTRADA se busca el patrón inequívoco "NUM_A [texto]
+[señal] NUM_B" y, si la salida de la IA no lo resolvió, se rehace el cambio a
 mano: `input[..NUM_A] + NUM_B + input[NUM_B..]` (desaparecen NUM_A, la señal y
 las palabras de corrección que hay entre los dos).
 
@@ -344,11 +344,11 @@ las palabras de corrección que hay entre los dos).
   `mejor dicho`, `en vez de`, `en lugar de` y la construcción `no X sino Y`. La
   expresión regular vive en `NUMERIC_MARKER_REGEX` (dentro de `llm.rs`, más
   estricta que las señales del clasificador `IN_TURN_MARKERS`).
-- Números: dígitos y una lista corta de palabras (`NUM_WORDS`: uno–quince,
-  veinte–noventa, cien, mil). No es un lector de números universal.
+- Números: dígitos y una lista corta de palabras (`NUM_WORDS`: uno-quince,
+  veinte-noventa, cien, mil). No es un lector de números universal.
 - **NUM_A es el último NÚMERO del trozo anterior a la señal**, no la última
   palabra: al hablar normal el número lleva detrás un sustantivo y/o un verbo
-  («me encontré a **tres personas**, digo **cuatro personas**»), y exigir la
+  ("me encontré a **tres personas**, digo **cuatro personas**"), y exigir la
   última palabra dejaba fuera esos casos. Lo que ahora NO se tolera es la duda:
   si el trozo anterior tiene 2 o más números, no se puede saber cuál corriges y
   la protección **no toca nada** (mejor no acertar que estropear).
@@ -367,23 +367,23 @@ Casos cubiertos por tests (todos salen de fallos reales vistos al depurar):
 
 | Log | Input del turno | Output del LLM (erróneo) | Inyectado |
 |---|---|---|---|
-| 14/09 03:19 | «…me encontré a **tres personas, digo cuatro personas**, que iban por la acera…» | «…me encontré a **tres** personas que iban por la acera…» (numeral VIEJO, meta-lengua borrada) | «…me encontré a **cuatro** personas, que iban por la acera…» |
-| 13/09 01:37 | «…me encontré a **23** personas que iban, **digo**, a **24** personas que iban…» | «…me encontré a **23** personas que iban a **24** personas…» (concatenación) | «…me encontré a **24** personas que iban por la calle…» |
+| 14/09 03:19 | "...me encontré a **tres personas, digo cuatro personas**, que iban por la acera..." | "...me encontré a **tres** personas que iban por la acera..." (numeral VIEJO, meta-lengua borrada) | "...me encontré a **cuatro** personas, que iban por la acera..." |
+| 13/09 01:37 | "...me encontré a **23** personas que iban, **digo**, a **24** personas que iban..." | "...me encontré a **23** personas que iban a **24** personas..." (concatenación) | "...me encontré a **24** personas que iban por la calle..." |
 
 ### 6.6 Caso canónico
 
 | Paso | Valor |
 |---|---|
-| Input (turno completo) | «que calor que hace en murcia digo cartagena» |
+| Input (turno completo) | "que calor que hace en murcia digo cartagena" |
 | `classify_in_turn` | true |
 | LLM input | el turno completo |
-| LLM output | «que calor que hace en cartagena» |
+| LLM output | "que calor que hace en cartagena" |
 | Guard | ratio 4/7 ≥ 0.6 → acepta |
-| Inyectado en app activa | «que calor que hace en cartagena» |
+| Inyectado en app activa | "que calor que hace en cartagena" |
 
 ### 6.7 Modo REESCRITURA (0.7.1)
 
-El modo IN‑TURN de arriba solo entra cuando el clasificador **ve** una
+El modo IN-TURN de arriba solo entra cuando el clasificador **ve** una
 corrección. La 0.7.1 añade un tercer modo en el que la IA trabaja **en cada
 turno**: recibe el dictado entero y devuelve ese mismo texto bien escrito.
 
@@ -397,15 +397,15 @@ Tres modos, un solo ajuste (`src/config.rs`, `AiMode::ALL`):
 
 Compatibilidad: el campo viejo `ai_correction_enabled` sigue leyéndose
 (`true` → `correccion`, `false` → `off`), y `ai_correction_enabled()` ahora
-significa «modo distinto de `off`».
+significa "modo distinto de `off`".
 
 **Prompt** (`SYSTEM_PROMPT_REWRITE`, `src/llm.rs`). Es un prompt de editor, no de
 corrector. Cinco reglas, en este orden:
 
-1. Si el hablante se corrigió («digo X», «quiero decir X», «mejor dicho X», «no X
-   sino Y», «en vez de»), se queda la versión corregida y se borra la
+1. Si el hablante se corrigió ("digo X", "quiero decir X", "mejor dicho X", "no X
+   sino Y", "en vez de"), se queda la versión corregida y se borra la
    rectificación.
-2. Quita muletillas y repeticiones («bueno», «o sea», «la verdad que», «es que»)
+2. Quita muletillas y repeticiones ("bueno", "o sea", "la verdad que", "es que")
    sin cargarse el contenido.
 3. **Conserva TODOS los datos** (cifras, nombres, fechas, lugares), no añade
    información y **no resume**.
@@ -434,22 +434,22 @@ turno de whisper
 `precondition_numeric` (`src/llm.rs`) es el guard del [apartado 6.5](CORRECCION-VOZ.html#65-guard-numérico-determinista-ampliado) aplicado al dictado con
 `output` vacío: así no puede dar por buena ninguna respuesta del modelo
 (todavía no hay) y reconstruye él. Devuelve `None` si no hay nada que arreglar.
-Motivo medido: con el turno crudo, Qwen3‑4B contesta «allá por el **83 o el
-84**» (se inventa la disyuntiva) y se pierde una corrección que el código hacía
-bien; con el guard delante, escribe «allá por el 84» y tarda menos (0,43 s →
+Motivo medido: con el turno crudo, Qwen3-4B contesta "allá por el **83 o el
+84**" (se inventa la disyuntiva) y se pierde una corrección que el código hacía
+bien; con el guard delante, escribe "allá por el 84" y tarda menos (0,43 s →
 0,37 s). El turno reconstruido es el que viaja **y** el que se recupera en los
-fallbacks, así que un fallo posterior no devuelve el «digo» a la pantalla.
+fallbacks, así que un fallo posterior no devuelve el "digo" a la pantalla.
 
 **Umbral de recorte: 50 %.** `min_words_ratio(AiMode::Reescritura)` baja el
 listón del [apartado 6.4](CORRECCION-VOZ.html#64-guard-anti-truncación-obligatorio) del 60 % al 50 %, porque quitar muletillas recorta de verdad
-(medido: 30–45 % de palabras en turnos largos con «la verdad que», «bueno», «o
-sea»). Por debajo del 50 % sigue oliendo a resumen y se descarta: se escribe el
+(medido: 30-45 % de palabras en turnos largos con "la verdad que", "bueno", "o
+sea"). Por debajo del 50 % sigue oliendo a resumen y se descarta: se escribe el
 turno tal cual. Con marca inequívoca de autocorrección el listón se parte por la
 mitad (30 %), igual que en Corrección.
 
-**Modelo recomendado: Qwen3‑4B‑Instruct‑2507** (`Qwen3-4B-Instruct-2507-Q4_K_M`,
+**Modelo recomendado: Qwen3-4B-Instruct-2507** (`Qwen3-4B-Instruct-2507-Q4_K_M`,
 ~2,4 GB), añadido a la lista de descargables en `SMALL_LLM_MODELS`. Los tres
-pequeños (Qwen2.5‑0.5B, Llama 3.2 1B, Qwen2.5‑1.5B) siguen valiendo para
+pequeños (Qwen2.5-0.5B, Llama 3.2 1B, Qwen2.5-1.5B) siguen valiendo para
 Corrección, pero en Reescritura devuelven el texto sin tocar o una lista de
 reglas: si se elige Reescritura con uno de ellos, Ajustes avisa con
 `is_small_llm` (no cambia el modelo por su cuenta).
@@ -459,8 +459,8 @@ reglas: si se elige Reescritura con uno de ellos, Ajustes avisa con
 - **No resumir**: lo pide el prompt y lo vigila el listón del 50 %; aun así un
   modelo pequeño puede resumir, y eso se descarta (se escribe el dictado).
 - **Disyuntivas inventadas con números que no vienen del guard**: el guard
-  numérico solo entiende dígitos y la lista corta de `NUM_WORDS`; con «tres mil»
-  o «cuarenta y ocho» no interviene y el modelo puede escribir «X o Y».
+  numérico solo entiende dígitos y la lista corta de `NUM_WORDS`; con "tres mil"
+  o "cuarenta y ocho" no interviene y el modelo puede escribir "X o Y".
 - **Tarda algo más por turno**: en Reescritura el modelo se llama siempre, no
   solo cuando hay corrección (ver el [apartado 10](CORRECCION-VOZ.html#10-latencia-esperada)).
 
@@ -470,18 +470,18 @@ reglas: si se elige Reescritura con uno de ellos, Ajustes avisa con
 
 ### 7.1 Detección
 
-`corrective::classify` / `classify_with(turn, threshold)` — un clasificador
-barato por reglas (señales por orden de peso): negaciones al principio («no»,
-«así no», «mal», «me equivoqué»), números + «en vez de»/«en lugar de»/«no…sino»,
-referencias al texto anterior («lo último», «eso», «ese número», «la última
-frase»), verbos de corrección («corrige», «cambia», «pon», «quita», «borra»,
-«sustituye»).
+`corrective::classify` / `classify_with(turn, threshold)` - un clasificador
+barato por reglas (señales por orden de peso): negaciones al principio ("no",
+"así no", "mal", "me equivoqué"), números + "en vez de"/"en lugar de"/"no...sino",
+referencias al texto anterior ("lo último", "eso", "ese número", "la última
+frase"), verbos de corrección ("corrige", "cambia", "pon", "quita", "borra",
+"sustituye").
 
 Dos niveles: **A (seguro, sin IA)** = encaja con los `CORRECTION_PATTERNS` de
 `correction.rs` → se aplica por reglas; **B (necesita IA)** = negación o verbo de
 corrección Y un número o una referencia a lo anterior, con la sensibilidad que
 marque `threshold` (config `llm_classifier_threshold`, por defecto 50, rango
-0..=100; el clasificador traduce el número de señales a {50, 75, 100} — 50
+0..=100; el clasificador traduce el número de señales a {50, 75, 100} - 50
 permisivo, 100 no manda nunca a la IA, 0 pasivo). La duda se resuelve a favor del
 dictado normal (si la app cree que te corriges y no era eso, borra texto: mejor
 no acertar que estropear).
@@ -498,8 +498,8 @@ un JSON válido:
 
 Reglas del prompt: `find` es un trozo literal (palabra, número o frase corta; si
 no lo encuentra, `{"find":"","replace":""}`); `replace` vacío si se pide quitar;
-no inventar texto; **resolver los números** («2 en vez de 4» sobre «…4…» → find
-«4», replace «2») y las **referencias** («lo último» → la última frase o
+no inventar texto; **resolver los números** ("2 en vez de 4" sobre "...4..." → find
+"4", replace "2") y las **referencias** ("lo último" → la última frase o
 número).
 
 `parse_diff` saca el JSON (con `last_balanced_json_object` para respuestas que
@@ -516,12 +516,12 @@ En `app.rs` (resultado del hilo → `Message::CorrectionDone`):
    si no está → se descarta y la instrucción se trata como dictado normal; no se
    rompe el texto).
 2. Sustituir **la primera aparición** de `find` por `replace`.
-3. Apuntarlo en el historial de deshacer (`{before, after}`) — 1 nivel, botón
-   «Deshacer» (`Message::UndoLastCorrection`: «Corrección IA deshecha ↩»).
+3. Apuntarlo en el historial de deshacer (`{before, after}`) - 1 nivel, botón
+   "Deshacer" (`Message::UndoLastCorrection`: "Corrección IA deshecha ↩").
 4. Actualizar `transcript` y `last_turn` con el texto corregido.
 
-Ejemplo de siempre: «no no lo último está mal, es 2 en vez de 4» sobre «la
-reunión es a las 4 en punto» → «la reunión es a las 2 en punto».
+Ejemplo de siempre: "no no lo último está mal, es 2 en vez de 4" sobre "la
+reunión es a las 4 en punto" → "la reunión es a las 2 en punto".
 
 ---
 
@@ -530,13 +530,13 @@ reunión es a las 4 en punto» → «la reunión es a las 2 en punto».
 `src/domain/correction.rs::apply_correction(input) -> CorrectionResult` +
 `CorrectionSession` para varios turnos. Casos fijos:
 
-- Número + «en vez de» / «en lugar de»:
+- Número + "en vez de" / "en lugar de":
   `no[^,]*lo último[^,]*es (\d+) en vez de (\d+)` → sustituir `$2` por `$1` en
   `last_turn`.
-- «era X no Y» / «es X no Y» con números: `(?:era|es)\s+(\d+)\s+no\s+(\d+)`.
-- Referencia explícita a «la última palabra» → sustituir la última palabra.
-- Reformulaciones completas: «no, quería decir X», «mejor dicho X», «me refería
-  a X», «donde dije X, quería decir Y».
+- "era X no Y" / "es X no Y" con números: `(?:era|es)\s+(\d+)\s+no\s+(\d+)`.
+- Referencia explícita a "la última palabra" → sustituir la última palabra.
+- Reformulaciones completas: "no, quería decir X", "mejor dicho X", "me refería
+  a X", "donde dije X, quería decir Y".
 
 Las reglas y la IA trabajan con el mismo contrato. Cuando el clasificador ve
 intención de corregir que las reglas no resuelven, el turno se manda al
@@ -547,7 +547,7 @@ corrección: el dictado normal no paga ese coste.
 
 ## 9. UX: transparencia y opciones claras
 
-### 9.1 Chip de estado del corrector — SIEMPRE visible
+### 9.1 Chip de estado del corrector - SIEMPRE visible
 
 En la ventana principal (bajo la cabecera) y repetido como línea de estado en
 Ajustes. La lógica es una función pura en
@@ -560,37 +560,37 @@ Ajustes. La lógica es una función pura en
 | `LlmStatus::Disabled(motivo)` | `○ Corrección IA: inactiva — <motivo>` | ámbar (warn) |
 | `Unknown`/arranque | `○ Corrección IA: comprobando…` | gris |
 
-El motivo de que esté inactiva siempre se ve (nunca en silencio): «el endpoint
-https://… no respondió o rechazó la petición; el dictado sigue funcionando sin
-corrección» (`remote_endpoint_reason`), «no se encontró el ejecutable del server
+El motivo de que esté inactiva siempre se ve (nunca en silencio): "el endpoint
+https://... no respondió o rechazó la petición; el dictado sigue funcionando sin
+corrección" (`remote_endpoint_reason`), "no se encontró el ejecutable del server
 LLM (llama-server.exe). Configúralo en Ajustes o usa un endpoint
-OpenAI-compatible…», etc.
+OpenAI-compatible...", etc.
 
 ### 9.2 Ajustes → Corrección IA (primer nivel)
 
 - Línea de estado en vivo (la misma lógica que el aviso).
 - **Modo de IA** (pick_list de tres, desde la 0.7.1; antes era una casilla):
-  `Desactivada` · `Corrección` · `Reescritura`, cada uno con su explicación de
-  una línea (`AiMode::description`). Desactivada: «El dictado se escribe tal
-  cual.» Corrección: «La IA arregla las auto-correcciones («digo X»). Solo actúa
-  cuando las detecta.» Reescritura: «La IA reescribe el turno entero, limpio y
-  puntuado. Tarda algo más en cada dictado.» (ver el [apartado 6.7](CORRECCION-VOZ.html#67-modo-reescritura-071)).
-- **Proveedor** (pick_list con las etiquetas del [apartado 2](CORRECCION-VOZ.html#2-proveedores-local--remoto-openai--remoto-endpoint-propio)) + explicación: «Quién corrige
-  lo que dictas: Local — llama.cpp, el que viene con la app (sin internet,
-  recomendado) · Custom LLM — tu propio endpoint OpenAI-compatible · Cloud —
-  OpenAI. Por defecto: Local.»
-- **Endpoint LLM** (text input) + «Dirección del servidor de IA (API compatible
-  con OpenAI). Local: http://127.0.0.1:8081/v1.»
-- **Modelo IA local** (pick_list: Qwen2.5-0.5B · Llama 3.2 1B · Qwen2.5-1.5B ·
-  «Otro (repo o URL de Hugging Face)…») + botón **Descargar** con progreso. Con
-  «Otro» aparece el campo de texto para pegar `owner/repo` o la dirección del
+  `Desactivada` - `Corrección` - `Reescritura`, cada uno con su explicación de
+  una línea (`AiMode::description`). Desactivada: "El dictado se escribe tal
+  cual." Corrección: "La IA arregla las auto-correcciones ("digo X"). Solo actúa
+  cuando las detecta." Reescritura: "La IA reescribe el turno entero, limpio y
+  puntuado. Tarda algo más en cada dictado." (ver el [apartado 6.7](CORRECCION-VOZ.html#67-modo-reescritura-071)).
+- **Proveedor** (pick_list con las etiquetas del [apartado 2](CORRECCION-VOZ.html#2-proveedores-local--remoto-openai--remoto-endpoint-propio)) + explicación: "Quién corrige
+  lo que dictas: Local - llama.cpp, el que viene con la app (sin internet,
+  recomendado) - Custom LLM - tu propio endpoint OpenAI-compatible - Cloud  - 
+  OpenAI. Por defecto: Local."
+- **Endpoint LLM** (text input) + "Dirección del servidor de IA (API compatible
+  con OpenAI). Local: http://127.0.0.1:8081/v1."
+- **Modelo IA local** (pick_list: Qwen2.5-0.5B - Llama 3.2 1B - Qwen2.5-1.5B,
+  "Otro (repo o URL de Hugging Face)...") + botón **Descargar** con progreso. Con
+  "Otro" aparece el campo de texto para pegar `owner/repo` o la dirección del
   `.gguf`. El fichero se baja a `models-llm/` (0.7).
-- **Modelo IA** (text input, solo Custom/Cloud) + «El modelo que corrige en la
-  nube.»
-- **API key** (solo Custom/Cloud, `secure(true)`) + «Clave del endpoint si la
-  exige (Custom: opcional · Cloud: obligatoria). Se guarda en el Administrador
-  de credenciales de Windows, nunca en la config.»
-- **Server LLM** (ruta `llama-server.exe` + Examinar…/✕) + placeholder
+- **Modelo IA** (text input, solo Custom/Cloud) + "El modelo que corrige en la
+  nube."
+- **API key** (solo Custom/Cloud, `secure(true)`) + "Clave del endpoint si la
+  exige (Custom: opcional - Cloud: obligatoria). Se guarda en el Administrador
+  de credenciales de Windows, nunca en la config."
+- **Server LLM** (ruta `llama-server.exe` + Examinar.../✕) + placeholder
   autodetección + la pista del [apartado 5](CORRECCION-VOZ.html#5-server-llm-local-nativo-llamacpp).
 
 ### 9.3 Ajustes avanzados (técnico, colapsado por defecto)
@@ -598,26 +598,26 @@ OpenAI-compatible…», etc.
 Cada opción lleva su explicación en lenguaje llano (el texto es el mismo que se
 ve en la app):
 
-- **Calidad de transcripción (beam size)** — slider 1..=8, default 5: «Calidad
+- **Calidad de transcripción (beam size)** - slider 1..=8, default 5: "Calidad
   de transcripción (beam size) vs velocidad: 1 = la más rápida, 8 = la más
-  fiel. Rango 1–8, recomendado: 5.»
-- **Núcleos de CPU** — slider 1..=16, default 4: «Núcleos de CPU que usa Whisper
+  fiel. Rango 1-8, recomendado: 5."
+- **Núcleos de CPU** - slider 1..=16, default 4: "Núcleos de CPU que usa Whisper
   al transcribir. Sube si el equipo va justo de velocidad; baja para dejar
-  recursos al resto. Rango 1–16, recomendado: 4.»
-- **Espera máx. (s)** — tiempo máximo de la IA, slider 1..=120, default 25:
-  «Espera máxima de la IA antes de dar el turno por definitivo: si lo supera, se
-  inserta sin corregir. Rango 1–120 s, recomendado: 25 s.»
-- **Sensibilidad** — umbral del clasificador 0..=100, default 50: subirlo hace la
+  recursos al resto. Rango 1-16, recomendado: 4."
+- **Espera máx. (s)** - tiempo máximo de la IA, slider 1..=120, default 25:
+  "Espera máxima de la IA antes de dar el turno por definitivo: si lo supera, se
+  inserta sin corregir. Rango 1-120 s, recomendado: 25 s."
+- **Sensibilidad** - umbral del clasificador 0..=100, default 50: subirlo hace la
   app más prudente (menos llamadas a la IA, más dictado normal por defecto).
 
 ### 9.4 Corrección consciente
 
 Mientras la IA trabaja, `status = Status::Correcting` (ámbar, como
-Transcribing): así sabes que la app «te ha oído» y está en ello. Por defecto se
+Transcribing): así sabes que la app "te ha oído" y está en ello. Por defecto se
 aplica sola + aviso en el panel de respuesta (`last_correction`) + deshacer de 1
-nivel. Hay un interruptor opcional **«Confirmar antes de aplicar»**
+nivel. Hay un interruptor opcional **"Confirmar antes de aplicar"**
 (`ai_correction_confirm`, apagado por defecto): entonces el diff llega con
-botones «Aplicar / Descartar».
+botones "Aplicar / Descartar".
 
 ---
 
@@ -625,16 +625,16 @@ botones «Aplicar / Descartar».
 
 | Etapa | Coste estimado |
 |---|---|
-| Whisper Small (RTX 4070, CUDA) | tiempo real / ligeramente inferior (RTF ~0.2–0.5) |
+| Whisper Small (RTX 4070, CUDA) | tiempo real / ligeramente inferior (RTF ~0.2-0.5) |
 | Clasificadores (regex) | < 1 ms |
-| LLM 9B local, prompt ~250–400 tok, ~75 tok/s | ~4–6 s |
-| Qwen3‑4B‑Instruct‑2507 (RTX 4070, CUDA), por turno | **0,37–0,53 s** medidos |
+| LLM 9B local, prompt ~250-400 tok, ~75 tok/s | ~4-6 s |
+| Qwen3-4B-Instruct-2507 (RTX 4070, CUDA), por turno | **0,37-0,53 s** medidos |
 | Guard + aplicación + re-render | < 1 ms |
 
-La corrección con IA añade **~4–6 s solo cuando se detecta que quieres
+La corrección con IA añade **~4-6 s solo cuando se detecta que quieres
 corregir** (in-turn o cross-turn); el dictado normal no lo paga. En **Reescritura
-sí se paga en cada turno**, pero con Qwen3‑4B son 0,37–0,53 s por turno medidos
-en una RTX 4070 (el «83 digo 84» con el guard delante: 166 ms). La espera por
+sí se paga en cada turno**, pero con Qwen3-4B son 0,37-0,53 s por turno medidos
+en una RTX 4070 (el "83 digo 84" con el guard delante: 166 ms). La espera por
 defecto (25 s) cubre ese margen de sobra, también con endpoints remotos.
 
 ---
@@ -649,7 +649,7 @@ defecto (25 s) cubre ese margen de sobra, también con endpoints remotos.
 | `src/domain/correction.rs` | `apply_correction`, `CorrectionSession`, `append_transcript`, `replace_last_sentence` | corrección por reglas (fallback barato) |
 | `src/app.rs` | `Message::TranscriptionDone` (routing en cascada), `ToggleAiCorrection`, `CorrectionProviderChanged`, `spawn_llm_startup`, `run_startup_thread`, `run_llm_phase`, `disable_ai_correction_now`, `restore_pending_as_dictation`, `llm_status_ui`, `remote_endpoint_reason`, `auto_server_placeholder`, `LlmStatus`, `Status::Correcting`, botones Undo/Deshacer | UI, máquina de estados, hilos LLM (std::thread + mpsc), chip de estado |
 
-Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
+Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` - ver
 `README.md` → Configuración avanzada y `docs/SETUP.md` para Local/Custom/Cloud.
 
 ---
@@ -658,20 +658,20 @@ Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
 
 - `cargo test` verde (**336 passed + 3 ignored** a 24/09/2026, incluidos los que
   añadió después sobre el selector de proveedor y el degradado a remoto).
-  Cubren: clasificadores cross-turn e in-turn (el caso de siempre del autor «que
-  calor en murcia digo cartagena» + variantes), `apply_diff` (números, «lo
-  último», diff inválido que no toca nada), deshacer, `clean_redact_output`,
+  Cubren: clasificadores cross-turn e in-turn (el caso de siempre del autor "que
+  calor en murcia digo cartagena" + variantes), `apply_diff` (números, "lo
+  último", diff inválido que no toca nada), deshacer, `clean_redact_output`,
   `contains_in_turn_marker` / `strip_in_turn_meta`, protección contra respuestas
   recortadas (casos largo y corto), protección numérica ([apartado 6.5](CORRECCION-VOZ.html#65-guard-numérico-determinista-ampliado): concatenación,
-  número viejo en frase natural —los dos casos del registro—, borrado de
+  número viejo en frase natural  - los dos casos del registro, borrado de
   números, `no…sino`, la duda que NO se toca y un caso de control sin
   corrección), estado del aviso, etiquetas de proveedor, valores por defecto de
   `llm_settings` según proveedor.
 - `cargo check` sin errores.
-- Casos de siempre: cross-turn «la reunión es a las 4 en punto» + «no no lo
-  último está mal, es 2 en vez de 4» → «la reunión es a las 2 en punto»;
-  in-turn «que calor que hace en murcia digo cartagena» → «que calor que hace
-  en cartagena».
+- Casos de siempre: cross-turn "la reunión es a las 4 en punto" + "no no lo
+  último está mal, es 2 en vez de 4" → "la reunión es a las 2 en punto";
+  in-turn "que calor que hace en murcia digo cartagena" → "que calor que hace
+  en cartagena".
 - Endpoint remoto caído → `LlmDisabled` con un aviso que nombra la URL y deja
   claro que el dictado sigue (test `endpoint_remoto_caido_desactiva_con_aviso_
   que_no_bloquea`).

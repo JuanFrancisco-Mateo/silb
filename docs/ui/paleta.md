@@ -2,7 +2,7 @@
 
 ## El fallo y su causa
 
-«Cambiar colores no funciona para nada»: el hex se guardaba en
+"Cambiar colores no funciona para nada": el hex se guardaba en
 `config.json`, pero la ventana no cambiaba salvo en los textos que la vista
 calcula por su cuenta.
 
@@ -42,7 +42,7 @@ El mismo frame tenía la paleta del usuario y, unas líneas después, la de seri
 |---|---|
 | `paleta-antes.png` | Paleta de serie: fondo `#17181C`, acento violeta `#7C6CFF` |
 | `paleta-despues.png` | Tras pulsar las muestras `#3A3C45` (fondo) y `#00AAFF` (acento), y reiniciar la app |
-| `paleta-selector-muestras.png` | La tarjeta «Paleta» con la fila de muestras de cada campo |
+| `paleta-selector-muestras.png` | La tarjeta "Paleta" con la fila de muestras de cada campo |
 
 Comprobado al píxel: el fondo pasa de `#17181C` a `#3A3C45` (249 303 px) y el
 acento de `#7C6CFF` a `#00AAFF` (4 714 px, botón del micrófono, logo y botones

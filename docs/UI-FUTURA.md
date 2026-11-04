@@ -1,4 +1,4 @@
-# Diseño e ideas — lo que ya está y lo que queda
+# Diseño e ideas - lo que ya está y lo que queda
 
 Este documento cuenta qué partes del diseño están cerradas (para no reabrirlas
 sin motivo), qué falta y qué ideas hay para las próximas versiones. Los colores y
@@ -10,10 +10,10 @@ las medidas viven todos en `src/theme.rs`.
 
 - **Modo oscuro por defecto**, con interruptor que se recuerda entre arranques.
 - **Medidas centralizadas** en `src/theme.rs`: un solo acento violeta
-  (`#7C6CFF`), rejilla de 8 px, radios de 8–10 px y una escala de tamaños de
+  (`#7C6CFF`), rejilla de 8 px, radios de 8-10 px y una escala de tamaños de
   letra. En la interfaz no hay valores sueltos.
-- **Una pantalla, una pregunta** («¿qué estoy dictando?») y dos secciones en la
-  ventana principal —**Dictado** y **Ajustes**— con la misma barra de pestañas.
+- **Una pantalla, una pregunta** ("¿qué estoy dictando?") y dos secciones en la
+  ventana principal  - **Dictado** y **Ajustes** -  con la misma barra de pestañas.
 - **Estado del micrófono por dos vías**: color y texto, con medidor de nivel.
   Sin animaciones de adorno, sin cristal translúcido ni relieves falsos.
 - **El botón grande del micrófono** como centro de la pantalla.
@@ -22,17 +22,17 @@ las medidas viven todos en `src/theme.rs`.
 
 Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
 
-- **Aviso de confianza a la vista**: «Transcripción local · nada sale de tu PC»
+- **Aviso de confianza a la vista**: "Transcripción local - nada sale de tu PC"
   en el pie de la ventana. Si la corrección usa un servicio en la nube, el texto
   cambia y no promete nada: hay un test que lo comprueba.
 - **Marca en el turno**: si el texto que acaba de aparecer lo ha tocado la IA, el
-  pie de «Transcripción» lo dice con el modo y el modelo («Último turno:
-  Corrección IA · Qwen3-4B»). Si la IA no intervino —dictado tal cual, reglas,
-  modelo que confirma sin cambiar nada, deshacer o edición a mano—, no se pinta
+  pie de "Transcripción" lo dice con el modo y el modelo ("Último turno:
+  Corrección IA - Qwen3-4B"). Si la IA no intervino  - dictado tal cual, reglas,
+  modelo que confirma sin cambiar nada, deshacer o edición a mano - , no se pinta
   nada: nada de ruido.
 - **Estado del corrector en Ajustes**: la nota de cabecera de Ajustes →
   Corrección IA dice el modo, el modelo y **a dónde viaja el texto**
-  («● Corrección IA: activa · Qwen3-4B · 127.0.0.1:8081/v1»; en Remoto, el
+  ("● Corrección IA: activa - Qwen3-4B - 127.0.0.1:8081/v1"; en Remoto, el
   endpoint real). Una sola función (`llm_status_ui`) decide ese texto.
 - **Texto editable**: lo transcrito es un editor de varias líneas; puedes
   corregirlo a mano y seguir dictando sin que una cosa pise la otra (lo nuevo se
@@ -51,11 +51,11 @@ Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
   acento de serie o con un acento claro (`#FFD400`) se lee la tinta oscura; con
   uno oscuro (`#1A1A2E`) entra el blanco. Ajustes → Apariencia avisa cuando el
   hex escrito no llega a AA ni por un lado ni por otro.
-- **La «piel» del marco sigue a la paleta**: barra lateral, barra de ventana,
+- **La "piel" del marco sigue a la paleta**: barra lateral, barra de ventana,
   keycaps, nav activo, separadores y texto tenue se deducen del fondo y la
   tarjeta del usuario (`theme::chrome`), no son tonos fijos. Con la paleta de
-  serie salen los valores de Figma; con una paleta propia —o una clara en modo
-  oscuro— el marco se aclara u oscurece con ella. Los tests miden los tres
+  serie salen los valores de Figma; con una paleta propia  - o una clara en modo
+  oscuro -  el marco se aclara u oscurece con ella. Los tests miden los tres
   fondos del marco contra los tres textos.
 - **Menos movimiento**: no hay animaciones de adorno que desactivar. Lo único
   que se actualiza a menudo es el latido de estado (100 ms) y la animación por
@@ -74,7 +74,7 @@ Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
 
 ## 4. Estado y avisos
 
-- **Un solo sitio para «qué está pasando»**: la pista del panel de grabación
+- **Un solo sitio para "qué está pasando"**: la pista del panel de grabación
   (debajo del titular del micrófono) dice grabando, transcribiendo, corrigiendo
   con IA, modelo descargándose y servidor de IA caído. No hay diálogos nuevos ni
   avisos flotantes: si no hay nada que contar, solo invita a dictar.
@@ -85,8 +85,8 @@ Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
   descargado y el tiempo estimado que queda. La del modelo de corrección también
   se ve mientras dictas (antes solo salía en Ajustes).
 - **Nivel de micrófono con marca de pico**: la barra dibuja el pico real y avisa
-  cuando importa — «sin señal del micrófono: ¿está silenciado?» pasados unos
-  segundos, y «el micrófono puede estar saturando» cuando se pasa de rango. El
+  cuando importa - "sin señal del micrófono: ¿está silenciado?" pasados unos
+  segundos, y "el micrófono puede estar saturando" cuando se pasa de rango. El
   aviso lleva texto, no solo color.
 
 ## 5. Ideas opcionales (de bajo coste)
@@ -109,7 +109,7 @@ la app deja poner material propio:
 - **Imagen fija de la burbuja**, con los mismos formatos y la misma caída al
   dibujo normal si falla.
 - **Animación por frames**: una carpeta de imágenes que se van cambiando a un
-  ritmo configurable (1–30 por segundo, 12 por defecto), en orden alfabético y en
+  ritmo configurable (1-30 por segundo, 12 por defecto), en orden alfabético y en
   bucle. Si la carpeta está vacía, se usa la imagen fija.
 
 Lo elegido se guarda como **copia** dentro de los datos de la app
@@ -132,7 +132,7 @@ por cada movimiento del ratón al arrastrar la burbuja. Ahora:
   con un botón para abrir la carpeta (junto al estado de `WHISPR_DEBUG` y a dónde
   viven las imágenes propias).
 
-## 8. Elegir el modelo de IA desde Ajustes (0.7) — implementado
+## 8. Elegir el modelo de IA desde Ajustes (0.7) - implementado
 
 **Ya está hecho** (commits `1c0e7c9`, `7981f3c`, `f7ec5f0`). Antes, en
 **Ajustes → Corrección IA**, el modelo local se escribía a mano en un campo de
@@ -146,7 +146,7 @@ Qué se eligió:
   la 0.7.1, **Qwen3-4B-Instruct-2507** (~2,4 GB, el mejor para reescribir). Son
   los modelos probados, con su nombre de fichero y su dirección reales en
   `src/llm.rs` (`SMALL_LLM_MODELS`).
-- **«Otro (repo o URL de Hugging Face)…»** para lo que no esté en la lista: abre
+- **"Otro (repo o URL de Hugging Face)..."** para lo que no esté en la lista: abre
   un campo donde se pega `owner/repo` (se leen los ficheros del repo por la API
   y se escoge el GGUF, prefiriendo `q4_k_m`) o la dirección directa del `.gguf`.
   Es el único sitio donde se escribe a mano.
@@ -156,7 +156,7 @@ Qué se eligió:
 - **Dónde se descarga**: en la carpeta propia del corrector,
   `%APPDATA%\whispr-open\models-llm\` (en Linux
   `~/.local/share/whispr-open/models-llm/`), en un hilo aparte con progreso
-  («Descargando… 123 MB de 491 MB (25 %)», o sin total si el servidor no lo
+  ("Descargando... 123 MB de 491 MB (25 %)", o sin total si el servidor no lo
   dice). Al terminar, el servidor de IA se relanza por el camino de arranque de
   siempre; el nombre que se guarda es el del fichero, no la ruta dentro del repo.
 
@@ -168,7 +168,7 @@ Límites, dichos claros en la propia pantalla:
 - La descarga **no toca el dictado**: si falla, queda un aviso en el bloque y se
   sigue dictando (sin corrección si no había modelo).
 
-## 9. Tres modos de IA: Desactivada / Corrección / Reescritura (0.7.1) — implementado
+## 9. Tres modos de IA: Desactivada / Corrección / Reescritura (0.7.1) - implementado
 
 **Ya está hecho** (commits `421160a`, `1678412`, `a86e12b`, `b6302fb`). Antes,
 Ajustes → Corrección IA tenía **una sola casilla**: IA sí o no. Ahora es un
@@ -178,21 +178,21 @@ no las distinguía:
 | Modo | Qué hace | Cuándo se llama al modelo |
 |---|---|---|
 | Desactivada | El dictado se escribe tal cual. | Nunca. |
-| Corrección | Arregla las auto-correcciones («digo X»). | Solo cuando el clasificador ve una. |
+| Corrección | Arregla las auto-correcciones ("digo X"). | Solo cuando el clasificador ve una. |
 | Reescritura | Reescribe el turno entero, limpio y puntuado. | En cada turno. |
 
 - **La casilla se va, la compatibilidad se queda**: `ai_mode` se deriva del
   antiguo `ai_correction_enabled` y `ai_correction_enabled()` pasa a significar
-  «modo distinto de Off». Nadie tiene que tocar su `config.json`.
+  "modo distinto de Off". Nadie tiene que tocar su `config.json`.
 - **La nota del selector** enseña una línea por modo (`AiMode::description`), y
   la de Reescritura avisa de que **tarda algo más en cada dictado**: es la única
   diferencia de coste que el usuario nota.
 - **Aviso del modelo pequeño**: con Reescritura puesta y Qwen2.5-0.5B, Llama 3.2
-  1B o Qwen2.5-1.5B elegidos, sale una nota ámbar («Para reescribir se recomienda
-  Qwen3-4B: los pequeños devuelven el texto sin tocar o una lista de reglas»).
+  1B o Qwen2.5-1.5B elegidos, sale una nota ámbar ("Para reescribir se recomienda
+  Qwen3-4B: los pequeños devuelven el texto sin tocar o una lista de reglas").
   No se cambia el modelo por su cuenta: manda el usuario.
-- **El panel de respuesta dice qué pasó**: «Reescrito IA: «antes» → «después»» en
-  Reescritura, «Auto-corregido IA: …» en Corrección, y la fila de estado nombra
+- **El panel de respuesta dice qué pasó**: "Reescrito IA: "antes" → "después"" en
+  Reescritura, "Auto-corregido IA: ..." en Corrección, y la fila de estado nombra
   el modo activo (`Reescritura IA`).
 
 Detalle técnico del prompt, del orden guards → modelo y del umbral del 50 %:
@@ -204,7 +204,7 @@ Detalle técnico del prompt, del orden guards → modelo y del umbral del 50 %:
   ahí, nunca suelto en `app.rs`.
 - El aviso de confianza y el texto editable respetan el modo claro y el oscuro.
 - Sin animaciones de entrada gratuitas: solo respuestas de estado cortas
-  (150–250 ms) y respetando la preferencia de menos movimiento.
+  (150-250 ms) y respetando la preferencia de menos movimiento.
 - Mostrar solo lo necesario: lo nuevo se añade al panel o al botón grande, sin
   llenar la ventana de barras.
 - `cargo test` y `cargo check` en verde, con los tests de contraste intactos.

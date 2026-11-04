@@ -1,4 +1,4 @@
-# PORT-LINUX / CODIGO-UI — resquicios windows-especificos que quedan
+# PORT-LINUX / CODIGO-UI - resquicios windows-especificos que quedan
 
 La Parte 4 no es la dueña de los ficheros de escritura del texto, burbuja y
 bandeja (Partes 2 y 3). Aquí se apunta CADA resto de Windows que se ha encontrado
@@ -17,10 +17,10 @@ toca portarlo.
 | src/single_instance.rs | CreateMutexW guard; stub no-Windows | ya portado (stub true) | ya jugado |
 | src/config.rs | load_api_key_secret/save via WinAPI Credential Manager; stub no-Windows (nunca guarda key) | ya portado; port keyring Linux (libsecret) queda como TASK FUERA de la parte | pendiente (TODO fijo citado abajo) |
 | src/llm.rs | launch_server cfg(windows) CREATE_NO_WINDOW; resolve_model_path ya usa roots por cfg | ya portado en roots (cfg en Windows C:/D: vs Linux ~/.local/share/llama.cpp, /opt/llama.cpp) | ya jugado (roots), Parte 2/3 real port del lanzamiento del server |
-| src/audio.rs | sin grep windows | limpio | – |
-| src/app.rs | Iced UI | portable (Iced cross-plataforma), sin cfg | – |
+| src/audio.rs | sin grep windows | limpio | - |
+| src/app.rs | Iced UI | portable (Iced cross-plataforma), sin cfg | - |
 | src/transcribe.rs | cuda en cfg(windows) dep (Cargo.toml); models_dir ya por cfg | ya portado en esta parte (Cargo.toml whisper-rs default-features=false + cfg(windows) cublas) | ya jugado |
-| src/custom_image.rs, src/icon_header.rs, src/ui/*.rs | sin residuos window-specific detectados (grep limpio salvo doc-comments) | – | – |
+| src/custom_image.rs, src/icon_header.rs, src/ui/*.rs | sin residuos window-specific detectados (grep limpio salvo doc-comments) | - | - |
 
 ## Pendientes declarados (a quien va)
 
@@ -33,7 +33,7 @@ toca portarlo.
    a arboard en Linux (funciona en Wayland por data-control).
    El tecleo con enigo no funciona en Wayland (enigo solo X11).
    Alternativa: wl-clipboard + ydotool (necesita permisos y el servicio de entrada)
-   — cae en el reparto de la escritura del texto (Parte 3).
+   - cae en el reparto de la escritura del texto (Parte 3).
 3. **tray-icon en Linux.** src/tray.rs no hace nada fuera de Windows: la bandeja
    no existe en el port actual. Alternativa: libappindicator-gtk3 con tray-icon y
    la parte dbus → camino pendiente de probar (Parte 3).

@@ -1,4 +1,4 @@
-# PORT-LINUX / DEPENDENCIAS — checklist del sistema para compilar y correr
+# PORT-LINUX / DEPENDENCIAS - checklist del sistema para compilar y correr
 
 Estado: port en marcha. Todo lo que aparece aquí es DOCUMENTACIÓN; el agente NO
 ha ejecutado NINGÚN COMANDO (regla dura de la tarea: nada de sudo, nada de
@@ -47,7 +47,7 @@ paquete cublas.
 
 En el Cargo.toml, whisper-rs va con `default-features = false` (CPU) en la
 sección [dependencies], y whisper-rs con `features = ["cuda"]` solo en
-[target.'cfg(windows)'.dependencies] — o sea, la compilación de Linux es de CPU
+[target.'cfg(windows)'.dependencies] - o sea, la compilación de Linux es de CPU
 por diseño y en Windows se mantiene la configuración original tal cual.
 
 Si quisiéramos CUDA en Linux haría falta: `pacman -S cuda`, cmake y reactivar la

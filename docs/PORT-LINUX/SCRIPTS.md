@@ -1,4 +1,4 @@
-# PORT-LINUX / SCRIPTS — lo que cambia respecto a los de Windows
+# PORT-LINUX / SCRIPTS - lo que cambia respecto a los de Windows
 
 ## Lo que ya existia (solo Windows, se queda como esta)
 
@@ -24,8 +24,8 @@
 
 - Envuelve el binario `target/release/silb` con `WINIT_UNIX_BACKEND=wayland`
   exportado y `exec`.
-- Se para con un mensaje claro si no hay binario («Ejecuta antes
-  build-linux.sh»).
+- Se para con un mensaje claro si no hay binario ("Ejecuta antes
+  build-linux.sh").
 - OJO: el binario se llama **`silb`** desde el cambio de nombre (`Cargo.toml` →
   `[[bin]] name = "silb"`); los scripts apuntaban a `whispr-open` y ejecutaban un
   binario viejo. Corregido en build-linux.sh y run-linux.sh.

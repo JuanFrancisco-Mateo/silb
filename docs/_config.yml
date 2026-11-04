@@ -10,7 +10,7 @@
 #
 # Tema oscuro para que pegue con la app (los temas de serie de Pages son los
 # únicos permitidos sin gemas propias: slate, midnight, cayman, minima…).
-title: Silb — documentación
+title: Silb - documentación
 description: Dictado por voz local en tu equipo. Guía de usuario, arquitectura y empaquetado.
 theme: jekyll-theme-slate
 lang: es
