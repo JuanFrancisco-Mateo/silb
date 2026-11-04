@@ -7,10 +7,9 @@ single_instance, theme, config, bubble) para que la app compile en Windows Y en
 Linux (Omarchy: Arch + Hyprland sobre Wayland), degradándose con elegancia y sin
 tocar los ficheros de otros devs.
 
-Normas aplicadas: AGENTS.md + docs/ARQUITECTURA.md + docs/ROADMAP.md. Frente a la
-regla de «sin builds»: NO se compiló nada (en esta máquina no hay herramientas de
-Rust; el análisis es de leer y razonar). La compilación de verdad la hará
-Port/qa-01 con los pendientes de aquí abajo.
+Este registro se apoya en `docs/ARQUITECTURA.md` y `docs/ROADMAP.md`. No se
+compiló nada (en esa máquina no había herramientas de Rust): el análisis sale de
+leer el código, y la compilación de verdad queda en los pendientes de aquí abajo.
 
 ---
 
@@ -85,7 +84,7 @@ Port/qa-01 con los pendientes de aquí abajo.
   registro las limitaciones «arrastre corto» / «soltar fuera».
 - `apply_bubble_extras` / `move_to_corner` solo apuntan en el registro: lo de estar
   siempre encima y el fijado se resuelven con windowrulev2 de Hyprland
-  (ver §2), no hablando con el compositor desde la app (fuera de alcance, ver la
+  (ver [apartado 2](PORT-LINUX/CODIGO-CORE.html#2-cómo-se-ve-en-linux-lo-que-hace-falta-a-mano)), no hablando con el compositor desde la app (fuera de alcance, ver la
   tarea).
 
 ### Cargo.toml

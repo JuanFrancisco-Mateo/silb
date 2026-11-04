@@ -3,7 +3,7 @@
 > **Rebautizado como Silb (v0.3.0)**: el binario pasa a llamarse `silb.exe` y el
 > instalador `silb-X.Y.Z-setup.exe` (AppName `Silb`, mismo `AppId`, así una
 > instalación anterior se actualiza encima). Las rutas de los comandos de este
-> documento ya lo reflejan. Las MEDIDAS de las tablas (§7, §8) se tomaron sobre
+> documento ya lo reflejan. Las MEDIDAS de las tablas ([apartado 7](EMPAQUETADO.html#7-pipeline-de-release-pasos-exactos-para-r6-11092026) y [apartado 8](EMPAQUETADO.html#8-medidas-de-ligereza-reales-r6-11092026)) se tomaron sobre
 > el binario anterior (`whispr-open.exe`: el mismo código, antes del cambio de
 > nombre) y no se han vuelto a medir. Nombres internos que NO cambian: el `.ico`
 > (`assets/whispr-open.ico`), el script `packaging/whispr-open.iss`, el paquete
@@ -12,17 +12,17 @@
 Objetivo: convertir `target/release/silb.exe` en algo que se pueda instalar y que
 dé confianza en Windows 10/11.
 
-Estado al cerrar la **Fase 5 (R7, 11/09/2026, v0.3.0)**: instalador Inno Setup
+Estado al cerrar la **0.3.0 (11/09/2026)**: instalador Inno Setup
 que funciona (objetivo ≤25 MiB, sin admin, `%LOCALAPPDATA%\Programs\Silb`), icono
 `.ico` en varios tamaños (16/24/32/48/64/128/256, color `#7C6CFF`, fondo
 transparente) generado por código y metido dentro del `.exe` y en los accesos
 directos, y la versión portable = el propio `.exe` release (sin instalador). Las
-medidas reales de ligereza están abajo (§8).
+medidas reales de ligereza están abajo ([apartado 8](EMPAQUETADO.html#8-medidas-de-ligereza-reales-r6-11092026)).
 
-**Cambios en R7 (Fase 5):** subida de versión 0.2.0 → 0.3.0 (cierre de la fase 5
+**Cambios en la 0.3.0:** subida de versión 0.2.0 → 0.3.0 (cierre de la etapa
 con la personalización completa ya dentro del binario final: sección Imágenes en
-Ajustes, colores editables, animación por frames). Medidas reales actualizadas en
-§8.4.
+Ajustes, colores editables, animación por frames). Medidas reales actualizadas en el
+[apartado 8.4](EMPAQUETADO.html#84-decisión-sobre-prerroll-y-carga-del-modelo).
 
 ---
 
@@ -33,14 +33,14 @@ Ajustes, colores editables, animación por frames). Medidas reales actualizadas 
 Un único ejecutable que lleva todo dentro, sin instalación.
 
 - Qué hace falta: meter el **icono** dentro del binario (recursos de Windows,
-  ver §4) y empaquetar cualquier DLL de runtime que falte.
+  ver [apartado 4](EMPAQUETADO.html#4-versionado-semver)) y empaquetar cualquier DLL de runtime que falte.
 - Cómo: `cargo build --release` ya genera un binario estático salvo las DLL del
   runtime de MSVC y las de CUDA/whisper. Comprueba con `dumpbin`/`llvm-nm` qué
   DLL necesita y decide si se enlazan dentro o se reparten aparte (una carpeta
   junto al `.exe`).
 - Estado R6: **el `.exe` se reparte tal cual como portable**. Se han medido
   176 MB de RAM en reposo (sin modelo), 486 MB tras dejar cargado el modelo
-  `small`, y 1.213 MB de memoria privada (ver §8). El `.exe` lleva el icono
+  `small`, y 1.213 MB de memoria privada (ver [apartado 8](EMPAQUETADO.html#8-medidas-de-ligereza-reales-r6-11092026)). El `.exe` lleva el icono
   `.ico` dentro y arranca sin pedir permisos de administrador ni nada más allá
   del runtime de MSVC.
 - Ventajas: sin pedir permisos elevados, ideal para probar y para «probar a
@@ -72,7 +72,7 @@ Qué lleva el instalador:
 | `target/release/silb.exe` (tras Personalización I+II+III, feat `image` activada) | 47.178.240 B (44,99 MiB) |
 | `packaging/Output/silb-0.2.0-setup.exe` (R6 inicial, feat `image` desactivada) | 23.769.034 B (22,67 MiB) |
 | `packaging/Output/silb-0.2.0-setup.exe` (tras Personalización III, feat `image` activa) | 24.332.697 B (23,21 MiB) |
-| `packaging/Output/silb-0.3.0-setup.exe` (R7, v0.3.0 con personalización completa) | (medido en §8.4) |
+| `packaging/Output/silb-0.3.0-setup.exe` (0.3.0, con personalización completa) | (medido en el [apartado 8.4](EMPAQUETADO.html#84-decisión-sobre-prerroll-y-carga-del-modelo)) |
 
 La compresión LZMA2/ultra64 baja el binario de ~45 MiB a ~23 MiB (~52 % del
 original). Objetivo ≤25 MiB: **CUMPLIDO** (1,79 MiB de margen incluso con la
@@ -295,13 +295,13 @@ verifica tamaño y sha256; no va a git).
 
 **Licencia del runtime.** Las tres DLL son redistribuibles: el *CUDA Toolkit
 Supplement to Software License Agreement for NVIDIA Software Development Kits*
-lo dice en §2.2 «Distribution» («The portions of the SDK that are distributable
-under the Agreement are listed in Attachment A») y en §2.6 «Attachment A», que
+lo dice en el apartado 2.2 «Distribution» («The portions of the SDK that are distributable
+under the Agreement are listed in Attachment A») y en el apartado 2.6 «Attachment A», que
 incluye `cudart.dll` y `cublas.dll` / `cublasLt.dll` «including certain
 variations of these files that have version number or architecture specific
 information embedded in the file name» — o sea `cudart64_12.dll`,
 `cublas64_12.dll` y `cublasLt64_12.dll`. Texto en `docs.nvidia.com/cuda/eula/`
-(`index.html`, §2.2 y §2.6); se cita tal cual, sin copiar la URL del PDF.
+(`index.html`, apartados 2.2 y 2.6); se cita tal cual, sin copiar la URL del PDF.
 
 **Qué compilar antes (el online empaqueta `target/release/silb.exe`).** El
 online y el offline toman el build CPU de `packaging\build\silb-cpu.exe` y el
@@ -372,7 +372,7 @@ tamaño con el de la base.
 
 El perfil que **se queda en el repo** (`Cargo.toml`) es el base
 (`lto=true, strip=true`): cumple el objetivo de tamaño del instalador (≤25 MiB,
-ver §1.2.1) sin perder velocidad. Cualquiera de las otras variantes se puede
+ver [apartado 1.2.1](EMPAQUETADO.html#121-medidas-reales-del-instalador-r6-11092026)) sin perder velocidad. Cualquiera de las otras variantes se puede
 activar poniendo ajustes de `[profile.release]` en un `~/.cargo/config.toml` o
 con `--config <ruta>` en cada compilación.
 
@@ -382,7 +382,7 @@ Motivos (medidos el 11/09/2026):
 
 1. **El binario ya cumple el objetivo de tamaño** (44,99 MiB con la función
    `image` activa tras la Personalización III; instalador 23,21 MiB tras LZMA,
-   ver §1.2.1).
+   ver [apartado 1.2.1](EMPAQUETADO.html#121-medidas-reales-del-instalador-r6-11092026)).
 2. **`opt-level="z"` ahorra 4,92 MiB (-11,0 %)** — pero penaliza la velocidad: la
    app va sobrada de GPU al transcribir (whisper.cpp + CUDA) y justa de CPU al
    dibujar (Iced 0.13); perder un 11 % de velocidad por 4 MiB no compensa.
@@ -427,7 +427,7 @@ coste de 1–2 s en la primera pulsación del atajo se paga al empezar la sesió
 a mitad del dictado. Si no quieres ese gasto de RAM, basta cambiar el modelo a
 `tiny` en Ajustes → Modelo (~75 MB en disco, +80 MB en RAM).
 
-### 8.5 Medidas reales de R7 (Fase 5, 11/09/2026, v0.3.0)
+### 8.5 Medidas reales de la 0.3.0 (11/09/2026)
 
 Cierre de la fase 5 con la subida de versión 0.2.0 → 0.3.0 y el binario final con
 la personalización completa dentro (Ajustes por secciones + colores + imágenes y

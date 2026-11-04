@@ -1,4 +1,4 @@
-# Runtime de audio/transcripción/tray/LLM en Linux (port t_7ac526a3)
+# Runtime de audio/transcripción/tray/LLM en Linux
 
 Estado de cada módulo (CON HONESTIDAD: nada de esto se ha compilado ni medido en
 esta máquina — la tarea prohíbe `cargo build`; la prueba real de compilación,
@@ -47,7 +47,7 @@ micrófono y teclado la hace el usuario):
   1. `cargo build --release` (o run).
   2. Ajustes → selector de micrófono: deben aparecer los perfiles ALSA.
   3. Grabar un turno corto y comprobar que el medidor de nivel se mueve y que
-     llega la transcripción (ver §2).
+     llega la transcripción (ver [apartado 2](PORT-LINUX/AUDIO-RUNTIME.html#2-transcribers--whisper-rs-016-cuda-opcional)).
   4. Si el micro dice «dispositivo ocupado»: probar `pw-cli` (¿está PipeWire
      vivo?) y cerrar las apps que retengan el micro (el navegador con la webcam).
 
@@ -106,7 +106,7 @@ micrófono y teclado la hace el usuario):
   status_item/toggle_item con `set_text()` que no hacen nada y canal `events`
   siempre vacío). `app.rs` (fuera del reparto de este port) no necesita cfg.
 - Efecto para quien use Linux: sin icono junto al reloj; todo el flujo vive en la
-  ventana principal (dictado, ajustes) + atajo (§ hotkey) + botón de salir de la
+  ventana principal (dictado, ajustes) + atajo ([apartado 4](PORT-LINUX/AUDIO-RUNTIME.html#4-hotkeyrs--backend-hyprland-socket-unix)) + botón de salir de la
   propia interfaz. La ventana se puede ocultar; para recuperarla, relanzar la app
   NO abre una segunda instancia cuando exista el guard de instancia única de Linux
   (single_instance.rs — módulo de OTRO agente, su apaño actual devuelve true
@@ -195,13 +195,13 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
   `[features] cuda = ["whisper-rs/cuda"]` (APAGADA por defecto, en los dos
   sistemas).
 - `tray-icon` movido a `[target.'cfg(not(target_os = "linux"))'.dependencies]`
-  (Linux sin bandeja: ver §3).
+  (Linux sin bandeja: ver [apartado 3](PORT-LINUX/AUDIO-RUNTIME.html#3-trayrs--bandeja-pendiente-en-linux-decisión-honesta)).
 - `winapi` movido a `[target.'cfg(target_os = "windows")'.dependencies]`
   (no compila fuera de Windows).
-- `global-hotkey` y `crossbeam-channel`: SIN cambios de sección (ver §4:
+- `global-hotkey` y `crossbeam-channel`: SIN cambios de sección (ver [apartado 4](PORT-LINUX/AUDIO-RUNTIME.html#4-hotkeyrs--backend-hyprland-socket-unix):
   app.rs los usa sin cfg; x11-dl se carga en caliente).
 - NUEVO `[target.'cfg(unix)'.dependencies] libc = "0.2"` (cerrar el servidor de
-  IA; ver §5).
+  IA; ver [apartado 5](PORT-LINUX/AUDIO-RUNTIME.html#5-llmrs--server-llm-en-linux)).
 - Nota de comprobación: en whisper-rs 0.16 la opción `cuda` EXISTE y el
   `default` ya va VACÍO (Cargo.toml.orig de 0.16.0: `default = []`), así que
   `default-features = false` en la práctica no cambia nada y se mantiene por
@@ -224,10 +224,10 @@ de hyprland.conf, lista de pruebas, permisos). Resumen:
 - Compilar el binario de verdad en Linux (al agente le está prohibido): el usuario
   debe lanzar `cargo build --release` y contar los errores de compilación que el
   análisis leyendo el código no pilla (cfg, APIs de crates que hayan cambiado).
-- Probar el micrófono de verdad (§1), transcribir de verdad (§2), el bind de
-  Hyprland de verdad (§4 HOTKEY-HYPR.md) y arrancar el servidor de IA de verdad
-  (§5).
-- Bandeja: parte pendiente (§3) — hacen falta las librerías GTK y un host SNI;
+- Probar el micrófono de verdad ([apartado 1](PORT-LINUX/AUDIO-RUNTIME.html#1-audiors--captura-con-cpal-015)), transcribir de verdad ([apartado 2](PORT-LINUX/AUDIO-RUNTIME.html#2-transcribers--whisper-rs-016-cuda-opcional)), el bind de
+  Hyprland de verdad (el apartado de Hyprland tiene su propia página) y arrancar el servidor de IA de verdad
+  ([apartado 5](PORT-LINUX/AUDIO-RUNTIME.html#5-llmrs--server-llm-en-linux)).
+- Bandeja: parte pendiente ([apartado 3](PORT-LINUX/AUDIO-RUNTIME.html#3-trayrs--bandeja-pendiente-en-linux-decisión-honesta)) — hacen falta las librerías GTK y un host SNI;
   decisión de producto pendiente (¿vale la pena para Hyprland?).
 - La tarea hermana «Parte 1» (inventario) no estaba subida a origin al hacer este
   trabajo (fetch origin no mostró feature/port-linux-inventario); la fusión final

@@ -1,15 +1,10 @@
 # CORRECCIÓN / FORMATEO POR VOZ — especificación y diseño final
 
-Versión de diseño: **10/09/2026** — cerrada tras t_9fbc886f (servidor de IA
-nativo y ruta configurable), t_6b9348de (protección contra respuestas
-recortadas), t_301476a8 (liberar la memoria), t_e25f8ab7 (opciones claras y
-transparencia), t_c2b0a22f (proveedores Local/Custom/Cloud), t_1fc864ef
-(protección numérica por código) y t_d64797c2 (esa protección ampliada a frases
-naturales + la reconstrucción como texto realmente escrito en la app). La 0.7.1
-(t_0f10c745) añade el modo Reescritura y mueve el guard numérico delante del
-modelo (§6.7). Este documento es la referencia de **cómo funciona hoy** el
-corrector con IA; los nombres de archivos y funciones que se citan están
-comprobados contra el código (rama `release/0.7.1`).
+Este documento es la referencia de **cómo funciona hoy** el corrector con IA;
+los nombres de archivos y funciones que se citan están comprobados contra el
+código. Los cambios de la 0.7.1 (el modo Reescritura y el guard numérico
+delante del modelo) están contados en el
+[apartado 6.7](CORRECCION-VOZ.html#67-modo-reescritura-071).
 
 Objetivo: que quien dicta pueda corregir lo que acaba de decir **hablando**, con
 frases como el ejemplo de siempre:
@@ -118,7 +113,7 @@ proveedor):
   responde → `LlmReady { launched: false }`; si no → `LlmDisabled(remote_endpoint_reason(url))`
   con un aviso a la vista.
 - **Endpoint local**: si `/v1/models` ya responde → `LlmReady`; si no, se busca
-  y se arranca `llama-server.exe` (ver §5) y se espera a que el modelo cargue
+  y se arranca `llama-server.exe` (ver el [apartado 5](CORRECCION-VOZ.html#5-server-llm-local-nativo-llamacpp)) y se espera a que el modelo cargue
   (máximo 60 s). Si falla → `LlmDisabled(motivo)`.
 
 `server_alive*` usa `/v1/models` y no `/health`: llama.cpp responde 503 en
@@ -137,7 +132,7 @@ un aviso a la vista y el dictado sigue con el texto tal cual.
 
 El campo `llm_api_key` de `Config` lleva `#[serde(skip_serializing)]`: **no se
 escribe en `%APPDATA%\whispr-open\config.json` en ningún caso** (así fue desde el
-diseño original, sin cambios en t_c2b0a22f).
+diseño original, sin cambios posteriores).
 
 En Windows se guarda en el **Administrador de credenciales** con `wincred`
 (`CredWriteW` / `CredReadW` / `CredDeleteW`, `CRED_TYPE_GENERIC`,
@@ -164,7 +159,7 @@ ignora).
 
 ## 4. Ciclo de vida del corrector (memoria RAM/VRAM)
 
-Requisito t_301476a8: **si la corrección con IA está apagada, el servidor y el
+Requisito: **si la corrección con IA está apagada, el servidor y el
 modelo no ocupan memoria; si está encendida, se cargan**. El «modelo» es el
 proceso `llama-server.exe` que sirve la IA: descargarlo es terminar ese proceso.
 
@@ -174,8 +169,8 @@ proceso `llama-server.exe` que sirve la IA: descargarlo es terminar ese proceso.
    **deja cargado** (`transcribe::preload`) para que la primera pulsación del
    atajo no pague la carga.
 2. Fase de IA solo si `ai_correction_enabled()`:
-   - endpoint remoto → petición de prueba con `server_alive_auth` (ver §2);
-   - endpoint local → servidor ya vivo, o arrancarlo y esperar 60 s (ver §5).
+   - endpoint remoto → petición de prueba con `server_alive_auth` (ver el [apartado 2](CORRECCION-VOZ.html#2-proveedores-local--remoto-openai--remoto-endpoint-propio));
+   - endpoint local → servidor ya vivo, o arrancarlo y esperar 60 s (ver el [apartado 5](CORRECCION-VOZ.html#5-server-llm-local-nativo-llamacpp)).
 3. El aviso de estado recibe `LlmReady { launched }` / `LlmDisabled(reason)` /
    `LlmStarting` / `LlmDisabled("")` (se omite en silencio si el interruptor está
    apagado).
@@ -208,7 +203,7 @@ reemplaza sin esperar a que muera el hilo viejo (su token lo para).
 
 Al salir (`kill_launched_server` en el cierre) se termina el servidor que lanzó
 esta instancia, igual que al apagar el interruptor. No queda ningún
-`llama-server.exe` suelto (fallo t_9fbc886f).
+`llama-server.exe` suelto (un fallo que ya está corregido).
 
 ### Regla del PID propio
 
@@ -223,7 +218,7 @@ creado.
 
 La app arranca `llama-server.exe` como **proceso nativo de Windows** (se
 descartó intentarlo con WSL: un servidor de Linux lanzado desde la app se quedaba
-suelto al salir, fallo t_9fbc886f). Detalles comprobados con el binario real:
+suelto al salir, un fallo que ya está corregido). Detalles comprobados con el binario real:
 
 - **Dónde está el ejecutable** — `llm::resolve_server_path(cfg)`:
   1. La ruta escrita a mano en el campo **Server LLM** de Ajustes (clave
@@ -286,7 +281,7 @@ Reconoce las señales típicas de auto-corrección:
 - `en vez de` / `en lugar de` (en contexto)
 - `mejor X que Y` / `no X sino Y`
 
-A diferencia de `classify` (§7), **no exige un numeral ni una referencia a lo
+A diferencia de `classify` ([apartado 7](CORRECCION-VOZ.html#7-modo-cross-turn-histórico-fallback)), **no exige un numeral ni una referencia a lo
 anterior**: el «antes» y el «después» están en el mismo turno. Filtros de
 seguridad: turno de 6 caracteres o más, 3 o más antes de la señal y 1 o más
 después (así se evitan cosas como «digo sí», «digo»…).
@@ -304,7 +299,7 @@ código.
 tipo «Output:»/«Resultado:», comillas de alrededor (rectas, tipográficas, «»…) y
 quita espacios sobrantes.
 
-### 6.4 Guard anti-truncación (t_6b9348de, obligatorio)
+### 6.4 Guard anti-truncación (obligatorio)
 
 Problema real: el modelo local pequeño (Qwen3.5-0.8B) contestaba a turnos largos
 **sin** corrección con un RESUMEN (registro 01:34:54: entrada de 73 palabras →
@@ -335,7 +330,7 @@ devuelve la entrada → aviso «La corrección IA devolvió un resumen del turno
 mantiene el texto original» y se escribe la entrada; si aún quedan palabras de
 corrección (`contains_in_turn_marker`) → texto tal cual.
 
-### 6.5 Guard numérico determinista (t_1fc864ef, ampliado en t_d64797c2)
+### 6.5 Guard numérico determinista (ampliado)
 
 `src/llm.rs::guard_numeric_substitution(input, output) -> Result<String, ()>` es
 la red de seguridad del CÓDIGO para las auto-correcciones con **números** («3
@@ -362,14 +357,13 @@ las palabras de corrección que hay entre los dos).
   llama acepta la salida de la IA tal cual.
 - Cuando SÍ interviene, el texto rehecho es el que se aplica: en
   `handle_llm_redaction` (app.rs) la reconstrucción es `effective_clean_text`, se
-  pasa por la protección contra respuestas recortadas (§6.4) y es lo que se
+  pasa por la protección contra respuestas recortadas ([apartado 6.4](CORRECCION-VOZ.html#64-guard-anti-truncación-obligatorio)) y es lo que se
   escribe.
 - Desde la 0.7.1 el mismo guard se aplica **antes** del modelo
-  (`precondition_numeric`, §6.7): en Reescritura el turno viaja ya reconstruido
+  (`precondition_numeric`, [apartado 6.7](CORRECCION-VOZ.html#67-modo-reescritura-071)): en Reescritura el turno viaja ya reconstruido
   y el modelo solo tiene que limpiarlo.
 
-Casos cubiertos por tests (los casos reales del registro, §H1 de
-`QA-REPORT-DEPURACION.md`):
+Casos cubiertos por tests (todos salen de fallos reales vistos al depurar):
 
 | Log | Input del turno | Output del LLM (erróneo) | Inyectado |
 |---|---|---|---|
@@ -387,7 +381,7 @@ Casos cubiertos por tests (los casos reales del registro, §H1 de
 | Guard | ratio 4/7 ≥ 0.6 → acepta |
 | Inyectado en app activa | «que calor que hace en cartagena» |
 
-### 6.7 Modo REESCRITURA (0.7.1, t_0f10c745)
+### 6.7 Modo REESCRITURA (0.7.1)
 
 El modo IN‑TURN de arriba solo entra cuando el clasificador **ve** una
 corrección. La 0.7.1 añade un tercer modo en el que la IA trabaja **en cada
@@ -437,7 +431,7 @@ turno de whisper
   → se escribe el mejor texto disponible
 ```
 
-`precondition_numeric` (`src/llm.rs`) es el guard de §6.5 aplicado al dictado con
+`precondition_numeric` (`src/llm.rs`) es el guard del [apartado 6.5](CORRECCION-VOZ.html#65-guard-numérico-determinista-ampliado) aplicado al dictado con
 `output` vacío: así no puede dar por buena ninguna respuesta del modelo
 (todavía no hay) y reconstruye él. Devuelve `None` si no hay nada que arreglar.
 Motivo medido: con el turno crudo, Qwen3‑4B contesta «allá por el **83 o el
@@ -447,7 +441,7 @@ bien; con el guard delante, escribe «allá por el 84» y tarda menos (0,43 s �
 fallbacks, así que un fallo posterior no devuelve el «digo» a la pantalla.
 
 **Umbral de recorte: 50 %.** `min_words_ratio(AiMode::Reescritura)` baja el
-listón de §6.4 del 60 % al 50 %, porque quitar muletillas recorta de verdad
+listón del [apartado 6.4](CORRECCION-VOZ.html#64-guard-anti-truncación-obligatorio) del 60 % al 50 %, porque quitar muletillas recorta de verdad
 (medido: 30–45 % de palabras en turnos largos con «la verdad que», «bueno», «o
 sea»). Por debajo del 50 % sigue oliendo a resumen y se descarta: se escribe el
 turno tal cual. Con marca inequívoca de autocorrección el listón se parte por la
@@ -468,7 +462,7 @@ reglas: si se elige Reescritura con uno de ellos, Ajustes avisa con
   numérico solo entiende dígitos y la lista corta de `NUM_WORDS`; con «tres mil»
   o «cuarenta y ocho» no interviene y el modelo puede escribir «X o Y».
 - **Tarda algo más por turno**: en Reescritura el modelo se llama siempre, no
-  solo cuando hay corrección (ver §10).
+  solo cuando hay corrección (ver el [apartado 10](CORRECCION-VOZ.html#10-latencia-esperada)).
 
 ---
 
@@ -546,12 +540,12 @@ reunión es a las 4 en punto» → «la reunión es a las 2 en punto».
 
 Las reglas y la IA trabajan con el mismo contrato. Cuando el clasificador ve
 intención de corregir que las reglas no resuelven, el turno se manda al
-proveedor configurado (§2). Solo se llama a la IA cuando hay señales de
+proveedor configurado ([apartado 2](CORRECCION-VOZ.html#2-proveedores-local--remoto-openai--remoto-endpoint-propio)). Solo se llama a la IA cuando hay señales de
 corrección: el dictado normal no paga ese coste.
 
 ---
 
-## 9. UX: transparencia y opciones claras (t_e25f8ab7)
+## 9. UX: transparencia y opciones claras
 
 ### 9.1 Chip de estado del corrector — SIEMPRE visible
 
@@ -580,8 +574,8 @@ OpenAI-compatible…», etc.
   una línea (`AiMode::description`). Desactivada: «El dictado se escribe tal
   cual.» Corrección: «La IA arregla las auto-correcciones («digo X»). Solo actúa
   cuando las detecta.» Reescritura: «La IA reescribe el turno entero, limpio y
-  puntuado. Tarda algo más en cada dictado.» (§6.7).
-- **Proveedor** (pick_list con las etiquetas de §2) + explicación: «Quién corrige
+  puntuado. Tarda algo más en cada dictado.» (ver el [apartado 6.7](CORRECCION-VOZ.html#67-modo-reescritura-071)).
+- **Proveedor** (pick_list con las etiquetas del [apartado 2](CORRECCION-VOZ.html#2-proveedores-local--remoto-openai--remoto-endpoint-propio)) + explicación: «Quién corrige
   lo que dictas: Local — llama.cpp, el que viene con la app (sin internet,
   recomendado) · Custom LLM — tu propio endpoint OpenAI-compatible · Cloud —
   OpenAI. Por defecto: Local.»
@@ -597,7 +591,7 @@ OpenAI-compatible…», etc.
   exige (Custom: opcional · Cloud: obligatoria). Se guarda en el Administrador
   de credenciales de Windows, nunca en la config.»
 - **Server LLM** (ruta `llama-server.exe` + Examinar…/✕) + placeholder
-  autodetección + la pista de §5.
+  autodetección + la pista del [apartado 5](CORRECCION-VOZ.html#5-server-llm-local-nativo-llamacpp).
 
 ### 9.3 Ajustes avanzados (técnico, colapsado por defecto)
 
@@ -663,12 +657,12 @@ Configuración de arranque (no UI): `%APPDATA%\whispr-open\config.json` — ver
 ## 12. Criterios de aceptación (cómo se verifica)
 
 - `cargo test` verde (**336 passed + 3 ignored** a 24/09/2026, incluidos los que
-  añadió t_c2b0a22f sobre el selector de proveedor y el degradado a remoto).
+  añadió después sobre el selector de proveedor y el degradado a remoto).
   Cubren: clasificadores cross-turn e in-turn (el caso de siempre del autor «que
   calor en murcia digo cartagena» + variantes), `apply_diff` (números, «lo
   último», diff inválido que no toca nada), deshacer, `clean_redact_output`,
   `contains_in_turn_marker` / `strip_in_turn_meta`, protección contra respuestas
-  recortadas (casos largo y corto), protección numérica (§6.5: concatenación,
+  recortadas (casos largo y corto), protección numérica ([apartado 6.5](CORRECCION-VOZ.html#65-guard-numérico-determinista-ampliado): concatenación,
   número viejo en frase natural —los dos casos del registro—, borrado de
   números, `no…sino`, la duda que NO se toca y un caso de control sin
   corrección), estado del aviso, etiquetas de proveedor, valores por defecto de

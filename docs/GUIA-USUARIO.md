@@ -1,10 +1,5 @@
 # Guía de usuario — Silb
 
-Versión: 0.7.1 · Última revisión: 29/10/2026 (tres modos de IA y modo
-Reescritura, §3.4; antes: 24/09/2026, secciones de la ventana principal,
-imágenes propias que ya no se pierden al vaciar Descargas y dónde está el
-registro; antes: 11/09/2026, colores editables) y la especificación
-`docs/CORRECCION-VOZ.md`.
 
 Silb es un dictado por voz local: hablas, la app transcribe y escribe el texto
 donde tengas el cursor. Además, **corrige lo que dices mientras dictas**: si te
@@ -105,7 +100,7 @@ hay **tres modos** en Ajustes → Corrección IA:
 | Modo | Qué hace |
 |---|---|
 | **Desactivada** | El dictado se escribe tal cual. |
-| **Corrección** | Solo arregla las auto-correcciones («digo X»). Es lo de §3.1 y §3.2. |
+| **Corrección** | Solo arregla las auto-correcciones («digo X»). Es lo de los apartados [3.1](GUIA-USUARIO.html#31-corregirte-sobre-la-marcha-mismo-chorro-de-voz) y [3.2](GUIA-USUARIO.html#32-corregir-el-turno-anterior-cross-turn). |
 | **Reescritura** | Reescribe el turno entero: limpio, puntuado, sin muletillas ni auto-correcciones. |
 
 Con **Reescritura** puedes hablar de corrido y sin cuidado:
@@ -270,8 +265,7 @@ guardada ya no existe (por ejemplo, porque borraste la copia a mano), la app lo
 apunta en el registro («asset desaparecido, cayendo al tema»), vuelve al aspecto
 del tema sin romperse y no deja la ruta muerta en la configuración.
 
-**GIF/WebP animado nativo**: iced 0.13 no lo admite (comprobado en
-`docs/UI-FUTURA.md` §7). Por eso la animación aquí se hace cambiando frames PNG:
+**GIF/WebP animado nativo**: iced 0.13 no lo admite (comprobado en la [página de ideas de interfaz](UI-FUTURA.html#7-registro-con-rotación)). Por eso la animación aquí se hace cambiando frames PNG:
 pierdes la comodidad de un único fichero, pero ganas control fino sobre la
 velocidad y el orden. Cuando la app pase a iced 0.14+, este control se sustituirá
 por el del propio framework.

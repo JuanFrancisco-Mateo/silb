@@ -16,7 +16,7 @@
 - Comprueba en orden cargo/rustc/cmake/cc y se para con un mensaje claro si falta
   algo (nunca intenta instalar: dentro del script no hay sudo).
 - `--cuda` se para con exit 2: activar CUDA en Linux no entra en esta parte; ver
-  DEPENDENCIAS.md §4.
+  el apartado 4 de DEPENDENCIAS.md.
 - COMPROBADO: la sintaxis pasa `bash -n`. NO se ha ejecutado entero (regla de la
   tarea: nada de `cargo build` en este portátil de 14 GiB).
 

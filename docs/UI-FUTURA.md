@@ -196,7 +196,7 @@ no las distinguía:
   el modo activo (`Reescritura IA`).
 
 Detalle técnico del prompt, del orden guards → modelo y del umbral del 50 %:
-`CORRECCION-VOZ.md` §6.7.
+`CORRECCION-VOZ.md`, [apartado 6.7](CORRECCION-VOZ.html#67-modo-reescritura-071).
 
 ## 10. Criterios de aceptación
 
