@@ -15,7 +15,7 @@
 # PACKURL=... sobreescribe la URL que se incrusta (por defecto, la del release).
 set -euo pipefail
 
-VERSION="${1:-0.8.0}"
+VERSION="${1:-0.8.1}"
 ISCC="${ISCC:-${LOCALAPPDATA:-$HOME/AppData/Local}/Programs/Inno Setup 6/ISCC.exe}"
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/packaging/Output"

@@ -1,0 +1,27 @@
+# Documentación de Silb, publicada con GitHub Pages.
+#
+# No hay build ni workflow: GitHub compila esta carpeta con Jekyll al activar
+# "Deploy from a branch → main /docs". Los tres plugins están en la lista blanca
+# de GitHub Pages, así que no hace falta nada más:
+#   - optional-front-matter: publica los .md sin añadirles cabecera (los
+#     documentos del repo se leen igual desde GitHub y desde la web).
+#   - relative-links: los enlaces entre .md del repo funcionan como .html.
+#   - titles-from-headings: el título de cada página sale de su primer "# ".
+#
+# Tema oscuro para que pegue con la app (los temas de serie de Pages son los
+# únicos permitidos sin gemas propias: slate, midnight, cayman, minima…).
+title: Silb — documentación
+description: Dictado por voz local en tu equipo. Guía de usuario, arquitectura y empaquetado.
+theme: jekyll-theme-slate
+lang: es
+plugins:
+  - jekyll-optional-front-matter
+  - jekyll-relative-links
+  - jekyll-titles-from-headings
+optional_front_matter:
+  remove_originals: true
+relative_links:
+  enabled: true
+titles_from_headings:
+  strip_title: true
+  collections: false

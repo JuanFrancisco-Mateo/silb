@@ -167,7 +167,7 @@ fn model_row_height(ty: DesignType) -> f32 {
 
 /// «Descargando… 123 MB de 491 MB (25 %)». Si el servidor no dice el tamaño se
 /// enseña lo que hay, sin inventarse un total.
-fn llm_download_text(downloaded: u64, total: u64) -> String {
+pub(crate) fn llm_download_text(downloaded: u64, total: u64) -> String {
     let mb = |b: u64| b / (1024 * 1024);
     if total == 0 {
         return format!(
@@ -1280,14 +1280,30 @@ impl WhisprApp {
         }
     }
 
-    /// Si el campo es «texto» o «dim» y su contraste contra el fondo activo es
-    /// < 3:1, devuelve un aviso (None si no). Nunca bloquea al usuario: solo
-    /// avisa.
+    /// Si un campo puede romper la lectura, devuelve un aviso (None si no).
+    /// Nunca bloquea al usuario: solo avisa.
+    ///
+    /// - «texto» y «dim» sobre el fondo activo: por debajo de 3:1 no se leen.
+    /// - «acento» y su hover: el acento se usa también como FONDO de botones
+    ///   llenos, y ahí el texto es [`theme::ink_on`]; con un acento oscuro la
+    ///   tinta casi negra no llega a AA aunque el acento «se vea bien».
     pub(crate) fn contrast_warning_for(
         &self,
         field: theme::PaletteField,
         candidate: Color,
     ) -> Option<String> {
+        if matches!(
+            field,
+            theme::PaletteField::Accent | theme::PaletteField::AccentHover
+        ) {
+            let ratio = theme::contrast_ratio(theme::ink_on(candidate), candidate);
+            return (ratio < 4.5).then(|| {
+                format!(
+                    "⚠ Texto sobre este acento {ratio:.2}:1 (mínimo AA 4.5:1). \
+                     Se aplica igualmente; aclara u oscurece el hex o restaura el campo."
+                )
+            });
+        }
         let bg = self.resolved_palette().bg;
         let ratio = theme::contrast_ratio(candidate, bg);
         let must_warn =
@@ -1414,11 +1430,9 @@ impl WhisprApp {
         // Estado en vivo (la misma cuenta que la etiqueta de la cabecera):
         // «Corrección IA: activa · <modelo>» o «inactiva — <motivo>».
         let (status_text, status_color) = {
-            let ui = llm_status_ui(
-                self.config.ai_mode(),
-                &self.llm_status,
-                &self.config.llm_settings().model,
-            );
+            let llm = self.config.llm_settings();
+            // El estado dice también la DIRECCIÓN (§2: ver a dónde va el texto).
+            let ui = llm_status_ui(self.config.ai_mode(), &self.llm_status, &llm.model, &llm.base_url);
             let color = match ui.kind {
                 "ok" => t.ok,
                 "warn" => t.warn,

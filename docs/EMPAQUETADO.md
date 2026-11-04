@@ -152,7 +152,7 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
 
 ## 4. Versionado (SemVer)
 
-- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.8.0** (`Cargo.toml`).
+- Esquema: `MAJOR.MINOR.PATCH`. Actual: **0.8.1** (`Cargo.toml`).
   - `0.x`: la interfaz interna todavía cambia; cada función nueva sube MINOR y
     los arreglos PATCH.
   - Se pasa a `1.0.0` cuando la app tenga el recorrido completo (corrección por

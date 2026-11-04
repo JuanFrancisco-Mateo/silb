@@ -299,6 +299,8 @@ impl WhisprApp {
                     self.last_turn = last_turn;
                     self.sync_editor_from_transcript();
                     self.last_correction = Some("Corrección IA deshecha ↩".to_string());
+                    // Vuelve el texto de antes: lo que hay ya no es de la IA (§2).
+                    self.last_turn_ai = None;
                 }
                 Task::none()
             }
@@ -326,6 +328,9 @@ impl WhisprApp {
                     // corrección de entre turnos y «Escribir en app» actúan sobre
                     // lo último que el usuario vio o tocó.
                     self.last_turn = last_turn_from_transcript(&self.transcript);
+                    // Lo ha tocado el usuario, no la IA: la marca del turno ya
+                    // no describe el texto que se ve (§2).
+                    self.last_turn_ai = None;
                     self.save_config();
                 }
                 Task::none()
@@ -352,6 +357,8 @@ impl WhisprApp {
                 self.session.reset();
                 self.sync_editor_from_transcript();
                 self.last_correction = Some("Nota borrada".to_string());
+                // Sin turno no hay marca que enseñar (§2).
+                self.last_turn_ai = None;
                 // Un deshacer de corrección que apunta a una nota ya borrada
                 // resucitaría un fantasma: se descarta.
                 self.undo_state = None;
@@ -366,6 +373,9 @@ impl WhisprApp {
                     self.last_turn = last_turn;
                     self.sync_editor_from_transcript();
                     self.last_correction = Some("Borrado deshecho ↩".to_string());
+                    // No se sabe de dónde salió el texto recuperado: sin marca
+                    // antes que una marca que mienta (§2).
+                    self.last_turn_ai = None;
                 }
                 Task::none()
             }

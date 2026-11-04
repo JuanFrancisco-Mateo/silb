@@ -61,8 +61,8 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 | # | Prioridad | Etapa | Doc | Motivo |
 |---|---|---|---|---|
 | 1 | **Hecho** | Corrección / formateo por voz con LLM | [`CORRECCION-VOZ.md`](CORRECCION-VOZ.md) | Implementado con proveedor local/cloud/custom, clasificación barata, diff validado, confirmación opcional y undo. |
-| 2 | **P1** | Empaquetado y distribución | [`EMPAQUETADO.md`](EMPAQUETADO.md) | Hoy solo hay un `.exe` de release sin instalador, sin icono de archivo, sin firma. Necesario para compartir la app. |
-| 3 | **P2** | Mejoras de UI | [`UI-FUTURA.md`](UI-FUTURA.md) | Cerrar los huecos del checklist 2026: trust signal "nada sale de tu PC", override visible de la IA, contraste AA del acento, accesibilidad. |
+| 2 | **Hecho (0.8.0)** | Empaquetado y distribución | [`EMPAQUETADO.md`](EMPAQUETADO.md) | Instalador online (detecta GPU y baja CUDA), offline y pack de CUDA publicados en la release `v0.8.0`, con SHA-256 verificado y probado en limpio. Falta solo la firma de código (cuesta dinero, no bloquea). |
+| 3 | **Hecho (0.8.x)** | Mejoras de UI | [`UI-FUTURA.md`](UI-FUTURA.md) | §2, §3 y §4 cerradas en el commit `795f6dc`: marca del turno cuando la IA cambia el texto, `theme::ink_on` elige la tinta legible sobre cualquier acento y la «piel» del marco sale de la paleta del usuario, y la pista del hero es el sitio único de estado. Queda pendiente verla en vivo con la IA actuando. |
 | 4 | **Hecho** | Cache del motor Whisper | `src/transcribe.rs` | Se conserva un contexto por modelo activo y se reemplaza solo al cambiar de modelo, evitando recargarlo en cada turno. |
 | 5 | P3 (backlog) | Transcripción casi-tiempo-real | — | Ventanas solapadas + re-decodificación parcial. Riesgo alto, toca el núcleo de grabación; requiere prueba manual de micrófono. |
 | 6 | P3 (backlog) | Notetaker / hablantes | — | Reuniones, identificación de hablantes. Fuera de alcance a corto plazo. |
@@ -79,9 +79,12 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
    medido, transparencia del corrector con IA y foco visible.
 3. **R5 completado** (11/09/2026): licencia MIT, `docs/ARQUITECTURA.md`, guía de
    usuario ampliada y comentarios de documentación en español en lo público.
-4. **P1 siguiente:** empaquetado y distribución: instalador, icono `.ico`,
-   versión portable y firma (fase R6 de `NOTA-SESION.md`).
-5. **P3 pendiente:** transcripción casi en tiempo real y notetaker de reuniones.
+4. **P1 completado (0.8.0):** empaquetado y distribución: instalador online que
+   detecta la GPU, instalador offline, pack de CUDA, icono y release pública.
+   Queda fuera la firma de código, que cuesta dinero y no bloquea la 1.0.
+5. **P2 en curso:** cerrar los huecos de interfaz de `UI-FUTURA.md` §2–§4
+   (transparencia de la IA, contraste AA y avisos de estado).
+6. **P3 pendiente:** transcripción casi en tiempo real y notetaker de reuniones.
 
 
 ---

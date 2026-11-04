@@ -11,13 +11,13 @@
 ;      o el usuario dice que no -> instala en CPU y sigue: nunca aborta.
 ;
 ;   2. OFFLINE (las dos versiones dentro, ~466 MB):
-;      ISCC.exe /DMyOffline /DWHISPR_VERSION=0.8.0 packaging\whispr-open.iss
+;      ISCC.exe /DMyOffline /DWHISPR_VERSION=0.8.1 packaging\whispr-open.iss
 ;        -> packaging\Output\silb-<v>-offline-setup.exe
 ;
 ;   3. PACK CUDA (/DMyPack, ~465 MB): solo [Files], se ejecuta por encima de una
 ;      instalación ya hecha y reemplaza binario + DLLs del runtime. No crea
 ;      desinstalador, ni iconos, ni accesos directos.
-;      ISCC.exe /DMyPack /DWHISPR_VERSION=0.8.0 packaging\whispr-open.iss
+;      ISCC.exe /DMyPack /DWHISPR_VERSION=0.8.1 packaging\whispr-open.iss
 ;        -> packaging\Output\silb-cuda-pack-<v>.exe
 ;
 ; Insumos (en packaging\build\, ninguno va a git):
@@ -35,7 +35,7 @@
 ;   /FORCECPU    instala el build CPU aunque haya GPU NVIDIA (no ofrece el pack)
 ;   /FORCECUDA   fuerza el camino CUDA aunque no se detecte GPU
 ;   /PACKURL=... /PACKSHA256=...  sobreescriben la URL y el hash incrustados
-;   Ej.: silb-0.8.0-setup.exe /VERYSILENT /DIR=C:\Temp\silb /PACKURL=http://127.0.0.1:8000/silb-cuda-pack-0.8.0.exe /PACKSHA256=<hash>
+;   Ej.: silb-0.8.1-setup.exe /VERYSILENT /DIR=C:\Temp\silb /PACKURL=http://127.0.0.1:8000/silb-cuda-pack-0.8.1.exe /PACKSHA256=<hash>
 ;
 ; DESTINATARIOS:
 ;   Windows 10 1809+ / Windows 11 x64. La app usa Iced 0.13 + whisper.cpp; el
@@ -46,7 +46,7 @@
 ; VARIABLES DE USUARIO (sobreescribibles con /D="nombre=valor"):
 ;   WHISPR_RELEASE_DIR  directorio con silb.exe (solo en modo online)
 ;   WHISPR_CUDA_EXE     exe CUDA (por defecto build\silb-cuda.exe)
-;   WHISPR_VERSION      versión del paquete (por defecto 0.8.0)
+;   WHISPR_VERSION      versión del paquete (por defecto 0.8.1)
 ;   WHISPR_PACK_URL / WHISPR_PACK_SHA256  pack remoto (o /DPACKURL /DPACKSHA256)
 
 #define MyReleaseDir GetEnv("WHISPR_RELEASE_DIR") ? GetEnv("WHISPR_RELEASE_DIR") : "..\target\release"
@@ -62,7 +62,7 @@
   #ifdef WHISPR_VERSION
     #define MyAppVersion WHISPR_VERSION
   #else
-    #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.8.0"
+    #define MyAppVersion GetEnv("WHISPR_VERSION") ? GetEnv("WHISPR_VERSION") : "0.8.1"
   #endif
 #endif
 ; Nombre del pack en el release (el mismo que produce /DMyPack).

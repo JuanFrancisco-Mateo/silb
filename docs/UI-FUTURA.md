@@ -25,6 +25,15 @@ Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
 - **Aviso de confianza a la vista**: «Transcripción local · nada sale de tu PC»
   en el pie de la ventana. Si la corrección usa un servicio en la nube, el texto
   cambia y no promete nada: hay un test que lo comprueba.
+- **Marca en el turno**: si el texto que acaba de aparecer lo ha tocado la IA, el
+  pie de «Transcripción» lo dice con el modo y el modelo («Último turno:
+  Corrección IA · Qwen3-4B»). Si la IA no intervino —dictado tal cual, reglas,
+  modelo que confirma sin cambiar nada, deshacer o edición a mano—, no se pinta
+  nada: nada de ruido.
+- **Estado del corrector en Ajustes**: la nota de cabecera de Ajustes →
+  Corrección IA dice el modo, el modelo y **a dónde viaja el texto**
+  («● Corrección IA: activa · Qwen3-4B · 127.0.0.1:8081/v1»; en Remoto, el
+  endpoint real). Una sola función (`llm_status_ui`) decide ese texto.
 - **Texto editable**: lo transcrito es un editor de varias líneas; puedes
   corregirlo a mano y seguir dictando sin que una cosa pise la otra (lo nuevo se
   añade al final del texto editado).
@@ -33,9 +42,21 @@ Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
 
 ## 3. Contraste y accesibilidad
 
-- **Contraste del acento**: se calcula el contraste WCAG en el propio código y
-  hay tests que exigen ≥ 4,5:1 en texto y ≥ 3:1 en gráficos. El violeta de texto
-  es algo más claro que el de marca para cumplirlo.
+- **Contraste del acento**: se calcula el contraste WCAG en el propio código
+  (`theme::contrast_ratio`) y hay tests que exigen ≥ 4,5:1 en texto y ≥ 3:1 en
+  gráficos. El violeta de texto es algo más claro que el de marca para cumplirlo.
+- **Texto sobre el acento (paleta propia incluida)**: el acento se usa también
+  como FONDO de botones llenos, así que la tinta no es fija: `theme::ink_on`
+  elige entre la tinta casi negra y el blanco la que más contraste da. Con el
+  acento de serie o con un acento claro (`#FFD400`) se lee la tinta oscura; con
+  uno oscuro (`#1A1A2E`) entra el blanco. Ajustes → Apariencia avisa cuando el
+  hex escrito no llega a AA ni por un lado ni por otro.
+- **La «piel» del marco sigue a la paleta**: barra lateral, barra de ventana,
+  keycaps, nav activo, separadores y texto tenue se deducen del fondo y la
+  tarjeta del usuario (`theme::chrome`), no son tonos fijos. Con la paleta de
+  serie salen los valores de Figma; con una paleta propia —o una clara en modo
+  oscuro— el marco se aclara u oscurece con ella. Los tests miden los tres
+  fondos del marco contra los tres textos.
 - **Menos movimiento**: no hay animaciones de adorno que desactivar. Lo único
   que se actualiza a menudo es el latido de estado (100 ms) y la animación por
   frames de la burbuja, que es material propio del usuario y solo se programa si
@@ -44,17 +65,25 @@ Si la app usa IA, quien la usa tiene que **ver** qué hace y poder corregirlo.
 - **Foco de teclado visible**: los campos de texto y el editor dibujan un anillo
   de acento al enfocar. En botones, casillas y desplegables, iced 0.13 no expone
   el estado de foco; cuando lo haga, se añade.
+- **`hover` y `pressed` distinguibles**: cada estilo de botón (principal,
+  secundario, de icono, pestañas, navegación) tiene un color de pulsado propio,
+  distinto del hover, además del cambio de texto.
 - **Zonas para pulsar**: el círculo grande y la burbuja (56 px) son grandes por
   diseño; los botones secundarios usan el margen para dedo del tema en vez del
   margen por defecto del framework.
 
 ## 4. Estado y avisos
 
+- **Un solo sitio para «qué está pasando»**: la pista del panel de grabación
+  (debajo del titular del micrófono) dice grabando, transcribiendo, corrigiendo
+  con IA, modelo descargándose y servidor de IA caído. No hay diálogos nuevos ni
+  avisos flotantes: si no hay nada que contar, solo invita a dictar.
 - **Errores en castellano y accionables**: los fallos de descarga, micrófono y
   escritura se cuentan en una frase corta; el detalle técnico queda en el
   registro.
 - **Descarga del modelo con contexto**: además del porcentaje se ve el tamaño
-  descargado y el tiempo estimado que queda.
+  descargado y el tiempo estimado que queda. La del modelo de corrección también
+  se ve mientras dictas (antes solo salía en Ajustes).
 - **Nivel de micrófono con marca de pico**: la barra dibuja el pico real y avisa
   cuando importa — «sin señal del micrófono: ¿está silenciado?» pasados unos
   segundos, y «el micrófono puede estar saturando» cuando se pasa de rango. El

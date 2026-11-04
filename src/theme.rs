@@ -11,9 +11,8 @@
 //! junta los colores de serie con los del usuario (un hex mal escrito usa el
 //! color de serie, nunca rompe). El resultado se deja en un hueco del hilo
 //! (`set_palette_override`) para que los estilos de los controles lean la
-//! paleta activa sin tocar las 50 llamadas que los usan; solo está puesto
-//! mientras se dibuja y se quita al salir (fuera de ahí valen los colores de
-//! serie oscuro/claro).
+//! paleta activa sin tocar las 50 llamadas que los usan; se queda puesto entre
+//! vistas porque iced evalúa los estilos AL DIBUJAR, después de `view()`.
 
 use std::cell::RefCell;
 use std::sync::Arc;
@@ -88,35 +87,18 @@ pub const BORDER_LIGHT: Color = rgb!(0xD9, 0xD9, 0xE0);
 
 /// Tinta para texto sobre un botón LLENO de acento (por ejemplo «Aplicar»):
 /// un casi negro que llega a 4.5:1 sobre #7C6CFF en los dos modos (el fondo
-/// del modo no vale aquí: en claro daría ~3.5:1).
+/// del modo no vale aquí: en claro daría ~3.5:1). Con una paleta propia manda
+/// [`ink_on`], que elige entre esta tinta y el blanco.
 pub const INK_ON_ACCENT: Color = rgb!(0x17, 0x18, 0x1C);
 
 // ─────────── Marco del rediseño (pantalla Dictado de Figma) ───────────────────
-// Colores que NO se pueden cambiar en Ajustes → Apariencia: son la «piel» del
-// marco del diseño. Se sacan por modo desde [`chrome`], que además toma de la
-// paleta activa el texto, el secundario y el acento (así lo que cambie el
-// usuario manda también en la marca y en los textos).
-pub const SIDEBAR: Color = rgb!(0x13, 0x14, 0x18); // barra lateral
-pub const WINDOW_BAR: Color = rgb!(0x15, 0x16, 0x1A); // barra de ventana propia
-pub const KEYCAP: Color = rgb!(0x24, 0x25, 0x2D); // keycaps de atajo, badges
-pub const NAV_ACTIVE: Color = rgb!(0x28, 0x23, 0x38); // nav activo (violeta tenue)
-pub const DIVIDER: Color = rgb!(0x27, 0x28, 0x2F); // separadores internos
-                                                    // Texto tenue (rótulos, versión, pistas): 11 px del diseño. MEDIDO: 4.54:1
-                                                    // sobre el fondo de la ventana y la barra lateral, pero 4.25:1 sobre la
-                                                    // tarjeta y 4.44:1 sobre el campo — por debajo de AA 4.5:1 para texto
-                                                    // pequeño (el test de contraste lo deja anotado: el valor viene del
-                                                    // diseño y no se cambia por cuenta propia).
-pub const FAINT: Color = rgb!(0x7F, 0x80, 0x8D);
-
-// Los mismos papeles en modo claro (Figma solo trae el oscuro: estos tonos son
-// la traducción a claro, elegidos para mantener el orden fondo < barra <
-// tarjeta y el contraste del texto tenue).
-pub const SIDEBAR_LIGHT: Color = rgb!(0xF0, 0xF0, 0xF4);
-pub const WINDOW_BAR_LIGHT: Color = rgb!(0xF3, 0xF3, 0xF7);
-pub const KEYCAP_LIGHT: Color = rgb!(0xE8, 0xE8, 0xEE);
-pub const NAV_ACTIVE_LIGHT: Color = rgb!(0xE7, 0xE3, 0xFF);
-pub const DIVIDER_LIGHT: Color = rgb!(0xE3, 0xE3, 0xEA);
-pub const FAINT_LIGHT: Color = rgb!(0x5F, 0x5F, 0x6A);
+// La «piel» del marco (barra lateral, barra de ventana, keycaps, nav activo y
+// separadores) NO son tonos fijos: se DEDUCEN de la paleta activa en [`chrome`]
+// (un tono más oscuro que el fondo, y los keycaps un punto más claros que la
+// tarjeta). Con la paleta de serie salen los valores medidos en Figma
+// (#131418, #15161A, #24252D, #282338, #27282F); con una paleta propia del
+// usuario —o con una paleta clara en modo oscuro— el marco la sigue, en vez de
+// dejar texto del usuario encima de un fondo que no le corresponde.
 
 // ─────────────────────── Contraste WCAG (medido, no estimado) ────────────────
 // Fórmulas de WCAG 2.1: luminancia relativa y ratio (1..21). Son públicas
@@ -144,6 +126,31 @@ pub fn contrast_ratio(fg: Color, bg: Color) -> f64 {
     let l2 = relative_luminance(bg);
     let (hi, lo) = if l1 >= l2 { (l1, l2) } else { (l2, l1) };
     (hi + 0.05) / (lo + 0.05)
+}
+
+/// Tinta para texto escrito ENCIMA de un relleno de color cualquiera (los
+/// botones llenos de acento): se queda la de más contraste, la tinta casi negra
+/// o el blanco. Con el acento de serie gana la tinta; con un acento oscuro
+/// elegido en Ajustes (p. ej. `#1A1A2E`) gana el blanco, que es lo único que se
+/// lee. Función pura y probada: el acento puede ser cualquier hex.
+pub fn ink_on(bg: Color) -> Color {
+    if contrast_ratio(INK_ON_ACCENT, bg) >= contrast_ratio(Color::WHITE, bg) {
+        INK_ON_ACCENT
+    } else {
+        Color::WHITE
+    }
+}
+
+/// Mezcla `a` con `b`: `t` = peso de `b` (0 = `a`, 1 = `b`). Es como se sacan
+/// los tonos del marco (barra lateral, keycaps) de la paleta activa.
+fn blend(a: Color, b: Color, t: f32) -> Color {
+    let t = t.clamp(0.0, 1.0);
+    Color {
+        r: a.r + (b.r - a.r) * t,
+        g: a.g + (b.g - a.g) * t,
+        b: a.b + (b.b - a.b) * t,
+        a: 1.0,
+    }
 }
 
 /// Paleta semántica resuelta por modo (dark/light).
@@ -1069,7 +1076,7 @@ pub struct Chrome {
     pub text: Color,
     /// Texto secundario.
     pub secondary: Color,
-    /// Texto tenue (medido por debajo de AA sobre la tarjeta: ver [`FAINT`]).
+    /// Texto tenue de rótulos y pistas (se deduce del secundario: ver [`chrome`]).
     pub faint: Color,
     /// Acento de marca.
     pub accent: Color,
@@ -1079,22 +1086,47 @@ pub struct Chrome {
 
 /// Calcula los colores del marco para el tema activo. De la paleta resuelta
 /// (con los cambios del usuario) toma el texto, el secundario, los bordes y el
-/// acento; el resto son los tonos medidos del diseño.
+/// acento; la «piel» (barra lateral, barra de ventana, keycaps, nav activo,
+/// separadores y texto tenue) se DEDUCE de esa misma paleta, para que una
+/// paleta propia —o una clara en modo oscuro— no deje texto encima de un fondo
+/// que no le pega. Con la paleta de serie salen los tonos de Figma.
 pub fn chrome(theme: &Theme) -> Chrome {
     let t = tokens(theme);
-    let dark = is_dark(theme);
+    let dark = is_palette_dark(&t);
+    let (sidebar, window_bar, keycap, nav_active, divider, faint) = if dark {
+        (
+            blend(t.bg, Color::BLACK, 0.16),    // #131418 sobre el fondo de serie
+            blend(t.bg, Color::BLACK, 0.08),    // #15161A
+            blend(t.surface, Color::WHITE, 0.025), // #232329: keycap sobre la tarjeta
+            blend(t.bg, t.accent, 0.20),        // #282338 (violeta tenue)
+            blend(t.bg, Color::WHITE, 0.07),    // #27282F
+            blend(t.dim, t.bg, 0.18),           // #8F8E99: AA (≥ 4.5) también sobre keycaps
+        )
+    } else {
+        (
+            // En claro el presupuesto de contraste del texto secundario es justo
+            // (DIM_LIGHT sobre blanco ya mide ~4.8): el marco solo puede bajar un
+            // punto, no dos.
+            blend(t.bg, Color::BLACK, 0.025), // #F0EFEC
+            blend(t.bg, Color::BLACK, 0.012),
+            blend(t.surface, Color::BLACK, 0.06), // #F0F0F0 sobre tarjeta blanca
+            blend(t.bg, t.accent, 0.18),          // #DDD9F4 (antes #E7E3FF)
+            blend(t.bg, Color::BLACK, 0.08),
+            blend(t.dim, Color::BLACK, 0.10), // #60606A: 6:1 sobre blanco
+        )
+    };
     Chrome {
-        window_bar: if dark { WINDOW_BAR } else { WINDOW_BAR_LIGHT },
-        sidebar: if dark { SIDEBAR } else { SIDEBAR_LIGHT },
+        window_bar,
+        sidebar,
         card: t.surface,
         field: t.surface_alt,
-        keycap: if dark { KEYCAP } else { KEYCAP_LIGHT },
-        nav_active: if dark { NAV_ACTIVE } else { NAV_ACTIVE_LIGHT },
-        divider: if dark { DIVIDER } else { DIVIDER_LIGHT },
+        keycap,
+        nav_active,
+        divider,
         border: t.border,
         text: t.text,
         secondary: t.dim,
-        faint: if dark { FAINT } else { FAINT_LIGHT },
+        faint,
         accent: t.accent,
         accent_active: t.accent_hover,
     }
@@ -1171,7 +1203,9 @@ pub fn keycap(theme: &Theme) -> container::Style {
 pub fn icon_button(theme: &Theme, status: button::Status) -> button::Style {
     let c = chrome(theme);
     let bg = match status {
-        button::Status::Hovered | button::Status::Pressed => Some(Background::Color(c.keycap)),
+        button::Status::Hovered => Some(Background::Color(c.keycap)),
+        // Pulsado: el borde como relleno (un paso más que el hover).
+        button::Status::Pressed => Some(Background::Color(c.border)),
         _ => None,
     };
     button::Style {
@@ -1190,7 +1224,9 @@ pub fn nav_item(theme: &Theme, status: button::Status, active: bool) -> button::
         Some(Background::Color(c.nav_active))
     } else {
         match status {
-            button::Status::Hovered | button::Status::Pressed => Some(Background::Color(c.keycap)),
+            button::Status::Hovered => Some(Background::Color(c.keycap)),
+            // Pulsado: ya se está «dentro» del elemento (fondo de nav activo).
+            button::Status::Pressed => Some(Background::Color(c.nav_active)),
             _ => None,
         }
     };
@@ -1212,7 +1248,7 @@ pub fn record(theme: &Theme, status: button::Status) -> button::Style {
     };
     button::Style {
         background: Some(Background::Color(bg)),
-        text_color: INK_ON_ACCENT,
+        text_color: ink_on(bg),
         border: border(Color::TRANSPARENT, 0.0, RADIUS_CIRCLE),
         shadow: Shadow::default(),
     }
@@ -1229,7 +1265,7 @@ pub fn toggler(theme: &Theme, status: toggle::Status) -> toggle::Style {
         toggle::Status::Disabled => false,
     };
     let (bg, fg) = if is_toggled {
-        (c.accent, INK_ON_ACCENT)
+        (c.accent, ink_on(c.accent))
     } else {
         (c.keycap, c.secondary)
     };
@@ -1311,15 +1347,18 @@ pub fn flat(theme: &Theme) -> container::Style {
 /// fondo del modo, en claro se quedaba en ~3.5:1).
 pub fn primary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
+    // Hover y pulsado se distinguen (AA de estados): al pulsar el relleno baja
+    // un punto más que en hover, además del cambio de tinta ya de por sí.
     let bg = match status {
         button::Status::Disabled => t.surface_alt,
-        button::Status::Hovered | button::Status::Pressed => t.accent_hover,
+        button::Status::Pressed => blend(t.accent_hover, Color::BLACK, 0.18),
+        button::Status::Hovered => t.accent_hover,
         button::Status::Active => t.accent,
     };
     let fg = if matches!(status, button::Status::Disabled) {
         chrome(theme).faint
     } else {
-        INK_ON_ACCENT
+        ink_on(bg)
     };
     button::Style {
         background: Some(Background::Color(bg)),
@@ -1364,7 +1403,9 @@ pub fn secondary(theme: &Theme, status: button::Status) -> button::Style {
     let t = tokens(theme);
     let (bg, fg) = match status {
         button::Status::Disabled => (None, chrome(theme).faint),
-        button::Status::Hovered | button::Status::Pressed => (Some(t.surface_alt), t.text),
+        button::Status::Hovered => (Some(t.surface_alt), t.text),
+        // Pulsado: un paso más de relleno que el hover (estados distinguibles).
+        button::Status::Pressed => (Some(t.surface), t.text),
         button::Status::Active => (None, t.dim),
     };
     button::Style {
@@ -1386,7 +1427,9 @@ pub fn tab(theme: &Theme, status: button::Status, active: bool) -> button::Style
     }
     let t = tokens(theme);
     let bg = match status {
-        button::Status::Hovered | button::Status::Pressed => t.surface,
+        button::Status::Hovered => t.surface,
+        // Pulsado: fondo propio con un punto de acento (distinto del hover).
+        button::Status::Pressed => blend(t.surface_alt, t.accent, 0.15),
         _ => t.surface_alt,
     };
     let border_color = match status {
@@ -1412,8 +1455,11 @@ pub fn settings_tab(theme: &Theme, status: button::Status, active: bool) -> butt
         (false, button::Status::Hovered | button::Status::Pressed) => c.text,
         (false, _) => c.secondary,
     };
+    // Pulsado: se marca con fondo de tecla (el hover solo cambia el texto).
+    let background = matches!(status, button::Status::Pressed)
+        .then(|| Background::Color(c.keycap));
     button::Style {
-        background: None,
+        background,
         text_color,
         border: border(Color::TRANSPARENT, 0.0, 0.0),
         shadow: Shadow::default(),
@@ -1741,16 +1787,20 @@ mod tests {
         }
     }
 
+    /// La «piel» del marco sale de la paleta activa (no de tonos fijos) y el
+    /// texto que va encima pasa AA en los dos modos. Se comprueban los tres
+    /// fondos del marco con los tres textos, y que una paleta clara en modo
+    /// oscuro (o al revés) aclara/oscurece el marco con ella.
     #[test]
     fn chrome_resuelve_por_modo_y_sigue_la_paleta_del_usuario() {
         reset_palette_override();
         let dark = chrome(&custom(true));
-        assert_eq!(dark.sidebar, SIDEBAR);
-        assert_eq!(dark.window_bar, WINDOW_BAR);
-        assert_eq!(dark.keycap, KEYCAP);
-        assert_eq!(dark.nav_active, NAV_ACTIVE);
-        assert_eq!(dark.divider, DIVIDER);
-        assert_eq!(dark.faint, FAINT);
+        // Orden del diseño: barra lateral < fondo < tarjeta (y keycap por
+        // encima de la tarjeta), sin tonos fijos.
+        assert!(relative_luminance(dark.sidebar) < relative_luminance(BG));
+        assert!(relative_luminance(dark.window_bar) < relative_luminance(BG));
+        assert!(relative_luminance(dark.keycap) > relative_luminance(SURFACE));
+        assert!((relative_luminance(dark.keycap) - relative_luminance(rgb!(0x24, 0x25, 0x2D))).abs() < 0.01);
         // Del diseño: tarjeta y campo salen de la paleta de colores.
         assert_eq!(dark.card, SURFACE);
         assert_eq!(dark.field, SURFACE_ALT);
@@ -1765,7 +1815,11 @@ mod tests {
             light.sidebar, dark.sidebar,
             "el chrome también tiene modo claro"
         );
-        assert_eq!(light.sidebar, SIDEBAR_LIGHT);
+        assert!(
+            relative_luminance(light.sidebar) < relative_luminance(BG_LIGHT)
+                && relative_luminance(light.sidebar) > 0.5,
+            "en claro la barra lateral es un tono más oscura que el fondo, pero clara"
+        );
         assert_eq!(light.card, SURFACE_LIGHT);
 
         // Un cambio del usuario llega al marco (marca y textos).
@@ -1782,30 +1836,80 @@ mod tests {
         let custom_chrome = chrome(&custom(true));
         assert_eq!(custom_chrome.accent, parse_hex("#00AAFF").unwrap());
         assert_eq!(custom_chrome.text, parse_hex("#FFFFFF").unwrap());
+
+        // AA de todo el texto del marco en los dos modos: barra lateral, barra
+        // de ventana y keycaps (los tres fondos sobre los que hay texto).
+        for (nombre, c) in [("dark", dark), ("light", light)] {
+            for (fondo_name, fondo) in [
+                ("sidebar", c.sidebar),
+                ("window_bar", c.window_bar),
+                ("keycap", c.keycap),
+            ] {
+                for (texto_name, fg) in [
+                    ("text", c.text),
+                    ("secondary", c.secondary),
+                    ("faint", c.faint),
+                ] {
+                    let ratio = contrast_ratio(fg, fondo);
+                    assert!(
+                        ratio >= 4.5,
+                        "{nombre}/{fondo_name}: {texto_name} mide {ratio:.2}:1 (< 4.5 AA)"
+                    );
+                }
+            }
+        }
     }
 
-    /// El texto tenue del diseño (#7F808D) NO pasa AA sobre la tarjeta ni sobre
-    /// el campo: se anota el contraste medido (la tarea pide dejarlo apuntado, no
-    /// cambiarlo por cuenta propia). Si alguien «arregla» el color sin tocar este
-    /// test, el número deja de cuadrar.
+    /// Una paleta propia clara CON EL MODO OSCURO puesto ya no deja el marco
+    /// oscuro: la barra lateral se deduce del fondo del usuario. (Era el fallo:
+    /// SIDEBAR/WINDOW_BAR/KEYCAP eran constantes y el texto claro se quedaba
+    /// encima de un fondo oscuro ajeno a su paleta.)
     #[test]
-    fn faint_del_diseno_registra_su_ratio_medido() {
-        let sobre_fondo = contrast_ratio(FAINT, BG);
-        let sobre_tarjeta = contrast_ratio(FAINT, SURFACE);
-        let sobre_campo = contrast_ratio(FAINT, SURFACE_ALT);
-        let sobre_sidebar = contrast_ratio(FAINT, SIDEBAR);
+    fn paleta_clara_en_modo_oscuro_aclara_el_marco() {
+        reset_palette_override();
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                bg: Some("#FDFDFD".into()),
+                surface: Some("#FFFFFF".into()),
+                text: Some("#101010".into()),
+                dim: Some("#555555".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p = resolve_palette(&cfg, true);
+        let _scope = PaletteOverrideScope::new(p);
+        let c = chrome(&custom(true));
         assert!(
-            sobre_fondo >= 4.5 && sobre_sidebar >= 4.5,
-            "fondo {sobre_fondo:.2} / sidebar {sobre_sidebar:.2}"
+            relative_luminance(c.sidebar) > 0.5,
+            "la barra lateral tiene que seguir al fondo claro del usuario"
         );
         assert!(
-            (4.1..4.5).contains(&sobre_tarjeta),
-            "se esperaba < AA sobre tarjeta, mide {sobre_tarjeta:.2}"
+            contrast_ratio(c.text, c.sidebar) >= 4.5,
+            "texto del usuario sobre el marco, mide {:.2}",
+            contrast_ratio(c.text, c.sidebar)
         );
-        assert!(
-            (4.3..4.5).contains(&sobre_campo),
-            "se esperaba < AA sobre campo, mide {sobre_campo:.2}"
-        );
+    }
+
+    /// El texto tenue del marco se deduce del secundario y del fondo: pasa AA
+    /// sobre fondo, tarjeta y campo (antes era un fijo del diseño que se
+    /// quedaba en 4.25:1 sobre la tarjeta).
+    #[test]
+    fn faint_pasa_aa_en_todos_los_fondos() {
+        reset_palette_override();
+        for dark in [true, false] {
+            let c = chrome(&custom(dark));
+            let p = if dark { &DARK } else { &LIGHT };
+            for (fondo_name, fondo) in [("bg", p.bg), ("surface", p.surface), ("field", p.surface_alt)]
+            {
+                let ratio = contrast_ratio(c.faint, fondo);
+                assert!(
+                    ratio >= 4.5,
+                    "faint {} sobre {fondo_name}: {ratio:.2}:1 (< 4.5)",
+                    if dark { "dark" } else { "light" }
+                );
+            }
+        }
     }
 
     #[test]
@@ -1966,6 +2070,30 @@ mod tests {
             (ratio - 4.54).abs() < 0.05,
             "#767676 sobre blanco debe medir ~4.54:1, mide {ratio:.3}"
         );
+    }
+
+    /// La tinta de los botones llenos se elige sola: con el acento de serie
+    /// (#7C6CFF) y con un acento claro (#FFD400) gana la tinta casi negra; con
+    /// un acento oscuro gana el blanco. Con un acento cualquiera de los que se
+    /// pueden escribir a mano, el texto del botón llega a AA.
+    #[test]
+    fn ink_on_elige_la_tinta_que_se_lee_sobre_cualquier_acento() {
+        // Dos pares conocidos: el acento de marca y el acento claro del caso
+        // que se rompía (el texto blanco no llegaba a 4.5:1 sobre #FFD400).
+        assert_eq!(ink_on(ACCENT), INK_ON_ACCENT);
+        let amarillo = rgb!(0xFF, 0xD4, 0x00);
+        assert_eq!(ink_on(amarillo), INK_ON_ACCENT);
+        // Acento oscuro: la tinta casi negra se queda en ~1.2:1 → blanco.
+        let oscuro = rgb!(0x1A, 0x1A, 0x2E);
+        assert_eq!(ink_on(oscuro), Color::WHITE);
+        assert!(contrast_ratio(ink_on(oscuro), oscuro) >= 4.5);
+
+        // Los acentos que de verdad se usan (presets incluidos) pasan AA.
+        for hex in ["#7C6CFF", "#FFD400", "#00AAFF", "#1A1A2E", "#6652F2", "#E95420"] {
+            let acento = parse_hex(hex).expect(hex);
+            let ratio = contrast_ratio(ink_on(acento), acento);
+            assert!(ratio >= 4.5, "{hex}: la tinta mide {ratio:.2}:1 (< 4.5 AA)");
+        }
     }
 
     /// La tinta de los botones y el acento para texto son colores

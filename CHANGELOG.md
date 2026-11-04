@@ -4,6 +4,25 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.8.1] — 2026-11-04
+
+Arregla dos fallos de la descarga de la 0.8.0. No cambia el formato del
+`config.json`.
+
+### Corregido
+
+- **La app se presentaba como 0.7.2.** Los instaladores de la 0.8.0 se
+  empaquetaron con un `silb.exe` compilado antes del cambio de versión, así que
+  dentro del instalador viajaba un binario que decía 0.7.2. Recompilado: la
+  versión que enseña la app es la que declara `Cargo.toml`.
+- **«No se encuentra el punto de entrada del procedimiento
+  `__kmpc_dispatch_deinit` en `ggml-base.dll`» al encender la corrección con
+  IA.** El servidor embarcado heredaba el `PATH` del usuario y el cargador de
+  backends de ggml recogía el primer `ggml-*.dll` que encontraba —el llama.cpp
+  de winget, el de Ollama o cualquier otra instalación—, mezclando dos builds.
+  Ahora el proceso hijo sólo ve sus propias carpetas: `vendor/llama` y, si
+  existe, `vendor/llama/cuda`.
+
 ## [0.8.0] — 2026-11-04
 
 Primera versión **publicada** con el instalador que se adapta al equipo. Agrupa

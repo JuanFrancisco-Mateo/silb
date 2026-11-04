@@ -220,7 +220,7 @@ impl WhisprApp {
         let mut workspace = column![
             heading,
             self.recording_card(c, ty, t),
-            self.transcript_card(c, ty),
+            self.transcript_card(c, ty, t),
         ]
         .spacing(24.0)
         .height(Length::Fill);
@@ -283,12 +283,20 @@ impl WhisprApp {
             0
         };
 
+        // El SVG del micro trae `stroke="white"` dentro; sobre el acento de serie
+        // (violeta) el blanco pasa, pero sobre un acento CLARO elegido en Ajustes
+        // (#FFD400) se queda en 1,4:1 y el icono desaparece. Se tiñe con la tinta
+        // del relleno, la misma que usa el texto de los botones llenos.
         let record_button = button(
-            container(icons::icon(icons::MIC, 30.0))
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .align_x(Alignment::Center)
-                .align_y(Alignment::Center),
+            container(icons::icon_colored(
+                icons::MIC,
+                30.0,
+                theme::ink_on(t.accent),
+            ))
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .align_x(Alignment::Center)
+            .align_y(Alignment::Center),
         )
         .width(theme::RECORD_BUTTON_SIZE)
         .height(theme::RECORD_BUTTON_SIZE)
@@ -313,6 +321,9 @@ impl WhisprApp {
                     // El motivo de un error va en rojo (el resto de pistas,
                     // tenues como en el diseño): un fallo nunca se esconde.
                     t.err
+                } else if mic.hint_warn {
+                    // Aviso del subsistema de IA (§4): ámbar + texto, nunca solo color.
+                    t.warn
                 } else {
                     c.faint
                 }),
@@ -475,7 +486,7 @@ impl WhisprApp {
 
     /// `Transcript editor`: cabecera con acciones, texto editable y pie con el
     /// contador de palabras.
-    fn transcript_card(&self, c: Chrome, ty: DesignType) -> Element<'_, Message> {
+    fn transcript_card(&self, c: Chrome, ty: DesignType, t: &theme::UiPalette) -> Element<'_, Message> {
         // Cabecera de 64 px: el contenido se centra en VERTICAL (el nodo
         // `3:574` del diseño pone «Transcripción» a y=22 dentro de 64 px). Sin
         // `align_y` el título y los botones se pegaban arriba.
@@ -524,21 +535,42 @@ impl WhisprApp {
 
         // Pie de 42 px: el contenido se centra en VERTICAL sobre la línea
         // divisoria (nodo `3:589`: «Texto editable» a y=13.5 dentro de 42).
-        let status = container(
+        // Entre medias va la marca del turno (§2): solo si el último turno lo
+        // tocó la IA — sin IA no se pinta nada, nada de ruido.
+        let mut footer = row![
             row![
+                icons::icon_colored(icons::PENCIL, 13.0, c.faint),
+                text("Texto editable").size(ty.chrome).color(c.faint),
+            ]
+            .spacing(7.0)
+            .align_y(Alignment::Center),
+        ];
+        if let Some(marca) = &self.last_turn_ai {
+            footer = footer.push(
                 row![
-                    icons::icon_colored(icons::PENCIL, 13.0, c.faint),
-                    text("Texto editable").size(ty.chrome).color(c.faint),
+                    icons::icon_colored(icons::SPARKLES, 13.0, t.accent_text),
+                    text(format!("Último turno: {marca}"))
+                        .size(ty.chrome)
+                        .color(t.accent_text),
                 ]
-                .spacing(7.0)
-                .align_y(Alignment::Center),
-                Space::with_width(Length::Fill),
+                .spacing(6.0)
+                .align_y(Alignment::Center)
+                .padding(Padding {
+                    top: 0.0,
+                    right: 0.0,
+                    bottom: 0.0,
+                    left: 16.0,
+                }),
+            );
+        }
+        footer = footer
+            .push(Space::with_width(Length::Fill))
+            .push(
                 text(format!("{} palabras", word_count(&self.transcript)))
                     .size(ty.chrome)
                     .color(c.faint),
-            ]
-            .align_y(Alignment::Center),
-        )
+            );
+        let status = container(footer.align_y(Alignment::Center))
         .width(Length::Fill)
         .height(42.0)
         .align_y(Alignment::Center)
@@ -649,7 +681,7 @@ impl WhisprApp {
         };
         let has_text = word_count(&self.transcript) > 0;
         let icon_color = if has_text {
-            theme::INK_ON_ACCENT
+            theme::ink_on(c.accent)
         } else {
             c.faint
         };
@@ -754,9 +786,10 @@ impl WhisprApp {
             "Desactivada".to_string()
         } else {
             match &self.llm_status {
-                crate::app::LlmStatus::Ready { .. } => {
-                    format!("Activa · {}", self.config.llm_settings().model)
-                }
+                crate::app::LlmStatus::Ready { .. } => format!(
+                    "Activa · {}",
+                    crate::app::short_model_name(&self.config.llm_settings().model)
+                ),
                 crate::app::LlmStatus::Disabled(reason) if !reason.is_empty() => {
                     format!("Inactiva — {reason}")
                 }

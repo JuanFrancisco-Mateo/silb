@@ -1502,14 +1502,24 @@ pub fn launch_server(exe: &std::path::Path, model: &std::path::Path, port: u16) 
                 .map_err(|e| format!("log del server: {e}"))?,
         ))
         .stderr(Stdio::from(log_file));
+    // PATH del hijo: SOLO las carpetas del servidor (y `cuda/` si toca). Si se
+    // hereda el PATH del usuario, el cargador de backends de ggml recoge el
+    // primer `ggml-*.dll` que encuentre —el llama.cpp de winget, Ollama, otra
+    // instalación— y mezcla builds: el backend nuevo pide símbolos que el
+    // `ggml-base.dll` embarcado no exporta y el server muere con «no se
+    // encuentra el punto de entrada». System32/Windows se buscan siempre, así
+    // que no heredar PATH no quita nada necesario.
+    let mut path_dirs: Vec<std::path::PathBuf> = Vec::new();
     if use_cuda {
-        let current = std::env::var_os("PATH").unwrap_or_default();
-        let with_cuda: Vec<std::path::PathBuf> = std::iter::once(cuda_dir.clone())
-            .chain(std::env::split_paths(&current))
-            .collect();
-        if let Ok(joined) = std::env::join_paths(with_cuda) {
-            command.env("PATH", joined);
-        }
+        path_dirs.push(cuda_dir.clone());
+    }
+    path_dirs.push(
+        exe.parent()
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| cwd.clone()),
+    );
+    if let Ok(joined) = std::env::join_paths(path_dirs) {
+        command.env("PATH", joined);
     }
     let child = command
         .spawn()

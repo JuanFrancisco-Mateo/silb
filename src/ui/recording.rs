@@ -341,6 +341,9 @@ impl WhisprApp {
                         );
 
                         if !processed.is_empty() {
+                            // Turno de dictado normal (la IA no lo ha tocado):
+                            // se retira la marca del turno anterior (§2).
+                            self.last_turn_ai = None;
                             if rule_corrected && !self.last_turn.is_empty() {
                                 let target = self.last_turn.clone();
                                 if let Some(updated) = crate::domain::corrective::replace_last_turn(

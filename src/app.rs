@@ -154,6 +154,9 @@ pub(crate) struct MicUi {
     pub(crate) color: Color,
     pub(crate) label: String,
     pub(crate) hint: String,
+    /// La pista es un AVISO (se pinta en ámbar, no en tenue): hoy solo cuando
+    /// el subsistema de IA tiene un problema que el usuario debe saber.
+    pub(crate) hint_warn: bool,
 }
 
 /// La frase hablada que se está mandando al modelo que corrige. Si la
@@ -667,6 +670,12 @@ pub struct WhisprApp {
     /// `last_correction` al procesar un turno normal, así que el aviso se pone
     /// DESPUÉS, al recibir `TranscriptionDone`.
     pub(crate) pending_turn_note: Option<String>,
+    /// Marca del ÚLTIMO turno (P2 §2, transparencia con la IA): de dónde salió
+    /// el texto que acaba de aparecer. `None` = dictado tal cual (la interfaz no
+    /// enseña nada: nada de ruido); `Some(...)` = frase corta para el pie de
+    /// «Transcripción» («Corrección IA · Qwen3-4B»). Se borra al llegar un turno
+    /// nuevo, al editar a mano, al deshacer y al limpiar la nota.
+    pub(crate) last_turn_ai: Option<String>,
 }
 
 impl WhisprApp {
@@ -748,6 +757,7 @@ impl WhisprApp {
             last_turn: String::new(),
             removed_fillers: vec![],
             last_correction: None,
+            last_turn_ai: None,
             session: CorrectionSession::new(),
             audio: None,
             input_devices: crate::audio::input_devices(),
@@ -1202,6 +1212,12 @@ impl WhisprApp {
                     "Rectificado IA: “{}” → “{}”",
                     diff.find, diff.replace
                 ));
+                // §2: el turno que acaba de cambiar lo tocó la IA. La marca se
+                // ve en el pie de «Transcripción» hasta el turno siguiente.
+                self.last_turn_ai = Some(turn_ai_mark(
+                    self.config.ai_mode(),
+                    &self.config.llm_settings().model,
+                ));
                 crate::log!("llm", "rectificado (cross-turn): {} → {}", diff.find, diff.replace);
 
                 let force_inject = p.force_inject;
@@ -1398,6 +1414,11 @@ impl WhisprApp {
             )
         };
         self.last_correction = Some(summary);
+        // §2: la marca del turno solo si el texto CAMBIÓ. Si el modelo lo
+        // confirmó tal cual, no ha tocado nada y no se dice que sí.
+        self.last_turn_ai = (input != clean).then(|| {
+            turn_ai_mark(modo, &self.config.llm_settings().model)
+        });
         crate::log!(
             "llm",
             "in-turn aplicado (modo={}): «{}» → «{}»",
@@ -1448,6 +1469,9 @@ impl WhisprApp {
         if text.is_empty() {
             return;
         }
+        // Texto BRUTO (dictado tal cual o vuelta atrás del corrector): si el
+        // turno anterior llevaba marca de IA, deja de valer (§2).
+        self.last_turn_ai = None;
         let should_update_turn = self.last_turn.is_empty();
         self.transcript =
             crate::domain::correction::append_transcript(&self.transcript, text);
@@ -1499,6 +1523,11 @@ impl WhisprApp {
                     "Rectificado IA: “{}” → “{}”",
                     diff.find, diff.replace
                 ));
+                // §2: el cambio confirmado también es del turno (misma marca).
+                self.last_turn_ai = Some(turn_ai_mark(
+                    self.config.ai_mode(),
+                    &self.config.llm_settings().model,
+                ));
                 crate::log!(
                     "llm",
                     "rectificado (confirmado): {} → {}",
@@ -1530,6 +1559,8 @@ impl WhisprApp {
             return;
         };
         self.last_correction = Some("Corrección IA descartada ✕".to_string());
+        // El turno se queda como estaba: la marca de IA no aplica (§2).
+        self.last_turn_ai = None;
     }
 
     // ── Accesores para la burbuja flotante (bubble.rs) ─────────────────────
@@ -1883,16 +1914,26 @@ impl WhisprApp {
 
     /// Lo que enseña el hero: color de estado, texto y pista (dos señales a la
     /// vez, nunca solo el color).
+    ///
+    /// Es el sitio ÚNICO de «qué está pasando» en Dictado (§4): grabando,
+    /// transcribiendo, corrigiendo con IA, descargando un modelo y servidor de
+    /// IA caído se leen aquí, en la misma pista, sin abrir nada.
     pub(crate) fn mic_ui(&self, t: &UiPalette) -> MicUi {
         match &self.status {
-            Status::Idle => MicUi {
-                color: t.dim,
-                label: "Listo".to_string(),
-                hint: format!(
-                    "Pulsa el círculo o {} y empieza a hablar",
-                    self.hotkey_label
-                ),
-            },
+            Status::Idle => {
+                let (hint, hint_warn) = idle_hint(
+                    self.llm_dl.as_ref(),
+                    self.config.ai_mode(),
+                    &self.llm_status,
+                    &self.hotkey_label,
+                );
+                MicUi {
+                    color: t.dim,
+                    label: "Listo".to_string(),
+                    hint,
+                    hint_warn,
+                }
+            }
             Status::Recording => MicUi {
                 // accent_text (y no accent): «Grabando…» es texto normal (fs.md)
                 // sobre tarjeta, y el violeta de marca se queda en ~4.2:1 ahí (ver
@@ -1900,16 +1941,19 @@ impl WhisprApp {
                 color: t.accent_text,
                 label: "Grabando…".to_string(),
                 hint: "Suelta el atajo o pulsa para transcribir".to_string(),
+                hint_warn: false,
             },
             Status::Transcribing => MicUi {
                 color: t.warn,
                 label: "Transcribiendo…".to_string(),
                 hint: "Procesando el audio con Whisper".to_string(),
+                hint_warn: false,
             },
             Status::Correcting => MicUi {
                 color: t.warn,
                 label: "Corrigiendo con IA…".to_string(),
                 hint: "La IA de corrección revisa lo que dictaste".to_string(),
+                hint_warn: false,
             },
             Status::Downloading {
                 model,
@@ -1926,11 +1970,13 @@ impl WhisprApp {
                     self.dl_rate,
                 ),
                 hint: "Primera vez con este modelo: se descarga una sola vez".to_string(),
+                hint_warn: false,
             },
             Status::Error(e) => MicUi {
                 color: t.err,
                 label: "Error".to_string(),
                 hint: e.clone(),
+                hint_warn: false,
             },
         }
     }
@@ -2763,7 +2809,12 @@ pub(crate) struct LlmStatusUi {
     pub(crate) label: String,
 }
 
-pub(crate) fn llm_status_ui(mode: AiMode, status: &LlmStatus, model: &str) -> LlmStatusUi {
+pub(crate) fn llm_status_ui(
+    mode: AiMode,
+    status: &LlmStatus,
+    model: &str,
+    endpoint: &str,
+) -> LlmStatusUi {
     if mode == AiMode::Off {
         return LlmStatusUi {
             kind: "dim",
@@ -2776,10 +2827,20 @@ pub(crate) fn llm_status_ui(mode: AiMode, status: &LlmStatus, model: &str) -> Ll
         AiMode::Reescritura => "Reescritura IA",
         _ => "Corrección IA",
     };
+    // Dónde se manda el texto (§2: transparencia): sin esquema, que no hace falta.
+    let destino = {
+        let e = short_endpoint(endpoint);
+        if e.is_empty() {
+            String::new()
+        } else {
+            format!(" · {e}")
+        }
+    };
+    let modelo = short_model_name(model);
     match status {
         LlmStatus::Ready { .. } => LlmStatusUi {
             kind: "ok",
-            label: format!("● {nombre}: activa · {model}"),
+            label: format!("● {nombre}: activa · {modelo}{destino}"),
         },
         LlmStatus::Disabled(reason) if !reason.is_empty() => LlmStatusUi {
             kind: "warn",
@@ -2787,8 +2848,92 @@ pub(crate) fn llm_status_ui(mode: AiMode, status: &LlmStatus, model: &str) -> Ll
         },
         _ => LlmStatusUi {
             kind: "dim",
-            label: format!("○ {nombre}: comprobando…"),
+            label: format!("○ {nombre}: comprobando…{destino}"),
         },
+    }
+}
+
+/// Nombre corto de un modelo para la interfaz: sin carpeta y sin `.gguf`
+/// («Qwen3-4B-Instruct-2507-Q4_K_M.gguf» → «Qwen3-4B-Instruct-2507-Q4_K_M»).
+pub(crate) fn short_model_name(model: &str) -> String {
+    let base = model.rsplit(['/', '\\']).next().unwrap_or(model).trim();
+    match base
+        .get(base.len().saturating_sub(5)..)
+        .filter(|ext| ext.eq_ignore_ascii_case(".gguf"))
+    {
+        Some(_) => base[..base.len() - 5].to_string(),
+        None => base.to_string(),
+    }
+}
+
+/// Dirección del corrector tal como se enseña: sin `http(s)://` y sin la barra
+/// final (`https://api.openai.com/v1/` → `api.openai.com/v1`).
+pub(crate) fn short_endpoint(endpoint: &str) -> String {
+    endpoint
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// La marca discreta del turno (§2): si el texto que acaba de aparecer lo tocó
+/// la IA, el pie de «Transcripción» dice con qué modo y qué modelo. Función
+/// pura: la vista solo la pinta, y sin marca (`None`) no se pinta nada.
+pub(crate) fn turn_ai_mark(mode: AiMode, model: &str) -> String {
+    let nombre = match mode {
+        AiMode::Reescritura => "Reescritura IA",
+        _ => "Corrección IA",
+    };
+    let modelo = short_model_name(model);
+    if modelo.is_empty() {
+        nombre.to_string()
+    } else {
+        format!("{nombre} · {modelo}")
+    }
+}
+
+/// Pista del hero con el dictado PARADO (§4): lo que hay que saber del
+/// subsistema de IA sin abrir Ajustes. Devuelve (texto, es_aviso) — un aviso se
+/// pinta en ámbar. Prioridad: modelo bajándose > fallo de la descarga >
+/// corrector caído > invitación a dictar (sin ruido).
+pub(crate) fn idle_hint(
+    dl: Option<&LlmDownload>,
+    mode: AiMode,
+    status: &LlmStatus,
+    hotkey: &str,
+) -> (String, bool) {
+    match dl {
+        Some(LlmDownload::Downloading {
+            downloaded, total, ..
+        }) => (
+            format!(
+                "Modelo de IA local: {} (el dictado ya funciona sin él)",
+                crate::ui::settings::llm_download_text(*downloaded, *total)
+            ),
+            false,
+        ),
+        Some(LlmDownload::Failed(motivo)) => (
+            format!("No se pudo bajar el modelo de IA: {motivo}"),
+            true,
+        ),
+        _ => {
+            if mode != AiMode::Off {
+                if let LlmStatus::Disabled(motivo) = status {
+                    if !motivo.is_empty() {
+                        // Solo la primera frase: la explicación larga ya está en
+                        // el pie de «Corrección IA» (esto tiene que caber en una
+                        // línea del hero).
+                        let corto = motivo.split(';').next().unwrap_or(motivo).trim();
+                        return (format!("Corrección IA caída — {corto}"), true);
+                    }
+                }
+            }
+            (
+                format!("Pulsa el círculo o {hotkey} y empieza a hablar"),
+                false,
+            )
+        }
     }
 }
 
@@ -3318,16 +3463,32 @@ mod tests {
     /// Que se vea claro lo que hace el corrector (requisito UX 10/09/2026): el
     /// indicador de estado debe decir SIEMPRE algo coherente con (interruptor, estado
     /// del server) y nombrar el modelo solo cuando la corrección puede actuar.
+    /// Desde P2 dice también la DIRECCIÓN a la que viaja el texto (§2).
     #[test]
-    fn chip_muestra_modelo_solo_cuando_la_correccion_esta_activa() {
+    fn chip_muestra_modelo_y_endpoint_cuando_la_correccion_esta_activa() {
         let ui = llm_status_ui(
             AiMode::Correccion,
             &LlmStatus::Ready { launched: false },
             "ornith-1.0-9b",
+            "http://127.0.0.1:8081/v1",
         );
         assert_eq!(ui.kind, "ok");
         assert!(ui.label.contains("activa"));
         assert!(ui.label.contains("ornith-1.0-9b"));
+        assert!(
+            ui.label.contains("127.0.0.1:8081/v1"),
+            "la dirección tiene que verse: {}",
+            ui.label
+        );
+        assert!(!ui.label.contains("http://"), "sin esquema: {}", ui.label);
+
+        // El modelo sale sin carpeta ni `.gguf` (cabe en una línea).
+        assert_eq!(
+            short_model_name("models\\\\llm\\\\Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
+            "Qwen3-4B-Instruct-2507-Q4_K_M"
+        );
+        assert_eq!(short_model_name("gpt-4o-mini"), "gpt-4o-mini");
+        assert_eq!(short_endpoint("https://api.openai.com/v1/"), "api.openai.com/v1");
     }
 
     /// (0.7.1) En Reescritura la fila de estado dice el modo de verdad.
@@ -3337,6 +3498,7 @@ mod tests {
             AiMode::Reescritura,
             &LlmStatus::Ready { launched: false },
             "Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+            "http://127.0.0.1:8081/v1",
         );
         assert_eq!(ui.kind, "ok");
         assert!(ui.label.contains("Reescritura IA"));
@@ -3349,6 +3511,7 @@ mod tests {
             AiMode::Off,
             &LlmStatus::Ready { launched: true },
             "gpt-4o-mini",
+            "https://api.openai.com/v1",
         );
         assert_eq!(ui.kind, "dim");
         assert!(ui.label.contains("apagada"));
@@ -3361,6 +3524,7 @@ mod tests {
             AiMode::Correccion,
             &LlmStatus::Disabled("servidor no encontrado".into()),
             "",
+            "http://127.0.0.1:8081/v1",
         );
         assert_eq!(ui.kind, "warn");
         assert!(ui.label.contains("servidor no encontrado"));
@@ -3368,9 +3532,62 @@ mod tests {
 
     #[test]
     fn chip_avisa_mientras_comprueba_el_server() {
-        let ui = llm_status_ui(AiMode::Correccion, &LlmStatus::Unknown, "");
+        let ui = llm_status_ui(
+            AiMode::Correccion,
+            &LlmStatus::Unknown,
+            "",
+            "http://127.0.0.1:8081/v1",
+        );
         assert_eq!(ui.kind, "dim");
         assert!(ui.label.contains("comprobando"));
+    }
+
+    /// §4: la pista del hero es el sitio único de «qué está pasando». Con el
+    /// dictado parado avisa de lo que el usuario no vería sin abrir Ajustes (el
+    /// modelo bajándose, la descarga fallida, el corrector caído) y, cuando no
+    /// hay nada, solo invita a dictar — sin ruido.
+    #[test]
+    fn la_pista_del_hero_cuenta_lo_que_pasa_con_la_ia() {
+        let listo = LlmStatus::Ready { launched: false };
+        // Nada que contar: invitación normal, sin aviso.
+        let (texto, aviso) = idle_hint(None, AiMode::Correccion, &listo, "Ctrl+Shift+D");
+        assert!(texto.contains("Ctrl+Shift+D"));
+        assert!(!aviso);
+        // Modelo bajándose: se ve el porcentaje y que el dictado ya funciona.
+        let dl = LlmDownload::Downloading {
+            file_name: "Qwen3-4B.gguf".into(),
+            downloaded: 100 * 1024 * 1024,
+            total: 400 * 1024 * 1024,
+        };
+        let (texto, aviso) = idle_hint(Some(&dl), AiMode::Correccion, &listo, "Ctrl+Shift+D");
+        assert!(texto.contains("25 %"), "{texto}");
+        assert!(texto.contains("Modelo de IA local"), "{texto}");
+        assert!(!aviso);
+        // Descarga fallida y corrector caído: aviso (ámbar) con el motivo.
+        let fallo = LlmDownload::Failed("sin red".into());
+        let (texto, aviso) = idle_hint(Some(&fallo), AiMode::Correccion, &listo, "Ctrl+Shift+D");
+        assert!(aviso && texto.contains("sin red"), "{texto}");
+        let caido = LlmStatus::Disabled("el endpoint no responde".into());
+        let (texto, aviso) = idle_hint(None, AiMode::Correccion, &caido, "Ctrl+Shift+D");
+        assert!(aviso && texto.contains("Corrección IA caída"), "{texto}");
+        // Con la IA apagada el motivo de un `Disabled` no se repite (no es ruido).
+        let (texto, aviso) = idle_hint(None, AiMode::Off, &caido, "Ctrl+Shift+D");
+        assert!(!aviso && !texto.contains("caída"), "{texto}");
+    }
+
+    /// §2: la marca del turno nombra el modo real y el modelo, sin `.gguf`.
+    #[test]
+    fn la_marca_del_turno_nombra_el_modo_y_el_modelo() {
+        assert_eq!(
+            turn_ai_mark(AiMode::Correccion, "Qwen3-4B-Instruct-2507-Q4_K_M.gguf"),
+            "Corrección IA · Qwen3-4B-Instruct-2507-Q4_K_M"
+        );
+        assert_eq!(
+            turn_ai_mark(AiMode::Reescritura, "gpt-4o-mini"),
+            "Reescritura IA · gpt-4o-mini"
+        );
+        // Sin modelo (campo vacío) la marca no deja un «· » colgando.
+        assert_eq!(turn_ai_mark(AiMode::Correccion, ""), "Corrección IA");
     }
 
     /// (0.7.2) El fallo del 29/10: cambiar de modelo no reiniciaba el servidor y
