@@ -8,11 +8,12 @@ use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use iced::{Task, window};
+use iced::widget::text_editor;
 
 use crate::theme;
 use crate::app::{
     LlmStatus, Message, SettingsSection, Status, WhisprApp, WindowSection,
-    last_turn_from_transcript,
+    hay_que_reiniciar_servidor_ia, last_turn_from_transcript,
 };
 use crate::config::{dictionary_path, AiMode};
 use crate::domain::dictionary::{DictionaryEntry, export_dictionary_to, import_dictionary_from};
@@ -53,6 +54,59 @@ impl WhisprApp {
             return self.spawn_llm_startup();
         }
         Task::none()
+    }
+
+    /// (0.7.2) Cambiar de modelo con la IA encendida reinicia el servidor propio.
+    ///
+    /// El servidor que está en marcha sigue con el modelo viejo: la fila de
+    /// estado enseñaría el nombre nuevo y estaría mintiendo (fallo medido en
+    /// vivo el 29/10). Así que se para el servidor propio y se vuelve a lanzar la
+    /// fase de siempre (`spawn_llm_startup`, la misma que usa `apply_ai_mode`):
+    /// comprueba el puerto, arranca `llama-server` con el modelo nuevo y espera a
+    /// que `/v1/models` conteste. Si arranca, `LlmReady` deja el estado en verde
+    /// con el modelo que de verdad sirve; si no, `LlmDisabled` enseña el motivo.
+    ///
+    /// Un servidor AJENO (ya estaba en el puerto antes de abrir la app) no se
+    /// toca: `kill_launched_server` solo mata el proceso que registró
+    /// `launch_server`, y con un pid propio a 0 aquí no se hace nada.
+    fn reiniciar_servidor_por_modelo(
+        &mut self,
+        modelo_anterior: &str,
+        modelo_nuevo: &str,
+    ) -> Task<Message> {
+        let servidor_propio = crate::llm::launched_server_pid() != 0
+            || matches!(self.llm_status, LlmStatus::Ready { launched: true });
+        if !hay_que_reiniciar_servidor_ia(
+            self.config.ai_correction_enabled(),
+            servidor_propio,
+            modelo_anterior,
+            modelo_nuevo,
+        ) {
+            return Task::none();
+        }
+        // Primero se para el viejo: si el modelo nuevo no aparece, no puede
+        // quedarse el otro cargado en memoria mientras la config dice otra cosa.
+        crate::llm::kill_launched_server();
+        // Sin el GGUF en las carpetas de modelos no hay nada que arrancar, y aquí
+        // NO se baja nada por cuenta propia (para eso está el botón de Ajustes).
+        if crate::llm::resolve_model_path(modelo_nuevo).is_none() {
+            crate::log!(
+                "llm",
+                "modelo cambiado a «{modelo_nuevo}»: el fichero no está en disco, no se arranca el servidor"
+            );
+            self.llm_status = LlmStatus::Disabled(
+                "el modelo elegido no está en disco; bájalo en Ajustes".to_string(),
+            );
+            return Task::none();
+        }
+        crate::log!(
+            "llm",
+            "modelo cambiado a «{modelo_nuevo}»: reiniciando el servidor de IA"
+        );
+        // «Comprobando…» mientras la fase hace su trabajo: ni verde mintiendo ni
+        // el verde viejo con el modelo nuevo en la etiqueta.
+        self.llm_status = LlmStatus::Unknown;
+        self.spawn_llm_startup()
     }
 
     /// Ajustes de la corrección IA: proveedor, dirección, modelo, clave,
@@ -96,6 +150,33 @@ impl WhisprApp {
                 self.apply_ai_mode(mode)
             }
             Message::AiModeChanged(mode) => self.apply_ai_mode(mode),
+            // (0.7.2) Instrucción propia de la IA: el editor es la vista y el
+            // config es la fuente de verdad. Un texto en blanco cuenta como
+            // «sin prompt propio» (el `Config` lo normaliza a `None`).
+            Message::AiCustomPromptEdited(action) => {
+                self.ai_prompt_editor.perform(action);
+                self.config
+                    .set_ai_custom_prompt(&self.ai_prompt_editor.text());
+                self.save_config();
+                Task::none()
+            }
+            Message::AiPromptUseDefault => {
+                // Rellena el editor con la de serie del modo activo para poder
+                // editarla desde ahí. Sale de `llm::default_prompt`, no de un
+                // texto copiado aquí: si el prompt de serie cambia, el botón
+                // cambia con él.
+                let texto = crate::llm::default_prompt(self.config.ai_mode());
+                self.ai_prompt_editor = text_editor::Content::with_text(texto);
+                self.config.set_ai_custom_prompt(texto);
+                self.save_config();
+                Task::none()
+            }
+            Message::AiPromptClear => {
+                self.ai_prompt_editor = text_editor::Content::new();
+                self.config.ai_custom_prompt = None;
+                self.save_config();
+                Task::none()
+            }
             Message::LlmEndpointChanged(s) => {
                 // Vacío en la interfaz → el getter usa el de por defecto. No se
                 // guarda una cadena vacía, para distinguir «no escrito» de
@@ -112,32 +193,43 @@ impl WhisprApp {
             }
             Message::LlmModelChanged(s) => {
                 let trimmed = s.trim();
+                // (0.7.2) El modelo que se está sirviendo ahora mismo, para
+                // decidir si hay que reiniciar (`llm_settings().model` ya resuelve
+                // el vacío al modelo de serie del proveedor).
+                let anterior = self.config.llm_settings().model;
                 self.config.llm_model = if trimmed.is_empty() {
                     None
                 } else {
                     Some(trimmed.to_string())
                 };
                 self.save_config();
-                Task::none()
+                let nuevo = self.config.llm_settings().model;
+                self.reiniciar_servidor_por_modelo(&anterior, &nuevo)
             }
             Message::LlmModelPicked(etiqueta) => {
                 // El desplegable solo pinta etiquetas: el nombre del fichero sale
                 // de la lista curada. «Otro» no cambia lo que hubiera guardado:
                 // abre el campo de texto, y lo escrito ahí es la referencia.
+                let mut task = Task::none();
                 match crate::llm::SMALL_LLM_MODELS
                     .iter()
                     .find(|m| m.label == etiqueta)
                 {
                     Some(m) => {
                         self.llm_pick_other = false;
+                        let anterior = self.config.llm_settings().model;
                         self.config.llm_model = Some(m.file_name.to_string());
                         self.save_config();
+                        // (0.7.2) Con el servidor propio en marcha se reinicia
+                        // con el modelo nuevo; el mismo fichero que ya servía no
+                        // se toca.
+                        task = self.reiniciar_servidor_por_modelo(&anterior, m.file_name);
                     }
                     None => self.llm_pick_other = true,
                 }
                 // El aviso de la descarga era del modelo anterior.
                 self.llm_dl = None;
-                Task::none()
+                task
             }
             Message::LlmDownloadRequested => {
                 self.start_llm_download();
@@ -801,6 +893,21 @@ impl WhisprApp {
                 // Coge lo que se está escribiendo (o el hex ya guardado si el
                 // usuario no tocó nada), lo lee con cuidado y lo guarda.
                 self.apply_palette_field(field);
+                Task::none()
+            }
+            Message::PaletteFieldSwatch(field, hex) => {
+                // Selector con el ratón: la muestra se aplica en el acto (se ve
+                // sin pulsar «Aplicar») y se guarda igual que el hex.
+                let hex = hex.trim().to_string();
+                if theme::parse_hex(&hex).is_some() {
+                    let cfg = self
+                        .config
+                        .palette
+                        .get_or_insert_with(theme::PaletteConfig::default);
+                    cfg.set_field(field, Some(hex));
+                    self.palette_inputs.remove(&field);
+                    self.save_config();
+                }
                 Task::none()
             }
             Message::PaletteFieldReset(field) => {

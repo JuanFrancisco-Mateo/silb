@@ -517,7 +517,11 @@ impl iced_winit::Program for WhisprApp {
         if self.is_bubble_window(id) {
             bubble_theme()
         } else {
-            crate::theme::custom(self.config_is_dark())
+            // La ventana principal lleva la paleta RESUELTA (colores de serie +
+            // cambios del usuario): el `Theme` es lo que reciben los estilos al
+            // dibujar, así que con el de serie los controles sin estilo propio
+            // seguían saliendo con los colores viejos.
+            WhisprApp::theme(self)
         }
     }
 

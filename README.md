@@ -100,11 +100,20 @@ El recorrido completo de una frase, fichero por fichero, está en
 
 ## Instalar
 
-- **Instalador** (lo recomendado): `silb-X.Y.Z-setup.exe` desde la página
-  de [Releases](https://github.com/JuanFrancisco-Mateo/silb/releases).
-  Instala en `%LOCALAPPDATA%\Programs\Silb` **sin pedir permisos de
-  administrador**, con acceso directo, entrada en «Agregar o quitar programas»
-  y desinstalador.
+Hay **dos descargas y las dos instalan la misma app**. En una línea: **si tienes
+internet, el normal; el offline es para equipos sin red.** No hay que elegir
+«versión de CPU» ni «versión de CUDA»: el instalador mira el equipo y pone lo
+que corresponde.
+
+| Descarga (página de [Releases](https://github.com/JuanFrancisco-Mateo/silb/releases)) | Cuándo | Tamaño |
+|---|---|---|
+| `silb-X.Y.Z-setup.exe` | **lo normal**, con internet. Si el equipo tiene GPU NVIDIA se baja solo el pack de CUDA (~443 MB) y lo verifica con SHA-256; si no hay GPU, red o el hash falla, instala en CPU y avisa («se puede añadir después»). | ~15 MB |
+| `silb-X.Y.Z-offline-setup.exe` | equipos **sin red**: trae dentro las dos versiones (CPU y CUDA) y elige al instalar. | ~445 MB |
+
+Los dos instalan en `%LOCALAPPDATA%\Programs\Silb` **sin pedir permisos de
+administrador**, con acceso directo, entrada en «Agregar o quitar programas» y
+desinstalador.
+
 - **Portable**: el propio `silb.exe`, que lleva todo dentro y no hay que
   instalar.
 - **¿Todavía no hay releases publicadas?** Compílalo tú, son unos minutos (ver
@@ -145,6 +154,9 @@ Qué ganas y qué pierdes:
   moderno, pero da de sobra para dictar).
 - **CUDA**: transcripción en tiempo real con una GPU NVIDIA; exige driver y kit
   de CUDA en el equipo donde compilas, y el binario da por hecho que hay GPU.
+
+Quien solo instala la app no tiene que decidir esto: el instalador detecta el
+equipo y pone el binario que toca (ver «Instalar»).
 
 ```powershell
 git clone https://github.com/JuanFrancisco-Mateo/silb.git
@@ -302,7 +314,7 @@ registrado se muestra en la app (Ajustes).
 ## Tests
 
 ```powershell
-cargo test   # 352 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
+cargo test   # 359 passed, 0 failed, 1 ignored (dominio, config, audio, burbuja, UI, llm, robustez)
 cargo check  # sin errores
 ```
 

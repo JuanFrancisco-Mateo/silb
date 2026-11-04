@@ -233,6 +233,13 @@ pub enum Message {
 /// Modo de la IA elegido en Ajustes (0.7.1): desactivada, corrección de las
 /// auto-correcciones o reescritura del turno entero.
     AiModeChanged(AiMode),
+/// Lo que hace el editor de la instrucción propia de la IA (0.7.2): teclear,
+/// borrar, pegar, mover el cursor… Se guarda en config tal cual.
+    AiCustomPromptEdited(text_editor::Action),
+/// Rellena el editor con la instrucción de serie del modo activo (0.7.2).
+    AiPromptUseDefault,
+/// Vacía el editor: vuelve a usarse la instrucción de serie (0.7.2).
+    AiPromptClear,
 /// Con qué se corrige: local por defecto, en la nube o un servidor propio.
     CorrectionProviderChanged(CorrectionProvider),
 /// Dirección del corrector (base_url de un servicio OpenAI-compatible).
@@ -397,6 +404,9 @@ pub enum Message {
 /// «Aplicar» de un campo: guarda lo que hay en el campo (si el hex no vale,
 /// se ignora).
     PaletteFieldApply(theme::PaletteField),
+/// Muestra de color pulsada: guarda ese hex en el campo al instante (el
+/// selector con el ratón; el hex queda como opción avanzada).
+    PaletteFieldSwatch(theme::PaletteField, String),
 /// «Restaurar» un campo: lo deja en `None` (el color de serie del modo
 /// activo).
     PaletteFieldReset(theme::PaletteField),
@@ -515,6 +525,9 @@ pub struct WhisprApp {
     /// la fuente de verdad para lo demás (escribir en la app, correcciones,
     /// copiar) y se pone al día con cada acción de edición.
     pub(crate) transcript_editor: text_editor::Content,
+    /// Editor de la instrucción propia de la IA (0.7.2). Es la vista viva del
+    /// texto; la fuente de verdad es `config.ai_custom_prompt`.
+    pub(crate) ai_prompt_editor: text_editor::Content,
     /// Cuándo se copió bien por última vez: así el botón enseña «✓ Copiado»
     /// unos 2 s (requisito R3).
     pub(crate) copied_at: Option<std::time::Instant>,
@@ -693,6 +706,11 @@ impl WhisprApp {
         // Texto de ayuda del editor (se calcula ANTES del struct literal: la
         // etiqueta del atajo se mueve dentro de él).
         let placeholder_text = transcript_placeholder(&hotkey_label);
+        // Instrucción propia de la IA ya guardada (0.7.2): se lee ANTES del
+        // struct literal, que se lleva `config` dentro.
+        let prompt_editor = text_editor::Content::with_text(
+            config.ai_custom_prompt().unwrap_or_default(),
+        );
 
         // Segunda ventana: la burbuja flotante. Se abre al arrancar; cuando
         // exista llegará `Message::BubbleOpened` y se le pondrán
@@ -741,6 +759,8 @@ impl WhisprApp {
             shortcut_error: None,
             placeholder_text,
             transcript_editor: text_editor::Content::new(),
+            // El prompt propio ya guardado, listo para editar (0.7.2).
+            ai_prompt_editor: prompt_editor,
             copied_at: None,
             clear_armed: false,
             clear_armed_at: None,
@@ -862,20 +882,7 @@ impl WhisprApp {
                 .config
                 .palette
                 .get_or_insert_with(theme::PaletteConfig::default);
-            match field {
-                theme::PaletteField::Bg => cfg.bg = Some(trimmed),
-                theme::PaletteField::Surface => cfg.surface = Some(trimmed),
-                theme::PaletteField::SurfaceAlt => cfg.surface_alt = Some(trimmed),
-                theme::PaletteField::Text => cfg.text = Some(trimmed),
-                theme::PaletteField::Dim => cfg.dim = Some(trimmed),
-                theme::PaletteField::Accent => cfg.accent = Some(trimmed),
-                theme::PaletteField::AccentHover => cfg.accent_hover = Some(trimmed),
-                theme::PaletteField::AccentText => cfg.accent_text = Some(trimmed),
-                theme::PaletteField::Ok => cfg.ok = Some(trimmed),
-                theme::PaletteField::Warn => cfg.warn = Some(trimmed),
-                theme::PaletteField::Err => cfg.err = Some(trimmed),
-                theme::PaletteField::Border => cfg.border = Some(trimmed),
-            }
+            cfg.set_field(field, Some(trimmed));
             // Una vez guardado, se vacía el campo para que suelte el hex a medio
             // escribir (la interfaz enseñará el valor guardado).
             self.palette_inputs.remove(&field);
@@ -1980,6 +1987,9 @@ impl WhisprApp {
             m @ (Message::CorrectionProviderChanged(..)
                 | Message::ToggleAiCorrection(..)
                 | Message::AiModeChanged(..)
+                | Message::AiCustomPromptEdited(..)
+                | Message::AiPromptUseDefault
+                | Message::AiPromptClear
                 | Message::LlmEndpointChanged(..)
                 | Message::LlmModelChanged(..)
                 | Message::LlmModelPicked(..)
@@ -2040,6 +2050,7 @@ impl WhisprApp {
             // ── Personalización II: paleta ─────────────────────────────────
             m @ (Message::PaletteFieldChanged(..)
                 | Message::PaletteFieldApply(..)
+                | Message::PaletteFieldSwatch(..)
                 | Message::PaletteFieldReset(..)
                 | Message::PaletteResetAll
                 | Message::PalettePresetApply(..)
@@ -2333,10 +2344,7 @@ impl WhisprApp {
     /// así los 5 campos del `Palette` de iced (fondo de ventana, texto principal,
     /// acento, ok, error) también respetan la personalización.
     pub fn theme(&self) -> Theme {
-        let palette = theme::resolve_palette(
-            &self.config,
-            self.config.resolved_dark(self.system_dark),
-        );
+        let palette = theme::resolve_palette(&self.config, self.config_is_dark());
         theme::custom_with_palette(&palette)
     }
 
@@ -2345,10 +2353,7 @@ impl WhisprApp {
     /// (los widgets con estilo siguen mirando `tokens(theme)`, que a su vez
     /// consulta el cambio guardado del hilo).
     pub(crate) fn resolved_palette(&self) -> theme::UiPalette {
-        theme::resolve_palette(
-            &self.config,
-            self.config.resolved_dark(self.system_dark),
-        )
+        theme::resolve_palette(&self.config, self.config_is_dark())
     }
 
     /// Dibuja la ventana principal: pantalla de carga hasta que el arranque
@@ -2359,9 +2364,11 @@ impl WhisprApp {
     pub fn view(&self) -> Element<'_, Message> {
         // R7-II: deja puesta la paleta resuelta en el almacén interno de `theme`
         // para que los estilos de los widgets (`primary`, `secondary`, …) usen los
-        // colores del usuario sin cambiar sus firmas. Al salir de aquí se limpia
-        // sola (Drop) → el siguiente frame empieza de cero.
-        let _palette_scope = theme::PaletteOverrideScope::new(self.resolved_palette());
+        // colores del usuario sin cambiar sus firmas. NO se suelta al salir de
+        // aquí: iced evalúa esos estilos al DIBUJAR (después de esta función) y,
+        // si se soltaba, el dibujo caía en los colores de serie y cambiar la
+        // paleta no se veía en ninguna pieza (solo en los textos calculados aquí).
+        theme::set_palette_override(Some(std::sync::Arc::new(self.resolved_palette())));
         let t = theme::tokens(&self.theme()).into_owned();
         // Tamaño de letra global resuelto (Ajustes → Apariencia): TODOS los textos
         // de la vista usan (fs.*) en vez de los números fijos FONT_*.
@@ -2783,6 +2790,24 @@ pub(crate) fn llm_status_ui(mode: AiMode, status: &LlmStatus, model: &str) -> Ll
             label: format!("○ {nombre}: comprobando…"),
         },
     }
+}
+
+/// ¿Hay que reiniciar el servidor de IA al cambiar de modelo? (0.7.2)
+///
+/// Tres condiciones y ninguna más: la corrección está encendida, el servidor en
+/// marcha lo lanzó esta app (uno ajeno que ya estaba en el puerto no se toca) y
+/// el fichero es otro. Lo último corta el caso de doble aviso: el desplegable y
+/// el campo de texto pueden mandar el mismo nombre seguido, y reiniciar dos
+/// veces por lo mismo no aporta nada.
+///
+/// Función pura a propósito: el test no necesita procesos ni puertos.
+pub(crate) fn hay_que_reiniciar_servidor_ia(
+    ia_encendida: bool,
+    servidor_propio: bool,
+    modelo_anterior: &str,
+    modelo_nuevo: &str,
+) -> bool {
+    ia_encendida && servidor_propio && modelo_anterior != modelo_nuevo
 }
 
 /// ¿La línea de feedback (`last_correction`) es un AVISO (ámbar) o una
@@ -3346,6 +3371,26 @@ mod tests {
         let ui = llm_status_ui(AiMode::Correccion, &LlmStatus::Unknown, "");
         assert_eq!(ui.kind, "dim");
         assert!(ui.label.contains("comprobando"));
+    }
+
+    /// (0.7.2) El fallo del 29/10: cambiar de modelo no reiniciaba el servidor y
+    /// la fila de estado enseñaba el modelo nuevo sobre el viejo. La decisión de
+    /// reiniciar vive aquí, con sus cuatro casos, sin procesos ni puertos.
+    #[test]
+    fn cambiar_de_modelo_reinicia_solo_con_servidor_propio_y_modelo_distinto() {
+        let viejo = "qwen2.5-0.5b-instruct-q4_k_m.gguf";
+        let nuevo = "Qwen3-4B-Instruct-2507-Q4_K_M.gguf";
+        // El caso del fallo: IA encendida, servidor propio, otro fichero → sí.
+        assert!(hay_que_reiniciar_servidor_ia(true, true, viejo, nuevo));
+        // Campo vacío en la config (modelo de serie sin escribir) → también.
+        assert!(hay_que_reiniciar_servidor_ia(true, true, "", nuevo));
+        // IA apagada: solo se guarda el ajuste, como siempre.
+        assert!(!hay_que_reiniciar_servidor_ia(false, true, viejo, nuevo));
+        // Servidor ajeno en el puerto (no lo lanzó la app): no se toca.
+        assert!(!hay_que_reiniciar_servidor_ia(true, false, viejo, nuevo));
+        // Doble aviso con el mismo nombre (desplegable + campo de texto): una
+        // sola vez, no dos reinicios seguidos.
+        assert!(!hay_que_reiniciar_servidor_ia(true, true, nuevo, nuevo));
     }
 
     /// Ciclo de vida 10/09/2026: una fase del modelo cancelada en caliente

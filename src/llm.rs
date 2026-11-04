@@ -30,6 +30,10 @@ pub struct LlmConfig {
     /// un modelo 9B en local, con margen para servicios remotos; punto 3.4 del
     /// documento). Sale de `Config::llm_timeout_secs`.
     pub timeout_secs: u64,
+    /// Instrucción propia del usuario (0.7.2). Si trae texto sustituye a la de
+    /// serie del modo activo; `None` = la de serie. Sale de
+    /// `Config::ai_custom_prompt`.
+    pub custom_prompt: Option<String>,
 }
 
 impl Default for LlmConfig {
@@ -40,6 +44,7 @@ impl Default for LlmConfig {
             model: "ornith-1.0-9b".to_string(),
             api_key: None,
             timeout_secs: 25,
+            custom_prompt: None,
         }
     }
 }
@@ -391,7 +396,8 @@ pub fn correct(target: &str, instruction: &str, cfg: &LlmConfig) -> Result<Diff,
 /// Bloquea: se llama desde un hilo (app.rs lo lanza con `std::thread::spawn` y
 /// un canal mpsc, igual que `correct`).
 pub fn redact(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
-    Ok(clean_redact_output(&ask_text(SYSTEM_PROMPT_IN_TURN, turn, cfg)?))
+    let prompt = prompt_for(AiMode::Correccion, cfg.custom_prompt.as_deref());
+    Ok(clean_redact_output(&ask_text(prompt, turn, cfg)?))
 }
 
 /// Prompt del modo REESCRITURA (0.7.1). Aquí el modelo no arregla una
@@ -422,7 +428,30 @@ Reglas:
 ///
 /// Bloquea: se llama desde un hilo, igual que `redact`.
 pub fn rewrite(turn: &str, cfg: &LlmConfig) -> Result<String, String> {
-    Ok(clean_redact_output(&ask_text(SYSTEM_PROMPT_REWRITE, turn, cfg)?))
+    let prompt = prompt_for(AiMode::Reescritura, cfg.custom_prompt.as_deref());
+    Ok(clean_redact_output(&ask_text(prompt, turn, cfg)?))
+}
+
+/// Instrucción de serie del modo pedido. Es lo que se manda al modelo cuando no
+/// hay prompt propio y lo que rellena el botón «Poner la de serie» de Ajustes.
+/// Con la IA desactivada no se llama al modelo; se devuelve la de corrección
+/// para que el botón tenga algo que enseñar.
+pub fn default_prompt(mode: AiMode) -> &'static str {
+    match mode {
+        AiMode::Reescritura => SYSTEM_PROMPT_REWRITE,
+        AiMode::Off | AiMode::Correccion => SYSTEM_PROMPT_IN_TURN,
+    }
+}
+
+/// La instrucción que se manda al modelo (0.7.2): la propia si trae texto (un
+/// texto vacío o de solo espacios no cuenta) y, si no, la de serie del modo.
+///
+/// Solo cambia el texto del `system`: los guards del texto dictado
+/// (anti-truncación, numérico y de meta-lengua) siguen aplicándose igual.
+pub fn prompt_for<'a>(mode: AiMode, custom: Option<&'a str>) -> &'a str {
+    custom
+        .filter(|texto| !texto.trim().is_empty())
+        .unwrap_or_else(|| default_prompt(mode))
 }
 
 /// Petición de texto a un modelo OpenAI-compatible: un `system` fijo y el turno
@@ -2760,6 +2789,7 @@ mod tests {
             model: "fake".to_string(),
             api_key: None,
             timeout_secs: 2,
+            custom_prompt: None,
         };
         let err = redact("que calor en murcia digo cartagena", &cfg)
             .expect_err("un endpoint cerrado debe fallar");
@@ -2927,6 +2957,30 @@ mod tests {
         // El prompt de corrección no se ha tocado.
         assert!(SYSTEM_PROMPT_IN_TURN.contains("auto-corrección"));
         assert_ne!(SYSTEM_PROMPT_REWRITE, SYSTEM_PROMPT_IN_TURN);
+    }
+
+    /// (0.7.2) El prompt propio se usa tal cual; vacío o solo espacios cae a la
+    /// instrucción de serie del modo activo.
+    #[test]
+    fn el_prompt_propio_sustituye_a_la_instruccion_de_serie() {
+        assert_eq!(
+            prompt_for(AiMode::Correccion, Some("mi instrucción")),
+            "mi instrucción"
+        );
+        assert_eq!(
+            prompt_for(AiMode::Reescritura, Some("mi instrucción")),
+            "mi instrucción"
+        );
+        // Sin prompt propio manda la de serie de cada modo.
+        assert_eq!(prompt_for(AiMode::Correccion, None), SYSTEM_PROMPT_IN_TURN);
+        assert_eq!(prompt_for(AiMode::Reescritura, None), SYSTEM_PROMPT_REWRITE);
+        // Un texto de solo espacios tampoco cuenta como prompt propio.
+        assert_eq!(
+            prompt_for(AiMode::Reescritura, Some("   \n  ")),
+            SYSTEM_PROMPT_REWRITE
+        );
+        assert_eq!(default_prompt(AiMode::Correccion), SYSTEM_PROMPT_IN_TURN);
+        assert_eq!(default_prompt(AiMode::Reescritura), SYSTEM_PROMPT_REWRITE);
     }
 
     /// (0.7.1) Los tres modelos pequeños se reconocen por id (Ajustes avisa en
@@ -3318,6 +3372,7 @@ mod tests {
             model: "fake".to_string(),
             api_key: None,
             timeout_secs: 2, // corta rápido para no penalizar el test
+            custom_prompt: None,
         };
         let err = correct("texto objetivo", "no, es 2", &cfg)
             .expect_err("un endpoint cerrado debe fallar");
@@ -3663,12 +3718,87 @@ mod tests {
             model: "fake".to_string(),
             api_key: None,
             timeout_secs: 5,
+            custom_prompt: None,
         };
         let err = correct("texto objetivo", "no, es 2", &cfg)
             .expect_err("un 500 del endpoint debe fallar");
         assert!(
             err.starts_with("HTTP:"),
             "el 500 debe llegar con prefijo HTTP (mismo contrato que el endpoint caído): {err:?}"
+        );
+        server.join().expect("el server de mentira termina");
+    }
+
+    /// (0.7.2) Lo que viaja al modelo es el prompt propio: se lee el cuerpo de
+    /// la petición en un servidor de mentira y tiene que llevar la instrucción
+    /// del usuario, no la de serie.
+    #[test]
+    fn el_prompt_propio_llega_en_el_cuerpo_de_la_peticion() {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind en puerto libre");
+        let port = listener.local_addr().expect("addr").port();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let server = std::thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                // Se lee hasta tener el cuerpo ENTERO (ureq manda las
+                // cabeceras y el JSON en trozos distintos).
+                let mut peticion: Vec<u8> = Vec::new();
+                let mut trozo = [0u8; 1024];
+                loop {
+                    match stream.read(&mut trozo) {
+                        Ok(0) | Err(_) => break,
+                        Ok(n) => peticion.extend_from_slice(&trozo[..n]),
+                    }
+                    let texto = String::from_utf8_lossy(&peticion).into_owned();
+                    let doble = format!("\r\n\r\n");
+                    if let Some(corte) = texto.find(&doble) {
+                        let largo = texto[..corte]
+                            .lines()
+                            .find_map(|l| l.strip_prefix("Content-Length: "))
+                            .and_then(|v| v.trim().parse::<usize>().ok())
+                            .unwrap_or(0);
+                        if peticion.len() >= corte + doble.len() + largo {
+                            break;
+                        }
+                    }
+                }
+                let _ = tx.send(String::from_utf8_lossy(&peticion).into_owned());
+                let cuerpo = r#"{"choices":[{"message":{"content":"texto"}}]}"#;
+                // La respuesta se escribe campo a campo, con CRLF de verdad.
+                let fin = "\r\n";
+                let mut respuesta = String::new();
+                respuesta.push_str("HTTP/1.1 200 OK");
+                respuesta.push_str(fin);
+                respuesta.push_str("Content-Type: application/json");
+                respuesta.push_str(fin);
+                respuesta.push_str(&format!("Content-Length: {}", cuerpo.len()));
+                respuesta.push_str(fin);
+                respuesta.push_str("Connection: close");
+                respuesta.push_str(fin);
+                respuesta.push_str(fin);
+                respuesta.push_str(cuerpo);
+                let _ = stream.write_all(respuesta.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+        let cfg = LlmConfig {
+            provider: CorrectionProvider::Default,
+            base_url: format!("http://127.0.0.1:{port}/v1"),
+            model: "fake".to_string(),
+            api_key: None,
+            timeout_secs: 5,
+            custom_prompt: Some("MI INSTRUCCIÓN PROPIA".to_string()),
+        };
+        let salida = redact("hola", &cfg).expect("el servidor de mentira contesta");
+        assert_eq!(salida, "texto");
+        let peticion = rx.recv().expect("el servidor recibe la petición");
+        assert!(
+            peticion.contains("MI INSTRUCCIÓN PROPIA"),
+            "el cuerpo debe llevar el prompt propio: {peticion}"
+        );
+        assert!(
+            !peticion.contains("auto-corrección"),
+            "no debe llevar la instrucción de serie: {peticion}"
         );
         server.join().expect("el server de mentira termina");
     }

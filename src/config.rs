@@ -381,6 +381,11 @@ pub struct Config {
     /// `None`, para no ensuciar el config.json con un `null`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ai_mode: Option<AiMode>,
+    /// Instrucción propia para la IA (0.7.2): si trae texto, sustituye a la de
+    /// serie del modo activo (Corrección o Reescritura). Vacío o solo espacios =
+    /// la de serie. No cambia los guards del texto dictado, solo el `system`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ai_custom_prompt: Option<String>,
     /// De dónde saca el corrector: local por defecto, la nube de OpenAI o un
     /// servidor propio. `None` mantiene el método local de siempre.
     pub correction_provider: Option<CorrectionProvider>,
@@ -737,6 +742,24 @@ impl Config {
         self.ai_correction_enabled = Some(mode != AiMode::Off);
     }
 
+    /// Instrucción propia para la IA, si la hay (0.7.2). Un texto vacío o de
+    /// solo espacios cuenta como «sin prompt propio»: se usa la de serie del
+    /// modo activo.
+    pub fn ai_custom_prompt(&self) -> Option<&str> {
+        self.ai_custom_prompt
+            .as_deref()
+            .map(str::trim)
+            .filter(|texto| !texto.is_empty())
+    }
+
+    /// Guarda la instrucción propia. Vacía (o solo espacios) = `None`, para no
+    /// dejar un `""` en el config.json y volver a la de serie.
+    pub fn set_ai_custom_prompt(&mut self, text: &str) {
+        self.ai_custom_prompt = Some(text.trim())
+            .filter(|texto| !texto.is_empty())
+            .map(str::to_string);
+    }
+
     /// Atajo global: el `shortcut` del config.json o Ctrl+Shift+D si falta o
     /// está en blanco. La lectura fina (y volver al de por defecto si el texto no
     /// vale) está en `hotkey.rs`.
@@ -812,6 +835,7 @@ impl Config {
                 None
             },
             timeout_secs: self.llm_timeout_secs().unwrap_or(25),
+            custom_prompt: self.ai_custom_prompt().map(str::to_string),
         }
     }
 
@@ -1280,6 +1304,49 @@ mod tests {
         // Sin tocar el modo no se ensucia el JSON con un null.
         let raw = serde_json::to_string(&Config::default()).expect("serializa");
         assert!(!raw.contains("ai_mode"), "no debe aparecer ai_mode: {raw}");
+    }
+
+    /// (0.7.2) Instrucción propia: se guarda y viaja al `LlmConfig`; vacía o de
+    /// solo espacios = `None` (= la de serie) y no ensucia el JSON.
+    #[test]
+    fn ai_custom_prompt_se_guarda_y_llega_al_llm() {
+        let mut cfg = Config::default();
+        assert_eq!(cfg.ai_custom_prompt(), None);
+        assert_eq!(cfg.llm_settings().custom_prompt, None);
+
+        cfg.set_ai_custom_prompt("  Sé breve y no toques las cifras.  ");
+        assert_eq!(
+            cfg.ai_custom_prompt(),
+            Some("Sé breve y no toques las cifras.")
+        );
+        assert_eq!(
+            cfg.llm_settings().custom_prompt.as_deref(),
+            Some("Sé breve y no toques las cifras.")
+        );
+        let raw = serde_json::to_string(&cfg).expect("serializa");
+        let vuelta: Config = serde_json::from_str(&raw).expect("deserializa");
+        assert_eq!(
+            vuelta.ai_custom_prompt(),
+            Some("Sé breve y no toques las cifras.")
+        );
+
+        // Vacío o solo espacios vuelve a «sin prompt propio», sin `""` en el JSON.
+        cfg.set_ai_custom_prompt("   \n ");
+        assert_eq!(cfg.ai_custom_prompt(), None);
+        let raw = serde_json::to_string(&cfg).expect("serializa");
+        assert!(!raw.contains("ai_custom_prompt"), "sin prompt: {raw}");
+    }
+
+    /// (0.7.2) Una config de antes (sin `ai_custom_prompt`) se lee igual y usa la
+    /// instrucción de serie.
+    #[test]
+    fn config_sin_ai_custom_prompt_se_lee_igual() {
+        let vieja: Config = serde_json::from_str(
+            r#"{"dictionary":[],"ai_correction_enabled":true,"ai_mode":"correccion"}"#,
+        )
+        .expect("config de la 0.7.1");
+        assert_eq!(vieja.ai_custom_prompt(), None);
+        assert_eq!(vieja.llm_settings().custom_prompt, None);
     }
 
     #[test]

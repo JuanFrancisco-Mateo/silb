@@ -269,9 +269,9 @@ impl PaletteConfig {
         self.border = None;
     }
 
-    /// Devuelve un campo concreto a su color de serie (`None`). La interfaz lo
-    /// usa en el botón «Restaurar» de cada campo.
-    pub fn clear_field(&mut self, field: PaletteField) {
+    /// Escribe (o borra, con `None`) UN campo. Lo usan la interfaz y los
+    /// presets: así el mapa campo → hueco vive en un solo sitio.
+    pub fn set_field(&mut self, field: PaletteField, value: Option<String>) {
         let slot: &mut Option<String> = match field {
             PaletteField::Bg => &mut self.bg,
             PaletteField::Surface => &mut self.surface,
@@ -286,7 +286,13 @@ impl PaletteConfig {
             PaletteField::Err => &mut self.err,
             PaletteField::Border => &mut self.border,
         };
-        *slot = None;
+        *slot = value;
+    }
+
+    /// Devuelve un campo concreto a su color de serie (`None`). La interfaz lo
+    /// usa en el botón «Restaurar» de cada campo.
+    pub fn clear_field(&mut self, field: PaletteField) {
+        self.set_field(field, None);
     }
 }
 
@@ -341,6 +347,43 @@ impl PaletteField {
             PaletteField::Warn => "Aviso",
             PaletteField::Err => "Error",
             PaletteField::Border => "Bordes",
+        }
+    }
+
+    /// Muestras clicables para elegir el color con el ratón (selector de la
+    /// interfaz). Son sugerencias: la lista depende del papel del campo (grises
+    /// para fondos y bordes, tonos de marca para el acento, su familia para
+    /// ok/aviso/error). El hex sigue estando para lo que no esté en la lista.
+    pub fn swatches(self) -> &'static [&'static str] {
+        match self {
+            // Neutros: del casi negro al blanco, pasando por los valores del
+            // diseño (fondo, tarjeta, campo y borde de serie).
+            PaletteField::Bg
+            | PaletteField::Surface
+            | PaletteField::SurfaceAlt
+            | PaletteField::Border => &[
+                "#101014", "#17181C", "#1D1E24", "#24252C", "#2E3038", "#303139", "#3A3C45",
+                "#6B6B76", "#A9A8B5", "#D9D9E0", "#EBEBEF", "#F6F5F2", "#FFFFFF",
+            ],
+            // Textos: claros y oscuros con el secundario y el tenue de serie.
+            PaletteField::Text | PaletteField::Dim => &[
+                "#FFFFFF", "#F1F0F5", "#D9D9E0", "#A9A8B5", "#7F808D", "#6B6B76", "#3A3A44",
+                "#17181C", "#000000",
+            ],
+            // Acento: violeta de marca primero y después colores vivos.
+            PaletteField::Accent | PaletteField::AccentHover | PaletteField::AccentText => &[
+                "#7C6CFF", "#8F82FF", "#9A8CFF", "#6652F2", "#00AAFF", "#22C1A6", "#3FB95F",
+                "#F5A623", "#FF6A3D", "#FF4D8D", "#EB5757", "#B39DFF",
+            ],
+            PaletteField::Ok => &[
+                "#0E6B34", "#1F7A3E", "#2E9E53", "#3FB95F", "#38C172", "#6EE7A0",
+            ],
+            PaletteField::Warn => &[
+                "#8F6300", "#B26B00", "#D98E0B", "#F5A623", "#FFC145", "#FFD98A",
+            ],
+            PaletteField::Err => &[
+                "#8E2626", "#C93E3E", "#EB5757", "#F25F5C", "#FF6B6B", "#FF9B9B",
+            ],
         }
     }
 
@@ -627,28 +670,34 @@ pub fn palette_to_config(p: UiPalette) -> PaletteConfig {
 //
 // Los controles piden la `UiPalette` dentro de sus funciones de estilo (que
 // solo reciben `&Theme` por la API de iced). Para que lean la paleta del
-// usuario sin tocar las 50 llamadas, se guarda la paleta activa en el hilo
-// mientras se dibuja. Fuera del dibujo, `tokens(theme)` devuelve los colores
-// de serie oscuro/claro (los tests de contraste cuentan con eso).
+// usuario sin tocar las 50 llamadas, se guarda la paleta activa en el hilo.
+//
+// OJO: iced evalúa los estilos al DIBUJAR, no al construir la vista, así que
+// la paleta NO se puede soltar al salir de `view()` (si se suelta, el dibujo
+// cae en los colores de serie y el usuario ve que «cambiar colores no hace
+// nada»). Se deja puesta hasta la siguiente vuelta de `view()`; fuera de la
+// interfaz (tests) mandan los colores de serie oscuro/claro.
 
 thread_local! {
     static OVERRIDE: RefCell<Option<Arc<UiPalette>>> = const { RefCell::new(None) };
 }
 
-/// Deja la paleta que verán los estilos hasta el próximo
-/// `clear_palette_override`. Se pone alrededor de `WhisprApp::view()` y
-/// `bubble_view()` (el mismo hilo de la interfaz). `None` = sin cambio.
+/// Deja la paleta que verán los estilos hasta el próximo cambio. Se pone en
+/// `WhisprApp::view()` (el mismo hilo de la interfaz) y NO se quita al volver
+/// de ahí: el dibujo de ese frame llega después. `None` = sin cambio.
 pub fn set_palette_override(p: Option<Arc<UiPalette>>) {
     OVERRIDE.with(|c| *c.borrow_mut() = p);
 }
 
-/// Quita el cambio. Lo llama el destructor de `PaletteOverrideScope`.
+/// Quita el cambio (tests y el caso «paleta de serie»).
 pub fn clear_palette_override() {
     OVERRIDE.with(|c| *c.borrow_mut() = None);
 }
 
-/// Ayudante que se pone al crearse y se quita al soltarse. Así un `?` o un
-/// pánico al dibujar no deja una paleta fantasma para la siguiente vuelta.
+/// Ayudante que se pone al crearse y se quita al soltarse. Lo usan los tests
+/// para acotar los cambios; la vista principal NO lo usa (ver
+/// [`set_palette_override`]: soltarlo al salir de `view()` es justo el fallo
+/// que dejaba los controles con los colores de serie).
 pub struct PaletteOverrideScope {
     previous: Option<Arc<UiPalette>>,
 }
@@ -980,13 +1029,13 @@ pub fn is_dark(theme: &Theme) -> bool {
 }
 
 /// Paleta del tema activo. Si hay cambios puestos (con
-/// `set_palette_override` / `PaletteOverrideScope`, normalmente al dibujar),
-/// devuelve una referencia al `Arc` resuelto. Si no, devuelve `DARK` o
-/// `LIGHT` (igual que antes de R7-II).
+/// [`set_palette_override`], que `WhisprApp::view()` deja puesta), devuelve una
+/// copia de la paleta resuelta. Si no, `DARK` o `LIGHT` (igual que antes de
+/// R7-II).
 ///
-/// Las funciones de estilo de iced se ejecutan en el hilo de la interfaz al
-/// dibujar, y ahí los cambios siempre están puestos, así que en la práctica
-/// SIEMPRE se devuelve la paleta resuelta.
+/// Las funciones de estilo de iced se ejecutan al DIBUJAR, después de que
+/// `view()` devuelva: por eso la paleta se queda puesta y no se suelta al
+/// terminar la vista (ver el comentario de `OVERRIDE`).
 pub fn tokens(theme: &Theme) -> std::borrow::Cow<'static, UiPalette> {
     if let Some(arc) = override_active() {
         return std::borrow::Cow::Owned((*arc).clone());
@@ -2171,5 +2220,77 @@ mod tests {
             !legible(p.text, p.bg),
             "override patológico debe disparar el aviso"
         );
+    }
+
+    /// El fallo que reportó el usuario: la vista dejaba la paleta en un
+    /// `PaletteOverrideScope` que se soltaba al volver de `view()`, y los
+    /// estilos de los controles (que iced evalúa AL DIBUJAR, después) caían en
+    /// los colores de serie. Aquí se imita lo que hace `view()` (poner la
+    /// paleta y volver) y se comprueba que una función de estilo ya pinta el
+    /// color del usuario.
+    #[test]
+    fn la_paleta_del_usuario_sigue_puesta_cuando_dibujan_los_estilos() {
+        reset_palette_override();
+        let cfg = Config {
+            palette: Some(PaletteConfig {
+                accent: Some("#00AAFF".into()),
+                surface: Some("#101418".into()),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        // Lo que hace `WhisprApp::view()`.
+        set_palette_override(Some(std::sync::Arc::new(resolve_palette(&cfg, true))));
+        // El dibujo del frame llega DESPUÉS: tiene que seguir viéndose.
+        let th = custom(true);
+        let azul = parse_hex("#00AAFF").unwrap();
+        let tarjeta = parse_hex("#101418").unwrap();
+        assert_eq!(tokens(&th).accent, azul);
+        assert_eq!(primary(&th, button::Status::Active).background, Some(Background::Color(azul)));
+        assert_eq!(card(&th).background, Some(Background::Color(tarjeta)));
+        // Y sigue ahí en el frame siguiente hasta que se cambie (no se suelta).
+        assert_eq!(tokens(&custom(false)).accent, azul, "la paleta no se cae sola");
+        clear_palette_override();
+        assert_eq!(*tokens(&th), DARK, "al quitarla vuelven los colores de serie");
+    }
+
+    /// Las muestras del selector: cada hex vale y se guarda en SU campo (el
+    /// mismo mapa campo → hueco que usan el hex y los presets).
+    #[test]
+    fn las_muestras_valen_y_se_guardan_en_su_campo() {
+        reset_palette_override();
+        fn color_de(p: &UiPalette, field: PaletteField) -> Color {
+            match field {
+                PaletteField::Bg => p.bg,
+                PaletteField::Surface => p.surface,
+                PaletteField::SurfaceAlt => p.surface_alt,
+                PaletteField::Text => p.text,
+                PaletteField::Dim => p.dim,
+                PaletteField::Accent => p.accent,
+                PaletteField::AccentHover => p.accent_hover,
+                PaletteField::AccentText => p.accent_text,
+                PaletteField::Ok => p.ok,
+                PaletteField::Warn => p.warn,
+                PaletteField::Err => p.err,
+                PaletteField::Border => p.border,
+            }
+        }
+        for field in PaletteField::ALL {
+            let muestras = field.swatches();
+            assert!(muestras.len() >= 6, "{field:?} con {muestras:?}");
+            for hex in muestras {
+                let esperado = parse_hex(hex).unwrap_or_else(|| panic!("{hex} no es hex"));
+                let mut cfg = PaletteConfig::default();
+                cfg.set_field(*field, Some((*hex).to_string()));
+                let p = resolve_palette(
+                    &Config {
+                        palette: Some(cfg),
+                        ..Default::default()
+                    },
+                    true,
+                );
+                assert_eq!(color_de(&p, *field), esperado, "{field:?} con {hex}");
+            }
+        }
     }
 }

@@ -1,6 +1,6 @@
 [package]
 name = "whispr-open"
-version = "0.7.1"
+version = "0.8.0"
 description = "Local open-source dictation workspace (native desktop)"
 authors = ["Whispr Open contributors"]
 edition = "2021"

@@ -4,6 +4,84 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.8.0] — 2026-11-04
+
+Primera versión **publicada** con el instalador que se adapta al equipo. Agrupa
+lo que quedó sin publicar de la 0.7.1 y la 0.7.2 (modo Reescritura, instrucción
+propia para la IA, paleta arreglada) y cambia cómo se reparte: **dos descargas
+para el usuario, una sola app**. Sin cambios en el formato del `config.json`.
+
+### Añadido
+
+- **Instalador único que detecta la GPU** (`packaging/whispr-open.iss`). Se
+  publican dos ficheros y los dos instalan lo mismo:
+  - `silb-0.8.0-setup.exe` (**14,71 MiB**): el normal. Si el equipo tiene GPU
+    NVIDIA se baja el pack de CUDA del release (**442,71 MiB**, verificado con
+    SHA-256) y lo aplica; si no hay GPU, no hay red, el hash no cuadra o el
+    usuario dice que no, instala en CPU, escribe `backend.txt` con
+    `backend=cpu` y avisa «Sin aceleración por GPU: se puede añadir después.».
+    Nunca aborta la instalación.
+  - `silb-0.8.0-offline-setup.exe` (**444,54 MiB**): las dos versiones dentro
+    (CPU y CUDA con su runtime). Para equipos sin red; decide al instalar.
+  - `silb-cuda-pack-0.8.0.exe` (**442,71 MiB**) + `.sha256`: **no se elige**,
+    es el asset que baja el instalador normal.
+- **Detección de GPU real** (`UseCuda`): `nvidia-smi` (con `{sysnative}`) y, si
+  no está, WMI `Win32_VideoController`. No exige VRAM ni el runtime CUDA
+  instalado; `/FORCECPU` y `/FORCECUDA` fuerzan los dos caminos para probar.
+- **El runtime de CUDA 12 viaja con el binario CUDA**: `build-cuda-runtime.sh`
+  copia las tres DLL que de verdad enlazan (`cudart64_12`, `cublas64_12` y
+  `cublasLt64_12`, que la segunda importa estáticamente). Sin ellas el binario
+  CUDA no arrancaba en un equipo sin kit CUDA.
+- **Selector de color con muestras**: una fila de muestras clicables en cada
+  campo de la paleta (fondo, acento, textos…) aplica y guarda el color al
+  instante. El campo hexadecimal se queda como opción avanzada.
+
+### Corregido
+
+- **La paleta de colores no se aplicaba.** Iced evalúa los estilos de los
+  widgets **al dibujar**, después de que `view()` devuelva; el override de la
+  paleta se soltaba al salir de la vista, así que al pintar se volvían los
+  colores de serie y cambiar un hex no se notaba en nada (tarjetas, botones,
+  campos) salvo en los textos que la vista calcula por su cuenta. Ahora
+  `WhisprApp::view()` deja la paleta puesta y el `Theme` de la ventana principal
+  sale de la paleta resuelta.
+- **El desinstalador deja limpio `{app}`** cuando se instaló el pack: las tres
+  DLL del runtime se borran con `[UninstallDelete]` (antes quedaban 772 MB en
+  disco tras desinstalar).
+
+### Cambiado
+
+- Fuera el segundo instalador que el usuario tenía que elegir (el «de CUDA») y
+  el define que lo generaba: el usuario ya no tiene que saber si su equipo «es
+  CPU o CUDA».
+
+## [0.7.2] — 2026-10-29
+
+La instrucción que se le manda a la IA deja de estar cerrada en el código: en
+Ajustes → Corrección IA se puede escribir la que quieras. Sin cambios en el
+formato de la config (un `config.json` antiguo se lee igual).
+
+### Añadido
+
+- **Instrucción propia para la IA** (Ajustes → Corrección IA): un editor de
+  varias líneas, debajo del bloque del modelo. Lo que escribas sustituye a la
+  instrucción de serie del modo elegido (`Corrección` o `Reescritura`); si el
+  campo está vacío, se usa la de serie. Es un solo campo para los dos modos:
+  cambiarlo cambia el del modo que tengas puesto.
+- **«Poner la de serie»**: rellena el editor con la instrucción de serie del
+  modo activo, para editarla desde ahí en vez de copiarla a mano. **«Vaciar»**
+  lo deja vacío, que es volver a la de serie.
+- El texto se guarda en el `config.json` como `ai_custom_prompt`; vacío no se
+  escribe, así que el fichero queda igual que antes.
+
+### Límite (importante)
+
+- **La instrucción propia no desactiva las comprobaciones del dictado.** El
+  guard numérico (aplicar «83 digo 84» antes de llamar al modelo), el de
+  meta-lengua y el anti-truncación (si la respuesta se queda por debajo del
+  50 % de las palabras en Reescritura, se descarta) siguen igual: son la red de
+  seguridad del texto que dictas. Solo cambia el texto que se manda al modelo.
+
 ## [0.7.1] — 2026-10-29
 
 Versión del **modo Reescritura**: la IA deja de limitarse a arreglar los «digo X»

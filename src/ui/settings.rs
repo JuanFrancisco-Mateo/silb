@@ -23,7 +23,7 @@
 use iced::border::Radius;
 use iced::widget::{
     button, column, container, horizontal_rule, pick_list, row, scrollable, slider, text,
-    text_input, toggler, Column, Row, Space,
+    text_editor, text_input, toggler, Column, Row, Space,
 };
 use iced::{Alignment, Background, Border, Color, Element, Length, Padding};
 
@@ -44,6 +44,10 @@ use crate::ui::icons;
 /// Ajustes). Sale de [`theme::GRID_CONTROL_WIDTH`]: en esta vista no se
 /// escribe ni una medida a mano.
 const CONTROL_WIDTH: f32 = theme::GRID_CONTROL_WIDTH;
+
+/// Alto del editor de la instrucción propia de la IA (0.7.2): unas cinco
+/// líneas, para ver un prompt de verdad sin comerse la pestaña.
+const PROMPT_EDITOR_HEIGHT: f32 = 110.0;
 
 /// Rótulo de sección del diseño (12 px, secundario) más su tarjeta, separados
 /// por los 10 px del diseño (nodo `3:654`).
@@ -1032,8 +1036,9 @@ impl WhisprApp {
     ) -> Element<'_, Message> {
         let mut rows: Vec<Element<'_, Message>> = vec![
             note_row(
-                "Cambia cada color por separado o usa un preset. Hex «#RRGGBB» o \
-                 «#RGB»; los valores no válidos se ignoran.",
+                "Pulsa una muestra para cambiarlo al instante, o escribe un hex \
+                 «#RRGGBB» o «#RGB» y pulsa «Aplicar» (los valores no válidos se \
+                 ignoran).",
                 c.faint,
                 ty,
             ),
@@ -1195,6 +1200,41 @@ impl WhisprApp {
         );
 
         let mut rows = vec![row];
+        // Selector con el ratón: muestras del papel del campo (grises para
+        // fondos y bordes, tonos vivos para el acento…). Un clic lo aplica y
+        // lo guarda al instante; el hex de arriba queda para el resto.
+        let mut chips = Row::new()
+            .spacing(6)
+            .align_y(Alignment::Center)
+            .push(text("Muestras:").size(ty.body).color(c.secondary));
+        for hex in field.swatches() {
+            let chip = theme::parse_hex(hex).unwrap_or(t.border);
+            chips = chips.push(
+                button(text("").size(1.0))
+                    .width(Length::Fixed(20.0))
+                    .height(Length::Fixed(20.0))
+                    .padding(0)
+                    .on_press(Message::PaletteFieldSwatch(field, (*hex).to_string()))
+                    .style(move |th: &iced::Theme, status| {
+                        let hovered = matches!(
+                            status,
+                            iced::widget::button::Status::Hovered
+                                | iced::widget::button::Status::Pressed
+                        );
+                        iced::widget::button::Style {
+                            background: Some(Background::Color(chip)),
+                            text_color: Color::TRANSPARENT,
+                            border: Border {
+                                color: theme::tokens(th).text,
+                                width: if hovered { 2.0 } else { 1.0 },
+                                radius: Radius::from(4.0),
+                            },
+                            ..Default::default()
+                        }
+                    }),
+            );
+        }
+        rows.push(wide_row(chips.into()));
         if let Some(warn) = contrast_warn {
             rows.push(note_row(&warn, t.warn, ty));
         }
@@ -1603,6 +1643,43 @@ impl WhisprApp {
             ));
             main_rows.extend(self.api_key_rows(c, ty));
         }
+        // (0.7.2) Instrucción propia de la IA: va en `wide_row` porque el editor
+        // es de varias líneas y en la columna fija de la rejilla no cabría.
+        main_rows.push(wide_row(
+            column![
+                text("Instrucción para la IA (opcional)")
+                    .size(ty.nav)
+                    .font(fonts::medium())
+                    .color(c.text),
+                text_editor(&self.ai_prompt_editor)
+                    .placeholder("Vacío = la instrucción de serie del modo elegido.")
+                    .on_action(Message::AiCustomPromptEdited)
+                    .size(ty.control)
+                    .padding(theme::FIELD_PADDING)
+                    .height(Length::Fixed(PROMPT_EDITOR_HEIGHT))
+                    .style(theme::text_editor),
+                row![
+                    button(text("Poner la de serie").size(ty.control))
+                        .on_press(Message::AiPromptUseDefault)
+                        .padding(theme::ACTION_BUTTON_PADDING)
+                        .style(theme::secondary),
+                    button(text("Vaciar").size(ty.control))
+                        .on_press(Message::AiPromptClear)
+                        .padding(theme::ACTION_BUTTON_PADDING)
+                        .style(theme::secondary),
+                ]
+                .spacing(theme::SPACE_2)
+                .align_y(Alignment::Center),
+            ]
+            .spacing(theme::SPACE_2)
+            .into(),
+        ));
+        main_rows.push(note_row(
+            "Se usa en lugar de la instrucción de serie del modo elegido. \
+             Vacío = la de serie.",
+            c.faint,
+            ty,
+        ));
         col = col.push(section_block(
             "Corrección IA",
             design_card(main_rows),
