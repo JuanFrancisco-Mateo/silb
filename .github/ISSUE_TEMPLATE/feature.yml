@@ -1,5 +1,5 @@
 name: "💡 Pedir una función"
-description: "Una idea para mejorar Whispr Open"
+description: "Una idea para mejorar Silb"
 title: "[feat] "
 labels: ["enhancement"]
 body:
@@ -7,7 +7,7 @@ body:
     attributes:
       value: |
         Cuéntanos primero **el problema** que quieres resolver; la solución la
-        discutimos después. Whispr Open es 100% local y sin webview: tenlo en
+        discutimos después. Silb es 100% local y sin webview: tenlo en
         cuenta al proponer.
   - type: textarea
     id: problema

@@ -17,7 +17,7 @@ import sys
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-ICO = ROOT / "assets" / "whispr-open.ico"
+ICO = ROOT / "assets" / "silb.ico"
 OUT = ROOT / "docs" / "img"
 FONT_BOLD = ROOT / "assets" / "fonts" / "Inter-SemiBold.ttf"
 FONT_REG = ROOT / "assets" / "fonts" / "Inter-Regular.ttf"

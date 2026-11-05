@@ -1,9 +1,9 @@
-; whispr-open.iss — instalador de Silb.
+; silb.iss — instalador de Silb.
 ;
 ; TRES MODOS, un solo script (ISPP elige el modo por la presencia de un define):
 ;
 ;   1. ONLINE (sin defines, el que se publica, ~16 MB):
-;      ISCC.exe packaging\whispr-open.iss
+;      ISCC.exe packaging\silb.iss
 ;        -> packaging\Output\silb-<v>-setup.exe
 ;      Lleva SOLO el build CPU. Si al instalar se detecta una GPU NVIDIA, ofrece
 ;      descargar el pack CUDA (silb-cuda-pack-<v>.exe) del release, lo verifica
@@ -11,13 +11,13 @@
 ;      o el usuario dice que no -> instala en CPU y sigue: nunca aborta.
 ;
 ;   2. OFFLINE (las dos versiones dentro, ~466 MB):
-;      ISCC.exe /DMyOffline /DWHISPR_VERSION=0.8.1 packaging\whispr-open.iss
+;      ISCC.exe /DMyOffline /DWHISPR_VERSION=0.8.1 packaging\silb.iss
 ;        -> packaging\Output\silb-<v>-offline-setup.exe
 ;
 ;   3. PACK CUDA (/DMyPack, ~465 MB): solo [Files], se ejecuta por encima de una
 ;      instalación ya hecha y reemplaza binario + DLLs del runtime. No crea
 ;      desinstalador, ni iconos, ni accesos directos.
-;      ISCC.exe /DMyPack /DWHISPR_VERSION=0.8.1 packaging\whispr-open.iss
+;      ISCC.exe /DMyPack /DWHISPR_VERSION=0.8.1 packaging\silb.iss
 ;        -> packaging\Output\silb-cuda-pack-<v>.exe
 ;
 ; Insumos (en packaging\build\, ninguno va a git):
@@ -157,7 +157,7 @@ DisableDirPage=yes
 DisableProgramGroupPage=yes
 #else
 ; Icono del instalador (mismo .ico que el binario).
-SetupIconFile=..\assets\whispr-open.ico
+SetupIconFile=..\assets\silb.ico
 ; Pantalla de bienvenida con la licencia MIT.
 InfoBeforeFile=..\LICENSE
 ; Desinstalador visible en "Agregar o quitar programas" (ARP).
@@ -217,7 +217,7 @@ Source: "{#MyReleaseDir}\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversio
 #endif
 ; Icono que verá el acceso directo (mismo .ico que el binario, redundante
 ; pero Inno lo necesita para el .lnk; el .exe ya lleva el suyo).
-Source: "..\assets\whispr-open.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\silb.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; Server LLM EMBARCADO: viaja con la app para que el usuario no teclee
 ; ninguna ruta (la app lo busca en {app}\vendor\llama\llama-server.exe). Lo
 ; copia packaging\vendor-llama.sh desde el build local de llama.cpp; NO va a
@@ -228,11 +228,11 @@ Source: "..\vendor\llama\*"; DestDir: "{app}\vendor\llama"; Excludes: "cuda"; Fl
 #ifndef MyPack
 [Icons]
 ; Menú Inicio (siempre).
-Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\whispr-open.ico"; Comment: "Dictado local por voz"
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\silb.ico"; Comment: "Dictado local por voz"
 ; Escritorio (opcional, según selección del usuario).
-Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\whispr-open.ico"; Comment: "Dictado local por voz"; Tasks: desktopicon
+Name: "{userdesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\silb.ico"; Comment: "Dictado local por voz"; Tasks: desktopicon
 ; Acceso directo al desinstalador (carpeta del menú Inicio).
-Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\whispr-open.ico"
+Name: "{group}\Desinstalar {#MyAppName}"; Filename: "{uninstallexe}"; IconFilename: "{app}\silb.ico"
 
 [Run]
 ; Lanzar al terminar la instalación (opcional, marcado por defecto).

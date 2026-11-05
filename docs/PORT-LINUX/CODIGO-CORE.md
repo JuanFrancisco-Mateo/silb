@@ -1,4 +1,4 @@
-# CODIGO-CORE.md - Port whispr-open a Linux (Parte 2: código platform-specific)
+# CODIGO-CORE.md - Port de Silb a Linux (Parte 2: código platform-specific)
 
 Rama: `feature/port-linux-codigo-core` - Autor: dev-02 - Fecha: 03/10/2026
 
@@ -106,11 +106,11 @@ pacman -S wl-clipboard wtype
 
 ### hyprland.conf recomendado (windowrulev2 por título) - recomendación, no código
 ```
-windowrulev2 = float, title:^(WhisprOpen-Bubble)$
-windowrulev2 = pin, title:^(WhisprOpen-Bubble)$
-windowrulev2 = noborder, title:^(WhisprOpen-Bubble)$
+windowrulev2 = float, title:^(Silb-Bubble)$
+windowrulev2 = pin, title:^(Silb-Bubble)$
+windowrulev2 = noborder, title:^(Silb-Bubble)$
 ```
-El título de la burbuja es fijo y único (`WhisprOpen-Bubble`, constante
+El título de la burbuja es fijo y único (`Silb-Bubble`, constante
 `BUBBLE_TITLE`): sin la regla, Hyprland la coloca en mosaico y se pierde. Esta
 tarea no pone la windowrule hablando con el compositor (fuera de alcance); queda
 como ajuste del hyprland.conf del usuario.
@@ -144,8 +144,8 @@ como ajuste del hyprland.conf del usuario.
 
 ```bash
 # 1. Guard de instancia única: lanzar dos veces el binario.
-./whispr-open &
-./whispr-open   # debe salir con: "ya hay otra instancia" (notify-send o log)
+./silb &
+./silb   # debe salir con: "ya hay otra instancia" (notify-send o log)
 cat $XDG_RUNTIME_DIR/whispr-open/instance.lock   # pid de la primera
 
 # 2. Backend por config.json (config_path usa XDG, no ~/.config directo;

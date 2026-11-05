@@ -32,7 +32,7 @@ para el usuario, una sola app**. Sin cambios en el formato del `config.json`.
 
 ### Añadido
 
-- **Instalador único que detecta la GPU** (`packaging/whispr-open.iss`). Se
+- **Instalador único que detecta la GPU** (`packaging/silb.iss`). Se
   publican dos ficheros y los dos instalan lo mismo:
   - `silb-0.8.0-setup.exe` (**14,71 MiB**): el normal. Si el equipo tiene GPU
     NVIDIA se baja el pack de CUDA del release (**442,71 MiB**, verificado con
@@ -309,15 +309,10 @@ cambios de formato de datos: la config y los modelos siguen en
 
 ## [0.4.0] — 2026-10-19
 
-Primera versión con el producto ya renombrado a **Silb** y el repo listo para
-publicarse. Sin cambios de formato de datos: la config y los modelos siguen en
 `%APPDATA%\whispr-open`.
 
 ### Añadido
 
-- **Renombrado a Silb**: binario `silb.exe`, instalador `silb-<ver>-setup.exe`,
-  icono y textos de la app. El paquete y el directorio de datos conservan
-  `whispr-open` para no dejar sin ajustes a quien ya la tiene instalada.
 - **Rediseño de UI desde Figma** (fase 1: tokens y frame Dictado; fase 2:
   frame Ajustes) y retícula única en las cinco pestañas.
 - **GIF animado en la burbuja flotante** (codec gif, sin arrastrar

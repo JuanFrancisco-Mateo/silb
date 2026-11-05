@@ -33,8 +33,8 @@ traducciones, documentación, avisos de fallos o ideas.
   whisper.cpp, que está en C, en la primera compilación, y esa tarda 5–10 min).
 
 ```powershell
-git clone https://github.com/<tu-usuario>/whispr-open.git
-cd whispr-open
+git clone https://github.com/<tu-usuario>/silb.git
+cd silb
 git checkout -b feature/mi-cambio origin/native-iced
 cargo test          # antes de tocar nada: debe estar todo verde
 cargo run --release

@@ -37,9 +37,9 @@ body:
     id: entorno
     attributes:
       label: Entorno
-      description: Versión de Whispr Open, versión de Windows, modelo de Whisper y proveedor de corrección IA (Local/Custom/Cloud/Ninguno).
+      description: Versión de Silb, versión de Windows, modelo de Whisper y proveedor de corrección IA (Local/Custom/Cloud/Ninguno).
       placeholder: |
-        - Whispr Open: 0.3.0
+        - Silb: 0.8.1
         - Windows: 11 23H2
         - Modelo Whisper: base
         - Corrección IA: Local (llama.cpp)

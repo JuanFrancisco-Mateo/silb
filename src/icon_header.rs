@@ -45,7 +45,7 @@ mod tests {
             status.success(),
             "el generador terminó con código {status}"
         );
-        let ico = out_dir.join("whispr-open.ico");
+        let ico = out_dir.join("silb.ico");
         assert!(ico.exists(), "no se generó {}", ico.display());
         ico
     }

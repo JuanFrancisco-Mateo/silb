@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Construye Whispr Open en Linux (rama port-linux, Omarchy: Arch + Hyprland/Wayland).
+# Construye Silb en Linux (rama port-linux, Omarchy: Arch + Hyprland/Wayland).
 #
 # Sin CUDA por defecto: este build es CPU (whisper.cpp sin cublas). Para GPU
 # NVIDIA (el equivalente a la config Windows de producción) hace falta el
@@ -10,7 +10,7 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CUDA=${1:-}
-echo "── build-linux.sh: build release de whispr-open (CPU por defecto) ──"
+echo "── build-linux.sh: build release de Silb (CPU por defecto) ──"
 
 # Comprobación barata de toolchain (mismo espíritu que la de Windows en AGENTS.md)
 for tool in cargo rustc cmake cc; do

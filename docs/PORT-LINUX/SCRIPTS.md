@@ -26,9 +26,6 @@
   exportado y `exec`.
 - Se para con un mensaje claro si no hay binario ("Ejecuta antes
   build-linux.sh").
-- OJO: el binario se llama **`silb`** desde el cambio de nombre (`Cargo.toml` →
-  `[[bin]] name = "silb"`); los scripts apuntaban a `whispr-open` y ejecutaban un
-  binario viejo. Corregido en build-linux.sh y run-linux.sh.
 
 ### scripts/linux-check.sh
 
@@ -48,5 +45,5 @@
   instalar cargo/cmake, fuera de alcance: la regla de no usar sudo choca con el
   usuario del agente).
 - Empaquetado nativo de Linux (PKGBUILD de AUR / flatpak / AppImage) NO
-  empezado en esta parte: packaging/whispr-open.iss aquí es solo informativo y
+  empezado en esta parte: packaging/silb.iss aquí es solo informativo y
   se queda intacto.

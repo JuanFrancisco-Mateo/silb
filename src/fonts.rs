@@ -4,7 +4,7 @@
 //!
 //! # Por qué Inter va dentro (y no la fuente del sistema)
 //!
-//! El rediseño (`design/openwhispr-figma/`) pide **Inter** (Regular 400,
+//! El rediseño (`design/silb-figma/`) pide **Inter** (Regular 400,
 //! Medium 500, SemiBold 600). La app pedía pesos (`Weight::Medium`) sobre
 //! `Family::SansSerif`, que en Windows es `Segoe UI`; como `Segoe UI` **no
 //! tiene Medium**, `cosmic-text` descartaba la familia entera y cogía una

@@ -5,7 +5,6 @@ Proyecto: **Silb** — dictado por voz local, app de escritorio nativa
 Leer este archivo ANTES de tocar nada.
 
 - Repo público: `github.com/JuanFrancisco-Mateo/silb`. Rama de trabajo: `main`.
-- El repo privado `whispr-open` es el archivo histórico: no se publica desde ahí.
 - Todos los comandos se lanzan desde la raíz del repo clonado; no se asume
   ninguna carpeta concreta ni un usuario de Windows concreto.
 - Sin WSL: todo (compilar, tests, lanzar la app) se hace en Windows nativo.
@@ -35,7 +34,7 @@ Leer este archivo ANTES de tocar nada.
 2. `cargo check` → sin errores (los 2 avisos conocidos de `src/hotkey.rs` se
    toleran).
 3. Commit por fase lógica, mensaje en español.
-4. Si toca el instalador: recompilar con `ISCC.exe packaging\whispr-open.iss` y
+4. Si toca el instalador: recompilar con `ISCC.exe packaging\silb.iss` y
    comprobar el tamaño (el base debe rondar los 15 MB).
 
 ## Arquitectura actual (mapa de ficheros)
@@ -70,7 +69,7 @@ Leer este archivo ANTES de tocar nada.
 
 ## Empaquetado y documentación
 
-- `packaging\whispr-open.iss` — instalador Inno. Sin argumentos compila el base
+- `packaging\silb.iss` — instalador Inno. Sin argumentos compila el base
   **solo CPU** (~15 MB); con `/DMyCudaPack` compila el pack CUDA opcional
   (~522 MB) que se instala encima y exige el runtime CUDA 12.
 - `scripts\` — utilidades: `linux-check.sh` (verificación del port, escribe un

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Generador determinista del icono multirresolución de Silb.
 
-Salida: ``<out>/whispr-open.ico`` con entradas a 16, 24, 32, 48, 64, 128 y 256
+Salida: ``<out>/silb.ico`` con entradas a 16, 24, 32, 48, 64, 128 y 256
 px, todas con el mismo lenguaje visual (círculo violeta #7C6CFF sobre fondo
 transparente) que el icono de la bandeja generado en ``src/tray.rs``.
 
@@ -71,7 +71,7 @@ def _dist_seg(px: float, py: float, a, b) -> float:
     return ((px - (a[0] + t * vx)) ** 2 + (py - (a[1] + t * vy)) ** 2) ** 0.5
 
 
-# Marca real de Silb, copiada del símbolo de Figma (assets/icons/whisprsymbol-*.svg):
+# Marca real de Silb, copiada del símbolo de Figma (assets/icons/silb-symbol*.svg):
 # cuadrado violeta redondeado + burbuja de diálogo oscura con cola + onda de voz
 # blanca. Todo en unidades del viewBox 32x32.
 _TILE = (0.0, 0.0, 1.0, 1.0, 7 / 32)
@@ -257,7 +257,7 @@ def main(argv: list[str]) -> int:
         sys.stderr.write(f"uso: {argv[0]} <directorio_salida>\n")
         return 2
     out_dir = Path(argv[1])
-    out_path = out_dir / "whispr-open.ico"
+    out_path = out_dir / "silb.ico"
     size = write_ico(out_path)
     sys.stdout.write(
         f"icono escrito: {out_path} ({size} B, "

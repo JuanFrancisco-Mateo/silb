@@ -25,13 +25,13 @@ PACKURL="${PACKURL:-https://github.com/JuanFrancisco-Mateo/silb/releases/downloa
 cd "$ROOT"
 
 echo "==> pack CUDA (tarda unos minutos: 465 MB con lzma2/ultra64)"
-"$ISCC" '/DMyPack' "/DWHISPR_VERSION=$VERSION" packaging/whispr-open.iss
+"$ISCC" '/DMyPack' "/DWHISPR_VERSION=$VERSION" packaging/silb.iss
 sha256sum "$OUT/$PACK" > "$OUT/$PACK.sha256"
 SHA="$(cut -d' ' -f1 "$OUT/$PACK.sha256")"
 
 echo "==> instalador online con el pack incrustado"
 "$ISCC" "/DWHISPR_VERSION=$VERSION" "/DPACKURL=$PACKURL" "/DPACKSHA256=$SHA" \
-  packaging/whispr-open.iss
+  packaging/silb.iss
 
 echo
 echo "pack:       $(stat -c '%s' "$OUT/$PACK") B  sha256 $SHA"

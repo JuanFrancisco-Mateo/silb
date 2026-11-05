@@ -182,7 +182,7 @@ Cada módulo trae sus tests ("unit tests": funciones que comprueban otras
 funciones con ejemplos conocidos):
 
 ```powershell
-cd whispr-open
+cd silb
 cargo test    # 336 pasan, 3 se saltan
 ```
 

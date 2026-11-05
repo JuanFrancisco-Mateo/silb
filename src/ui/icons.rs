@@ -1,7 +1,7 @@
 //! Iconos del rediseño (pantalla Dictado de Figma).
 //!
 //! Los 19 SVG del marco se sacaron de Figma
-//! (`design/openwhispr-figma/`) y se copiaron a `assets/icons/`;
+//! (`design/silb-figma/`) y se copiaron a `assets/icons/`;
 //! aquí van dentro del binario con `include_bytes!` (sin abrir ficheros ni
 //! depender de rutas). Son iconos lucide de un color: el color viene DENTRO
 //! del SVG (`stroke="white"` en los que van sobre el acento, `#A9A8B5`/`#7F808D`
@@ -21,7 +21,7 @@ pub const SQUARE: &[u8] = include_bytes!("../../assets/icons/square-22899.svg");
 pub const X: &[u8] = include_bytes!("../../assets/icons/x-3d4bd.svg");
 
 // ── Marca y navegación ──────────────────────────────────────────────────────
-pub const WHISPR_SYMBOL: &[u8] = include_bytes!("../../assets/icons/whisprsymbol-7fe91.svg");
+pub const WHISPR_SYMBOL: &[u8] = include_bytes!("../../assets/icons/silb-symbol.svg");
 pub const AUDIO_LINES: &[u8] = include_bytes!("../../assets/icons/audiolines-661af.svg");
 pub const SLIDERS: &[u8] = include_bytes!("../../assets/icons/slidershorizontal-5bb3a.svg");
 pub const SLIDERS_SM: &[u8] = include_bytes!("../../assets/icons/slidershorizontal1-11748.svg");

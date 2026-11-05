@@ -1,7 +1,7 @@
 //! Build script: incrusta el `.ico` multirresolución en el `.exe`.
 //!
 //! Pasos en Windows:
-//! 1. Si `assets/whispr-open.ico` no existe (clonar el repo en CI fresca),
+//! 1. Si `assets/silb.ico` no existe (clonar el repo en CI fresca),
 //!    ejecuta `assets/build_icon.py` para regenerarlo. Si existe, lo usa
 //!    tal cual (así el `cargo build` no invoca Python cada vez y el build
 //!    sigue siendo determinista: el `.ico` versionado es siempre válido).
@@ -60,7 +60,7 @@ fn maybe_regenerate_icon(repo_ico: &std::path::Path) {
 
 #[cfg(windows)]
 fn main() {
-    let repo_ico = PathBuf::from("assets").join("whispr-open.ico");
+    let repo_ico = PathBuf::from("assets").join("silb.ico");
     maybe_regenerate_icon(&repo_ico);
     assert!(
         repo_ico.exists(),
@@ -70,9 +70,9 @@ fn main() {
 
     let mut res = winresource::WindowsResource::new();
     res.set_icon(repo_ico.to_str().unwrap());
-    // Metadatos de marca: sin esto Windows muestra el nombre del crate viejo
+    // Metadatos de marca: sin esto Windows muestra el nombre del crate
     // («whispr-open») en el Administrador de tareas y en las propiedades del
-    // .exe, aunque el producto ya se llame Silb.
+    // .exe, aunque el producto se llame Silb.
     res.set("ProductName", "Silb");
     res.set("FileDescription", "Silb — dictado local por voz");
     res.set("OriginalFilename", "silb.exe");
@@ -84,7 +84,7 @@ fn main() {
     // Re-compila si cambia el script (que regenera el .ico) o el propio
     // .ico versionado.
     println!("cargo:rerun-if-changed=assets/build_icon.py");
-    println!("cargo:rerun-if-changed=assets/whispr-open.ico");
+    println!("cargo:rerun-if-changed=assets/silb.ico");
 }
 
 #[cfg(not(windows))]

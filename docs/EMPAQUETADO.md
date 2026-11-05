@@ -1,13 +1,7 @@
 # EMPAQUETADO Y DISTRIBUCIÓN - especificación
 
-> **Rebautizado como Silb (v0.3.0)**: el binario pasa a llamarse `silb.exe` y el
-> instalador `silb-X.Y.Z-setup.exe` (AppName `Silb`, mismo `AppId`, así una
-> instalación anterior se actualiza encima). Las rutas de los comandos de este
-> documento ya lo reflejan. Las MEDIDAS de las tablas ([apartado 7](EMPAQUETADO.html#7-pipeline-de-release-pasos-exactos-para-r6-11092026) y [apartado 8](EMPAQUETADO.html#8-medidas-de-ligereza-reales-r6-11092026)) se tomaron sobre
-> el binario anterior (`whispr-open.exe`: el mismo código, antes del cambio de
-> nombre) y no se han vuelto a medir. Nombres internos que NO cambian: el `.ico`
-> (`assets/whispr-open.ico`), el script `packaging/whispr-open.iss`, el paquete
-> de Cargo (`whispr-open`) y los datos del usuario (`%APPDATA%\whispr-open\`).
+> Las medidas de las tablas del [apartado 7](EMPAQUETADO.html#7-pipeline-de-release-pasos-exactos-para-r6-11092026) y del [apartado 8](EMPAQUETADO.html#8-medidas-de-ligereza-reales-r6-11092026)
+> se tomaron con una versión anterior de la app y no se han vuelto a medir.
 
 Objetivo: convertir `target/release/silb.exe` en algo que se pueda instalar y que
 dé confianza en Windows 10/11.
@@ -138,7 +132,7 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
   `src/icon_header.rs::tests::icon_header_and_payload_are_valid` (entra en
   `cargo test --lib`).
 - **Cómo se mete**: `build.rs` (dependencia de compilación `winresource = "0.1"`).
-  El `.ico` está versionado en `assets/whispr-open.ico` para que la compilación no
+  El `.ico` está versionado en `assets/silb.ico` para que la compilación no
   necesite Python (el script solo se ejecuta si falta el `.ico`).
 - **Manifiesto**: el `build.rs` usa `set_icon` pero **no** `set_manifest`: el
   compilador de MSVC genera solo el manifiesto SxS del CRT
@@ -160,7 +154,7 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
 - Un único sitio manda: la `version` de `Cargo.toml`. El instalador lee la
   versión de la variable de entorno `WHISPR_VERSION` (o del define
   `/DWHISPR_VERSION=`) y, si no hay ninguna, usa la que trae
-  `packaging/whispr-open.iss` en `MyAppVersion` (hoy `0.8.0`). Al subir de
+  `packaging/silb.iss` en `MyAppVersion` (hoy `0.8.0`). Al subir de
   versión se cambian `Cargo.toml`, la entrada `whispr-open` de `Cargo.lock` y
   ese define.
 - Convención de commits (opcional): prefijos `feat:` / `fix:` / `docs:` /
@@ -212,7 +206,7 @@ instalador) son el canal natural para la v1.
 :: 1) Build release. El build.rs incrusta el icono vía winresource.
 ::    Si el .ico falta, lo regenera con assets/build_icon.py.
 ::    No hace falta llamar a Python a mano.
-cd /d whispr-open
+cd /d silb
 cargo build --release
 
 :: Salida: target\release\silb.exe (≈42,77 MiB con icono)
@@ -225,7 +219,7 @@ sobreescribir).
 
 Inno Setup 6.7.3 está instalado por usuario en
 `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`; el script es
-`packaging\whispr-open.iss`. La versión sale de `WHISPR_VERSION` (define
+`packaging\silb.iss`. La versión sale de `WHISPR_VERSION` (define
 `/DWHISPR_VERSION=` o variable de entorno) y, si no se pasa ninguna, del valor
 por defecto del script (`MyAppVersion`, hoy **0.8.0**). Al subir de versión se
 cambian `Cargo.toml`, `Cargo.lock` y ese define.
@@ -251,14 +245,14 @@ Lo decide la **presencia de un define** (ISPP no compara bien texto con número)
 ```cmd
 :: 1) ONLINE (sin defines): el que se publica, ~15 MB. El pack se baja al instalar
 ::    si hay GPU NVIDIA; URL y hash van incrustados (/DPACKURL, /DPACKSHA256).
-"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\whispr-open.iss
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\silb.iss
 
 :: 2) OFFLINE (/DMyOffline): las dos versiones dentro, ~466 MB, sin red.
-"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyOffline packaging\whispr-open.iss
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyOffline packaging\silb.iss
 
 :: 3) PACK (/DMyPack): solo [Files] (binario CUDA + 3 DLL), se aplica encima de
 ::    una instalación ya hecha y NO crea desinstalador ni accesos directos.
-"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyPack packaging\whispr-open.iss
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyPack packaging\silb.iss
 ```
 
 Los tres se encadenan con `bash packaging/build-installers.sh [version]`: pack →
@@ -437,7 +431,7 @@ animación por frames).
 |---|---:|---:|
 | `target/release/silb.exe` (v0.3.0) | **47.177.728** | **44,99** |
 | `packaging/Output/silb-0.3.0-setup.exe` | **24.331.612** | **23,20** |
-| `assets/whispr-open.ico` (16/24/32/48/64/128/256) | 372.526 | 363,79 KiB |
+| `assets/silb.ico` (16/24/32/48/64/128/256) | 372.526 | 363,79 KiB |
 
 **Δ vs R6:** el `.exe` es idéntico byte a byte (-0 B; el cambio de versión solo
 afecta al texto `version` de `Cargo.toml`). El instalador baja -1.085 B
@@ -499,7 +493,7 @@ punto:
    decide solo. Antes eran 547 MB para todo el mundo porque el base metía el
    runtime de CUDA de todas formas.
 4. **Encaja en el empaquetado, no en la app** → todo en `packaging/`
-   (`whispr-open.iss`, `build-cuda-runtime.sh`, `build-installers.sh`).
+   (`silb.iss`, `build-cuda-runtime.sh`, `build-installers.sh`).
 
 ### Cierre de las dos preguntas abiertas
 

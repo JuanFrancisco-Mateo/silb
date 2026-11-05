@@ -160,7 +160,7 @@ equipo y pone el binario que toca (ver «Instalar»).
 
 ```powershell
 git clone https://github.com/JuanFrancisco-Mateo/silb.git
-cd whispr-open
+cd silb
 git checkout native-iced        # rama activa (main es el legado web)
 cargo run --release
 ```

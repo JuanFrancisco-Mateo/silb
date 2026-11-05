@@ -5,7 +5,7 @@ el usuario - el agente no puede ejecutar `cargo build` en esta máquina).
 
 ## Por qué no hay atajo global nativo
 
-En Windows, Whispr Open registra su atajo con `global-hotkey` (registro global del
+En Windows, Silb registra su atajo con `global-hotkey` (registro global del
 sistema: funciona sobre cualquier app que tenga el foco). En Linux con Wayland ese
 mecanismo no existe y no puede existir: el protocolo no permite que una app capture
 teclas de otras ventanas (es una decisión de seguridad de Wayland, no un fallo de
@@ -37,7 +37,7 @@ bind es el `hyprland.conf` del usuario).
 
 ## Bind recomendado en hyprland.conf
 
-    # Whispr Open - toggle de dictado (Ctrl+Shift+D equivale a SUPER SHIFT D)
+    # Silb - toggle de dictado (Ctrl+Shift+D equivale a SUPER SHIFT D)
     bind = SUPER SHIFT, D, exec, echo toggle > $XDG_RUNTIME_DIR/whispr-open/hotkey.sock
 
 Con `$mainMod` (si tu configuración lo define, que es lo habitual:

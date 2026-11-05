@@ -91,6 +91,6 @@ micrófono (cpal, f32 mono, cualquier rate → 16 kHz)
 
 ## 3. Definición de "terminado"
 
-1. `cmd.exe /c "cd /d whispr-open && cargo test"` → tests verdes.
+1. `cmd.exe /c "cd /d silb && cargo test"` → tests verdes.
 2. `... cargo.exe check` → sin errores (avisos tolerados).
 3. Un commit por etapa lógica, con el mensaje en español.

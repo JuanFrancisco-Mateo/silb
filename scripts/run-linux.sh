@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Lanza whispr-open ya construido en Linux (estilo run-linux) con el entorno
+# Lanza Silb ya construido en Linux (estilo run-linux) con el entorno
 # de escritorio correcto. No construye: usa scripts/build-linux.sh antes.
 set -euo pipefail
 cd "$(dirname "$0")/.."
