@@ -4,6 +4,43 @@ Formato inspirado en [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/)
 Las fechas son de la sesión de cierre correspondiente (rama `native-iced` salvo
 indicación).
 
+## [0.9.0] — 2026-11-08
+
+La 0.9 abre la app a la **GPU de AMD e Intel**: hasta ahora el instalador solo
+sabía de NVIDIA y quien tenía una Radeon acababa en CPU. Sin cambios en el
+formato del `config.json`.
+
+### Añadido
+
+- **Backend Vulkan de whisper.cpp** (`cargo build --release --features vulkan`).
+  El mismo `silb.exe` acelera con cualquier GPU que hable Vulkan (AMD, Intel y
+  también NVIDIA); es autónomo (solo necesita la `vulkan-1.dll` que instala el
+  driver) y no exige toolkit de ningún fabricante. Comprobado en una RTX 4070:
+  RTF 0,077 en caliente, y caída limpia a CPU si el ICD de Vulkan falla.
+- **El instalador detecta AMD/Intel y pone el binario Vulkan**
+  (`packaging/silb.iss`). Tres caminos, un solo `silb.exe` instalado:
+
+  | Equipo | Binario | Descarga |
+  |---|---|---|
+  | GPU NVIDIA | `silb-cuda.exe` + runtime CUDA 12 | 30 MB + 421 MB de runtime la primera vez |
+  | GPU AMD o Intel | `silb-vulkan.exe` | ninguna |
+  | sin GPU / renuncia | `silb-cpu.exe` | ninguna |
+
+  El exe Vulkan viaja **dentro** del instalador, así que el normal sube de 15 MB
+  a 21 MB (20,73 MiB medidos): es el precio de que AMD funcione sin red y sin
+  elegir nada. La oferta del CUDA sigue siendo solo para NVIDIA y su texto
+  aclara que AMD e Intel no descargan nada. `backend.txt` escribe
+  `backend=vulkan` y `gpu=<nombre>` cuando toca.
+- **El runtime CUDA ya no viaja en cada release.** Las tres DLL (772 MB, 421 MB
+  comprimidas) no cambian entre versiones: van en un asset fijo aparte
+  (`silb-cuda-runtime-12.exe`, release `cuda-runtime-12`) que el instalador
+  descarga una sola vez. El pack de cada versión queda en el `silb-cuda.exe`
+  (30 MB en vez de 465), así que actualizar cuesta 30 MB y no 465. La 0.9.0
+  sigue llevando su instalador offline completo: es la última que lo tendrá.
+- **Ganchos de prueba del instalador**: `/FORCEVULKAN` (fuerza el camino Vulkan)
+  y `WHISPR_GPU_OVERRIDE` (variable de entorno que sustituye el nombre de GPU
+  detectado por WMI: permite probar la rama AMD en un equipo sin AMD).
+
 ## [0.8.1] — 2026-11-04
 
 Arregla dos fallos de la descarga de la 0.8.0. No cambia el formato del

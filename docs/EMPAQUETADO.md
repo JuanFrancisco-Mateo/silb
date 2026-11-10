@@ -154,7 +154,7 @@ el `.pfx`. NO se ha simulado ni inventado ningún certificado.
 - Un único sitio manda: la `version` de `Cargo.toml`. El instalador lee la
   versión de la variable de entorno `WHISPR_VERSION` (o del define
   `/DWHISPR_VERSION=`) y, si no hay ninguna, usa la que trae
-  `packaging/silb.iss` en `MyAppVersion` (hoy `0.8.0`). Al subir de
+  `packaging/silb.iss` en `MyAppVersion` (hoy `0.9.0`). Al subir de
   versión se cambian `Cargo.toml`, la entrada `whispr-open` de `Cargo.lock` y
   ese define.
 - Convención de commits (opcional): prefijos `feat:` / `fix:` / `docs:` /
@@ -221,55 +221,66 @@ Inno Setup 6.7.3 está instalado por usuario en
 `%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe`; el script es
 `packaging\silb.iss`. La versión sale de `WHISPR_VERSION` (define
 `/DWHISPR_VERSION=` o variable de entorno) y, si no se pasa ninguna, del valor
-por defecto del script (`MyAppVersion`, hoy **0.8.0**). Al subir de versión se
+por defecto del script (`MyAppVersion`, hoy **0.9.0**). Al subir de versión se
 cambian `Cargo.toml`, `Cargo.lock` y ese define.
 
-#### Tres artefactos, dos descargas (0.8.0)
+#### Cuatro artefactos, dos descargas (0.9.0)
 
 El usuario **elige entre dos descargas y las dos instalan la misma app**; lo que
-cambia es de dónde sale la parte de CUDA, no lo que se instala. Un tercer
-fichero no se elige: lo baja el instalador cuando hace falta.
+cambia es de dónde sale la parte de CUDA, no lo que se instala. Dos ficheros más
+no se eligen: los baja el instalador cuando hacen falta, y el runtime CUDA solo
+la primera vez.
 
 | Fichero | Quién lo baja | Lleva | Comprimido (lzma2/ultra64) |
 |---|---|---|---|
-| `silb-<v>-setup.exe` | **el normal**: cualquiera con internet | build CPU + `vendor\llama\` **sin** `cuda\` | **15.425.426 B (14,71 MiB)** |
-| `silb-<v>-offline-setup.exe` | equipos sin red | build CPU + build CUDA + runtime CUDA 12 + `vendor\llama\` | **466.136.198 B (444,54 MiB)** |
-| `silb-cuda-pack-<v>.exe` | **no lo elige nadie**: asset del release que baja el online | build CUDA + runtime CUDA 12 (3 DLL) | **464.216.383 B (442,71 MiB)** |
+| `silb-<v>-setup.exe` | **el normal**: cualquiera con internet | build CPU + build Vulkan + `vendor\llama\` **sin** `cuda\` | **21.733.979 B (20,73 MiB)** |
+| `silb-<v>-offline-setup.exe` | equipos sin red (la 0.9.0 es la última que lo lleva) | build CPU + build CUDA + runtime CUDA 12 + build Vulkan + `vendor\llama\` | **476.407.477 B (454,35 MiB)** |
+| `silb-cuda-pack-<v>.exe` | **no lo elige nadie**: lo baja el online | solo el build CUDA | **31.969.784 B (30,49 MiB)** |
+| `silb-cuda-runtime-12.exe` | **no lo elige nadie**: lo baja el online una sola vez | runtime CUDA 12 (3 DLL, 772 MB sin comprimir) | **441.617.411 B (421,16 MiB)**, en su release `cuda-runtime-12` |
 
-Medido el 04/11/2026 con el `ISCC` de Inno 6.7.3 (el pack sale con su
-`silb-cuda-pack-<v>.sha256` al lado, `sha256 = 59ce44bd…5e0377`). Los tres
-llevan `ProductVersion = 0.8.0` estampado.
+Medido el 10/11/2026 con el `ISCC` de Inno 6.7.3 sobre el árbol de la 0.9.0. Cada
+pack sale con su `.sha256` al lado y los instaladores llevan
+`ProductVersion = 0.9.0` estampado.
 
 Lo decide la **presencia de un define** (ISPP no compara bien texto con número):
 
 ```cmd
-:: 1) ONLINE (sin defines): el que se publica, ~15 MB. El pack se baja al instalar
-::    si hay GPU NVIDIA; URL y hash van incrustados (/DPACKURL, /DPACKSHA256).
+:: 1) ONLINE (sin defines): el que se publica, ~21 MB. El runtime y el pack se bajan
+::    al instalar si hay GPU NVIDIA; las dos URLs y los dos hashes van incrustados
+::    (/DPACKURL, /DPACKSHA256, /DRUNTIMESHA256).
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q packaging\silb.iss
 
-:: 2) OFFLINE (/DMyOffline): las dos versiones dentro, ~466 MB, sin red.
+:: 2) OFFLINE (/DMyOffline): las tres versiones dentro, ~476 MB, sin red.
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyOffline packaging\silb.iss
 
-:: 3) PACK (/DMyPack): solo [Files] (binario CUDA + 3 DLL), se aplica encima de
-::    una instalación ya hecha y NO crea desinstalador ni accesos directos.
+:: 3) RUNTIME CUDA (/DMyRuntime): solo las 3 DLL, en un asset fijo que se sube una
+::    vez por versión mayor de CUDA (no cambia entre releases de Silb).
+"%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyRuntime packaging\silb.iss
+
+:: 4) PACK (/DMyPack): solo [Files] (binario CUDA), se aplica encima de una
+::    instalación ya hecha y NO crea desinstalador ni accesos directos.
 "%LOCALAPPDATA%\Programs\Inno Setup 6\ISCC.exe" /Q /DMyPack packaging\silb.iss
 ```
 
-Los tres se encadenan con `bash packaging/build-installers.sh [version]`: pack →
-`.sha256` → instalador online con `/DPACKURL` y `/DPACKSHA256` ya puestos. **Si
-se reconstruye el pack, hay que recompilar el online**: la URL y el hash van
-dentro y un hash viejo da "El hash del archivo es incorrecto" y cae a CPU.
+Los cuatro se encadenan con `bash packaging/build-installers.sh [version]`: runtime
+(si falta) → `.sha256` → pack → `.sha256` → instalador online con los dos hashes
+ya puestos. **Si se reconstruye el pack o el runtime, hay que recompilar el
+online**: la URL y el hash van dentro y un hash viejo da "El hash del archivo es
+incorrecto" y cae a CPU.
 
 **Qué hace el online con la GPU** (`UseCuda`, en `[Code]`):
 
 1. `nvidia-smi.exe --query-gpu=name --format=csv,noheader` con código de salida
    0 (se invoca con `{sysnative}`: `{sys}` es SysWOW64 y ahí no está). Si no,
    WMI `Win32_VideoController` con "NVIDIA" en el nombre. **No se exige VRAM ni
-   runtime CUDA instalado**: el runtime viaja en el pack.
-2. Con GPU pide confirmación y baja `silb-cuda-pack-<v>.exe` del release con
-   `TDownloadWizardPage`; el SHA-256 es **obligatorio**.
-3. Aplica el pack en silencio por encima de `{app}`: `silb.exe` CUDA + las tres
-   DLL del runtime al lado, que es de donde Windows las resuelve.
+   runtime CUDA instalado**: el runtime se descarga aparte, y solo la primera vez.
+2. Con GPU pide confirmación y baja `silb-cuda-runtime-12.exe` (si `{app}` no
+   tiene ya las DLL) y `silb-cuda-pack-<v>.exe` del release con
+   `TDownloadWizardPage`; el SHA-256 de los dos es **obligatorio**.
+3. Aplica primero el runtime y luego el pack, en silencio y por encima de `{app}`:
+   las tres DLL al lado del ejecutable (de ahí las resuelve Windows) y después el
+   `silb.exe` CUDA. Si el runtime falla no se aplica el exe CUDA: quedaría un
+   binario CUDA sin sus DLL y la app no arrancaría.
 4. **Nunca aborta.** Sin red, 404, hash que no cuadra o el usuario dice que no →
    instala en CPU, escribe `backend.txt` con `backend=cpu` y avisa "Sin
    aceleración por GPU: se puede añadir después." (en instalación silenciosa
@@ -278,14 +289,18 @@ dentro y un hash viejo da "El hash del archivo es incorrecto" y cae a CPU.
 El desinstalador limpia las tres DLL del pack con `[UninstallDelete]`: sin eso
 quedaban 772 MB en `{app}` (el instalador online no las conoce como suyas).
 
-**Por qué el pack pesa 442 MiB y no ~100.** El binario CUDA importa solo dos
-DLL (`cudart64_12.dll` 583.680 B y `cublas64_12.dll` 102.518.272 B), pero
-`cublas64_12.dll` importa **estáticamente** `cublasLt64_12.dll` (668.669.952 B):
-sin esa tercera el proceso no llega a arrancar en un equipo sin el kit CUDA en
-el PATH. La cuenta que daba "~100 MB" contaba dos DLL; con las tres el pack son
-465 MB sin comprimir y **442,71 MiB** comprimido. Las tres las copia
-`bash packaging/build-cuda-runtime.sh` a `packaging\build\cuda12\` (idempotente,
-verifica tamaño y sha256; no va a git).
+**Por qué las DLL van en un asset aparte y no en el pack.** El binario CUDA
+importa solo dos DLL (`cudart64_12.dll` 583.680 B y `cublas64_12.dll`
+102.518.272 B), pero `cublas64_12.dll` importa **estáticamente**
+`cublasLt64_12.dll` (668.669.952 B): sin esa tercera el proceso no llega a
+arrancar en un equipo sin el kit CUDA en el PATH. Son 465 MB sin comprimir
+(421 MiB con lzma2) que **no cambian nunca** entre versiones de Silb: subirlos en
+cada release multiplicaba el peso de cada publicación por diez sin motivo. Por eso
+el runtime tiene su propio release (`cuda-runtime-12`), se sube una vez y el
+instalador solo lo baja si `{app}` no tiene ya `cublasLt64_12.dll` (una
+actualización no lo vuelve a pedir). El pack de cada versión queda en el exe CUDA,
+30,49 MiB. Las tres DLL las copia `bash packaging/build-cuda-runtime.sh` a
+`packaging\build\cuda12\` (idempotente, verifica tamaño y sha256; no va a git).
 
 **Licencia del runtime.** Las tres DLL son redistribuibles: el *CUDA Toolkit
 Supplement to Software License Agreement for NVIDIA Software Development Kits*
@@ -335,8 +350,11 @@ la licencia MIT antes de pedir confirmación.
 
 ```cmd
 :: Instalar (silencioso, sin wizard). Con el .iss de la 0.8.0 el online necesita
-:: el hash del pack: /DPACKSHA256=<hash de silb-cuda-pack-<v>.exe>.
-packaging\Output\silb-0.8.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
+:: los dos hashes: /DPACKSHA256=<hash de silb-cuda-pack-<v>.exe> y
+:: /DRUNTIMESHA256=<hash de silb-cuda-runtime-12.exe>. Para probar sin publicar,
+:: sirve un servidor local (python -m http.server 8899 en packaging\Output) y pasa
+:: /PACKURL=http://127.0.0.1:8899/... /RUNTIMEURL=http://127.0.0.1:8899/...
+packaging\Output\silb-0.9.0-setup.exe /SP- /S /SILENT /SUPPRESSMSGBOXES /NORESTART
 
 :: Verificar que el icono está incrustado:
 powershell -NoProfile -Command "Add-Type -AssemblyName System.Drawing; [System.Drawing.Icon]::ExtractAssociatedIcon('%LOCALAPPDATA%\Programs\Silb\silb.exe')"

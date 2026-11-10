@@ -102,13 +102,13 @@ El recorrido completo de una frase, fichero por fichero, está en
 
 Hay **dos descargas y las dos instalan la misma app**. En una línea: **si tienes
 internet, el normal; el offline es para equipos sin red.** No hay que elegir
-«versión de CPU» ni «versión de CUDA»: el instalador mira el equipo y pone lo
-que corresponde.
+«versión de CPU», «de CUDA» ni «de Vulkan»: el instalador mira el equipo y pone
+lo que toca — **GPU NVIDIA → CUDA, GPU AMD o Intel → Vulkan, sin GPU → CPU**.
 
 | Descarga (página de [Releases](https://github.com/JuanFrancisco-Mateo/silb/releases)) | Cuándo | Tamaño |
 |---|---|---|
-| `silb-X.Y.Z-setup.exe` | **lo normal**, con internet. Si el equipo tiene GPU NVIDIA se baja solo el pack de CUDA (~443 MB) y lo verifica con SHA-256; si no hay GPU, red o el hash falla, instala en CPU y avisa («se puede añadir después»). | ~15 MB |
-| `silb-X.Y.Z-offline-setup.exe` | equipos **sin red**: trae dentro las dos versiones (CPU y CUDA) y elige al instalar. | ~445 MB |
+| `silb-X.Y.Z-setup.exe` | **lo normal**, con internet. Lleva dentro los binarios de CPU y de **Vulkan** (el de AMD e Intel: no descarga nada). Si el equipo tiene GPU NVIDIA se baja el pack de CUDA (~30 MB) y, la primera vez, el runtime de CUDA (~421 MB, que las versiones siguientes ya aprovechan); los dos se verifican con SHA-256. Si no hay red, el usuario dice que no o el hash falla, instala en CPU y avisa («se puede añadir después»). | ~21 MB |
+| `silb-X.Y.Z-offline-setup.exe` | equipos **sin red**: trae dentro las tres versiones (CPU, CUDA y Vulkan) y elige al instalar. | ~454 MB |
 
 Los dos instalan en `%LOCALAPPDATA%\Programs\Silb` **sin pedir permisos de
 administrador**, con acceso directo, entrada en «Agregar o quitar programas» y
@@ -147,6 +147,19 @@ opción:
 cargo build --release --features cuda
 ```
 
+**Compilación con Vulkan (opcional).** Es la vía para **GPU AMD e Intel** (y
+también vale con NVIDIA): instala el [Vulkan SDK](https://vulkan.lunarg.com/) y
+compila con la opción `vulkan`.
+
+```powershell
+$env:VULKAN_SDK = "C:\VulkanSDK\1.4.363.0"
+$env:CARGO_TARGET_DIR = "E:\vk"   # target CORTO: con el target dentro del repo, el cmake de ggml-vulkan falla con FTK1011 (ruta larga)
+cargo build --release --features vulkan
+```
+
+El binario resultante es autónomo: solo necesita la `vulkan-1.dll` que instala
+el driver de la GPU, y uno mismo sirve para AMD, Intel y NVIDIA.
+
 Qué ganas y qué pierdes:
 
 - **CPU**: compila en cualquier Windows 10/11 con MSVC y CMake; transcribir es
@@ -154,6 +167,9 @@ Qué ganas y qué pierdes:
   moderno, pero da de sobra para dictar).
 - **CUDA**: transcripción en tiempo real con una GPU NVIDIA; exige driver y kit
   de CUDA en el equipo donde compilas, y el binario da por hecho que hay GPU.
+- **Vulkan**: transcripción en GPU sin toolkit (solo el driver); es la opción
+  para AMD e Intel. Medido en una RTX 4070: RTF 0,077 en caliente (CUDA, para
+  comparar, va por la misma horquilla); en AMD e Intel no se ha medido.
 
 Quien solo instala la app no tiene que decidir esto: el instalador detecta el
 equipo y pone el binario que toca (ver «Instalar»).

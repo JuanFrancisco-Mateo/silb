@@ -471,6 +471,25 @@ fn build_params<'a>(
     (params, decision)
 }
 
+/// Backend con el que se compiló ESTE binario (`--features cuda` / `vulkan`;
+/// sin features, CPU). Sale de `cfg!`, no es un literal: el test lo comprueba.
+pub(crate) fn backend_name() -> &'static str {
+    if cfg!(feature = "cuda") {
+        "cuda"
+    } else if cfg!(feature = "vulkan") {
+        "vulkan"
+    } else {
+        "cpu"
+    }
+}
+
+/// ¿Se le pide la GPU a whisper.cpp? Es lo mismo que whisper-rs pone por
+/// defecto (`cfg!(feature = "_gpu")`, que activan sus features cuda/vulkan),
+/// pero explícito para poder decir en el log cuál es el valor.
+fn use_gpu() -> bool {
+    cfg!(any(feature = "cuda", feature = "vulkan"))
+}
+
 /// Motor de transcripción: un contexto de whisper.cpp protegido con un mutex
 /// (una transcripción cada vez; el hilo de la interfaz nunca lo toca).
 pub struct WhisperEngine {
@@ -481,9 +500,23 @@ impl WhisperEngine {
     /// GGML válido (el mensaje dice qué modelo).
     pub fn load(model: Model) -> Result<Self, String> {
         crate::log!("transcribe", "{}", whisper_rs::print_system_info());
+        // Ojo: esto es el backend COMPILADO y el use_gpu que se le pasa, no una
+        // promesa de GPU (si no hay dispositivo utilizable, whisper cae a CPU).
+        // El detalle de dispositivos (cuántos, cuáles) solo lo escribe ggml por
+        // stderr, que la app no tiene.
+        let gpu = use_gpu();
+        crate::log!(
+            "transcribe",
+            "backend compilado: {} (use_gpu={}; sin dispositivo GPU utilizable se usa CPU)",
+            backend_name(),
+            gpu
+        );
         let ctx = WhisperContext::new_with_params(
             &model_path(model),
-            WhisperContextParameters::default(),
+            WhisperContextParameters {
+                use_gpu: gpu,
+                ..Default::default()
+            },
         )
         .map_err(|e| format!("no se pudo cargar el modelo {}: {e}", model.id()))?;
         Ok(Self {
@@ -739,5 +772,20 @@ mod tests {
                 .and_then(|n| n.parse::<u32>().ok())
                 .is_some());
         }
+    }
+    #[test]
+    fn backend_name_sigue_las_features_compiladas() {
+        // Lo único comprobable aquí: el nombre no es un literal suelto, sino el
+        // que corresponde a las features con las que se compiló (`cfg!`), y a
+        // whisper se le pide GPU exactamente cuando ese backend es de GPU.
+        let esperado = if cfg!(feature = "cuda") {
+            "cuda"
+        } else if cfg!(feature = "vulkan") {
+            "vulkan"
+        } else {
+            "cpu"
+        };
+        assert_eq!(backend_name(), esperado);
+        assert_eq!(use_gpu(), esperado != "cpu");
     }
 }

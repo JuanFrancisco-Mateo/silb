@@ -1,6 +1,6 @@
 [package]
 name = "whispr-open"
-version = "0.8.1"
+version = "0.9.0"
 description = "Local open-source dictation workspace (native desktop)"
 authors = ["Whispr Open contributors"]
 edition = "2021"
@@ -19,6 +19,9 @@ path = "src/main.rs"
 default = []
 # Backend GPU de whisper.cpp (exige toolkit CUDA y CUDA_PATH).
 cuda = ["whisper-rs/cuda"]
+# Camino GPU para AMD/Intel: backend Vulkan de ggml (no requiere toolkit,
+# solo el driver de la GPU, que instala `vulkan-1.dll` en System32).
+vulkan = ["whisper-rs/vulkan"]
 
 [dependencies]
 # UI nativa (sin webview). `image` activa el widget `image` de iced y el
